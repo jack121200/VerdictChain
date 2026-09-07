@@ -5,7 +5,9 @@ from sqlalchemy import select
 
 from backend.agents.schemas import AgentResponse
 from backend.db.models import CredibilityLog, DebateTranscript, Investigation, RawLog
-from backend.debate.engine import run_debate
+import pytest
+
+from backend.debate.engine import DebateFailedError, run_debate
 from backend.watchdog.credibility import _client, _crs_key, get_crs, is_isolated
 
 
@@ -120,6 +122,82 @@ def test_run_debate_retries_on_near_duplicate_round2(db_session):
         )
     ).scalar_one()
     assert round2_transcript.theory == "REVISE: reconsidering given peripheral input."
+
+
+def test_run_debate_marks_investigation_error_and_raises_on_provider_failure(db_session):
+    """Observed live this session: both LLM providers exhausted mid-debate,
+    which used to leave the Investigation stuck at status='investigating'
+    forever and surface as a bare unhandled exception. Now it must be marked
+    'error' and raise a typed DebateFailedError the API layer can catch.
+    """
+    network_rows = _seed_domain(db_session, "cicids2017", "network_flow")
+    _seed_domain(db_session, "cert_r4.2_file", "file_access")
+    _seed_domain(db_session, "cert_r4.2_logon", "logon")
+    db_session.commit()
+
+    def failing_investigator(rows, round_no, peripheral_digest=None, debate_context=None):
+        raise RuntimeError("all providers exhausted")
+
+    investigators = {
+        "network_traffic": failing_investigator,
+        "access_log": _make_fake_investigator("access_log", {1: "a"}),
+        "endpoint_behavior": _make_fake_investigator("endpoint_behavior", {1: "b"}),
+    }
+
+    events = []
+    with pytest.raises(DebateFailedError) as exc_info:
+        run_debate("network_traffic", network_rows, investigators=investigators, on_update=events.append)
+
+    investigation = db_session.get(Investigation, uuid.UUID(exc_info.value.investigation_id))
+    assert investigation.status == "error"
+    assert any(e["type"] == "error" for e in events)
+
+
+def test_run_debate_stores_scenario_label_as_hidden_ground_truth(db_session):
+    network_rows = _seed_domain(db_session, "cicids2017", "network_flow")
+    _seed_domain(db_session, "cert_r4.2_file", "file_access")
+    _seed_domain(db_session, "cert_r4.2_logon", "logon")
+    db_session.commit()
+
+    investigators = {
+        "network_traffic": _make_fake_investigator("network_traffic", {1: "a", 2: "a2", 3: "a3"}),
+        "access_log": _make_fake_investigator("access_log", {1: "b", 2: "b2", 3: "b3"}),
+        "endpoint_behavior": _make_fake_investigator("endpoint_behavior", {1: "c", 2: "c2", 3: "c3"}),
+    }
+
+    result = run_debate(
+        "network_traffic", network_rows, investigators=investigators, scenario_label="DDoS"
+    )
+
+    investigation = db_session.get(Investigation, uuid.UUID(result["investigation_id"]))
+    assert investigation.scenario_label == "DDoS"
+
+
+def test_run_debate_calls_on_update_for_every_round_plus_final_verdict(db_session):
+    """This callback is what backend/api/websocket.py hooks into for genuine
+    real-time updates - proving it fires the right number of times with the
+    right shape, independent of the WebSocket wiring itself.
+    """
+    network_rows = _seed_domain(db_session, "cicids2017", "network_flow")
+    _seed_domain(db_session, "cert_r4.2_file", "file_access")
+    _seed_domain(db_session, "cert_r4.2_logon", "logon")
+    db_session.commit()
+
+    investigators = {
+        "network_traffic": _make_fake_investigator("network_traffic", {1: "a", 2: "a2", 3: "a3"}),
+        "access_log": _make_fake_investigator("access_log", {1: "b", 2: "b2", 3: "b3"}),
+        "endpoint_behavior": _make_fake_investigator("endpoint_behavior", {1: "c", 2: "c2", 3: "c3"}),
+    }
+
+    events = []
+    run_debate("network_traffic", network_rows, investigators=investigators, on_update=events.append)
+
+    round_updates = [e for e in events if e["type"] == "round_update"]
+    verdict_events = [e for e in events if e["type"] == "verdict"]
+    assert len(round_updates) == 9  # 3 agents x 3 rounds
+    assert len(verdict_events) == 1
+    assert {e["round"] for e in round_updates} == {1, 2, 3}
+    assert all("credibility" in e for e in round_updates)
 
 
 def test_run_debate_scores_every_round_and_persists_credibility_log(db_session):

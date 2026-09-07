@@ -124,3 +124,16 @@ class AnalystFeedback(Base):
     investigation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("investigations.investigation_id"))
     verdict_was_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class Analyst(Base):
+    """Not in the original locked schema - added in Module 7 to satisfy
+    SKILL-security.md Section 2's JWT auth requirement. See migration 0002.
+    """
+
+    __tablename__ = "analysts"
+
+    analyst_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    username: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())

@@ -18,6 +18,7 @@ TABLES = (
     "model_versions",
     "audit_trail",
     "analyst_feedback",
+    "analysts",
 )
 
 

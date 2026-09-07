@@ -21,6 +21,18 @@ from backend.self_healing.actions import respond_to_verdict
 from backend.watchdog.credibility import get_crs, reset_agent
 from backend.watchdog.service import score_agent_round
 
+class DebateFailedError(Exception):
+    """Raised when a debate can't complete (e.g. all LLM provider retries
+    exhausted). Carries investigation_id so the caller can report which
+    Investigation was left in status='error'.
+    """
+
+    def __init__(self, investigation_id: str, reason: str):
+        self.investigation_id = investigation_id
+        self.reason = reason
+        super().__init__(f"debate for investigation {investigation_id} failed: {reason}")
+
+
 InvestigatorFn = Callable[..., tuple[AgentResponse, str]]
 
 INVESTIGATORS: dict[str, InvestigatorFn] = {
@@ -63,18 +75,31 @@ def run_debate(
     investigators: dict[str, InvestigatorFn] = INVESTIGATORS,
     max_rows_per_agent: int = 5,
     trigger_reason: str | None = None,
+    on_update: Callable[[dict], None] | None = None,
+    trigger_type: str = "manual",
+    scenario_label: str | None = None,
 ) -> dict:
     """Creates a new Investigation, runs all 3 rounds for all 3 agents, persists
     the full transcript, and updates the Investigation with the final verdict.
-    Returns {investigation_id, verdict, providers_used}.
+    Returns {investigation_id, verdict, providers_used, actions_taken}.
+
+    on_update, if given, is called synchronously after each round's response is
+    persisted+scored, and once more with the final verdict/actions - this is
+    what makes the dashboard genuinely real-time (backend/api/websocket.py
+    wires it to a live broadcast) rather than a page that only updates after
+    the whole debate finishes.
     """
     inputs = assemble_debate_inputs(primary_agent_id, primary_rows, max_rows=max_rows_per_agent)
 
     session = SessionLocal()
     try:
         investigation = Investigation(
-            trigger_type="manual",
+            trigger_type=trigger_type,
             trigger_reason=trigger_reason or f"debate for {primary_agent_id}",
+            # hidden ground truth ONLY - never read anywhere in backend/agents/,
+            # agents only ever receive `rows` (see assemble_debate_inputs),
+            # never the Investigation object this field lives on.
+            scenario_label=scenario_label,
         )
         session.add(investigation)
         session.commit()
@@ -86,47 +111,79 @@ def run_debate(
     latest_by_agent: dict[str, AgentResponse] = {}
     providers_used: dict[str, list[str]] = {agent_id: [] for agent_id in inputs}
 
-    for round_no in (1, 2, 3):
-        round_responses: dict[str, AgentResponse] = {}
-        for agent_id, rows in inputs.items():
-            digest = build_peripheral_digest(inputs, exclude_agent=agent_id)
-            debate_context = _debate_context_for(agent_id, latest_by_agent) if round_no > 1 else None
+    try:
+        for round_no in (1, 2, 3):
+            round_responses: dict[str, AgentResponse] = {}
+            for agent_id, rows in inputs.items():
+                digest = build_peripheral_digest(inputs, exclude_agent=agent_id)
+                debate_context = _debate_context_for(agent_id, latest_by_agent) if round_no > 1 else None
 
-            response, provider = investigators[agent_id](
-                rows, round_no=round_no, peripheral_digest=digest, debate_context=debate_context
-            )
+                response, provider = investigators[agent_id](
+                    rows, round_no=round_no, peripheral_digest=digest, debate_context=debate_context
+                )
 
-            if round_no > 1 and agent_id in latest_by_agent:
-                if is_near_duplicate(response.theory, latest_by_agent[agent_id].theory):
-                    nudged_context = (
-                        (debate_context or "")
-                        + "\n\nYour previous answer was rejected as too similar to your prior round. "
-                        "You must meaningfully CHALLENGE, SUPPORT, or REVISE."
+                if round_no > 1 and agent_id in latest_by_agent:
+                    if is_near_duplicate(response.theory, latest_by_agent[agent_id].theory):
+                        nudged_context = (
+                            (debate_context or "")
+                            + "\n\nYour previous answer was rejected as too similar to your prior round. "
+                            "You must meaningfully CHALLENGE, SUPPORT, or REVISE."
+                        )
+                        response, provider = investigators[agent_id](
+                            rows, round_no=round_no, peripheral_digest=digest, debate_context=nudged_context
+                        )
+
+                _persist_round(investigation_id, round_no, agent_id, response)
+                round_responses[agent_id] = response
+                providers_used[agent_id].append(provider)
+
+                # Watchdog scores every round (SKILL-architecture.md Section
+                # 6). If this drops the agent below the isolation threshold,
+                # "activate a backup instance" is represented as an immediate
+                # reset (fresh CrS, isolation cleared) - see
+                # watchdog/credibility.py's docstring for why - so the agent
+                # continues participating in subsequent rounds under a reset
+                # trust score rather than sitting out entirely.
+                score = score_agent_round(investigation_id, round_no, response)
+                if score["isolated"]:
+                    # reset the identity score_agent_round actually scored
+                    # (response.agent_id), not the loop's domain key - they're
+                    # always equal for real agents (enforced by
+                    # base_agent.parse_and_validate), but this stays correct
+                    # even if that invariant is ever bypassed.
+                    reset_agent(response.agent_id)
+
+                if on_update:
+                    on_update(
+                        {
+                            "type": "round_update",
+                            "round": round_no,
+                            "agent_id": agent_id,
+                            "theory": response.theory,
+                            "confidence": response.confidence,
+                            "cited_evidence": [e.model_dump() for e in response.cited_evidence],
+                            "provider": provider,
+                            "credibility": score,
+                        }
                     )
-                    response, provider = investigators[agent_id](
-                        rows, round_no=round_no, peripheral_digest=digest, debate_context=nudged_context
-                    )
 
-            _persist_round(investigation_id, round_no, agent_id, response)
-            round_responses[agent_id] = response
-            providers_used[agent_id].append(provider)
-
-            # Watchdog scores every round (SKILL-architecture.md Section 6). If
-            # this drops the agent below the isolation threshold, "activate a
-            # backup instance" is represented as an immediate reset (fresh CrS,
-            # isolation cleared) - see watchdog/credibility.py's docstring for
-            # why - so the agent continues participating in subsequent rounds
-            # under a reset trust score rather than sitting out entirely.
-            score = score_agent_round(investigation_id, round_no, response)
-            if score["isolated"]:
-                # reset the identity score_agent_round actually scored
-                # (response.agent_id), not the loop's domain key - they're
-                # always equal for real agents (enforced by
-                # base_agent.parse_and_validate), but this stays correct even
-                # if that invariant is ever bypassed.
-                reset_agent(response.agent_id)
-
-        latest_by_agent = round_responses
+            latest_by_agent = round_responses
+    except Exception as exc:
+        # A mid-debate failure (e.g. both LLM providers down at once - observed
+        # live this session) must not leave the Investigation stuck at
+        # status='investigating' forever. Mark it and let the caller (the API
+        # route) decide how to surface this to the client/WebSocket.
+        session = SessionLocal()
+        try:
+            inv = session.get(Investigation, investigation_id)
+            if inv is not None:
+                inv.status = "error"
+                session.commit()
+        finally:
+            session.close()
+        if on_update:
+            on_update({"type": "error", "detail": str(exc)})
+        raise DebateFailedError(str(investigation_id), str(exc)) from exc
 
     verdict = aggregate_verdict(list(latest_by_agent.values()))
 
@@ -146,6 +203,9 @@ def run_debate(
     # their current (post-debate) credibility scores.
     contributing_crs = {agent_id: get_crs(agent_id) for agent_id in verdict.get("contributing_agents", [])}
     actions_taken = respond_to_verdict(investigation_id, verdict, contributing_crs)
+
+    if on_update:
+        on_update({"type": "verdict", "verdict": verdict, "actions_taken": actions_taken})
 
     return {
         "investigation_id": str(investigation_id),

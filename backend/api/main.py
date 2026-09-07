@@ -1,0 +1,37 @@
+"""FastAPI app assembly. Run: uvicorn backend.api.main:app --reload"""
+
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+
+from backend.api.routes import agents, auth, investigations
+from backend.api.websocket import investigation_feed
+
+app = FastAPI(title="VerdictChain API")
+
+# Frontend dev server origin (Vite default) - dashboard is a separate origin
+# from this API, so CORS is required for the browser to call it at all.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
+app.include_router(investigations.router)
+app.include_router(agents.router)
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.websocket("/ws/scenarios/{scenario_label}")
+async def scenario_feed(websocket: WebSocket, scenario_label: str) -> None:
+    """Subscribe BEFORE calling POST /investigations/simulate with the same
+    scenario_label - see routes/investigations.py's docstring for why the
+    channel is scenario-keyed rather than investigation-id-keyed.
+    """
+    await investigation_feed(websocket, f"scenario:{scenario_label}")

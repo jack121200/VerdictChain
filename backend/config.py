@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     gemini_api_key: str = ""
 
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60
+
     @property
     def sqlalchemy_url(self) -> str:
         raw = self.database_url if self.environment == "production" else self.local_database_url

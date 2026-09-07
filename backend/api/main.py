@@ -8,11 +8,16 @@ from backend.api.websocket import investigation_feed
 
 app = FastAPI(title="VerdictChain API")
 
-# Frontend dev server origin (Vite default) - dashboard is a separate origin
-# from this API, so CORS is required for the browser to call it at all.
+# Frontend dev server origin - dashboard is a separate origin from this API,
+# so CORS is required for the browser to call it at all. Vite's default port
+# is 5173, but it auto-increments (5174, 5175, ...) whenever that port is
+# already taken, which happens often in practice - a regex matching ANY
+# localhost/127.0.0.1 port avoids hardcoding one that silently breaks the
+# next time Vite picks a different one. Still origin-restricted to loopback
+# only, not "allow everything".
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -45,9 +45,7 @@ def test_should_respond_false_when_no_agents():
 def test_respond_to_verdict_no_action_when_gate_not_met(db_session):
     inv = _new_investigation(db_session)
     db_session.commit()
-    actions = respond_to_verdict(
-        inv.investigation_id, _verdict(confidence=0.5), {"network_traffic": 0.6}
-    )
+    actions = respond_to_verdict(inv.investigation_id, _verdict(confidence=0.5), {"network_traffic": 0.6})
     assert actions == []
     assert db_session.execute(select(ResponseAction)).scalars().all() == []
 
@@ -89,9 +87,13 @@ def test_respond_to_verdict_external_class_triggers_block_and_rate_limit_and_aud
     assert all(p.reason == "Mocked reason text." for p in persisted)
 
     # SKILL-architecture.md Section 7: actions also feed the audit trail
-    audit_entries = db_session.execute(
-        select(AuditTrail).where(AuditTrail.actor == "self_healing").order_by(AuditTrail.created_at)
-    ).scalars().all()
+    audit_entries = (
+        db_session.execute(
+            select(AuditTrail).where(AuditTrail.actor == "self_healing").order_by(AuditTrail.created_at)
+        )
+        .scalars()
+        .all()
+    )
     assert len(audit_entries) == 3
     assert {e.action for e in audit_entries} == {"block_ip_range", "trigger_rate_limiting", "trigger_audit"}
     all_entries = db_session.execute(select(AuditTrail).order_by(AuditTrail.created_at)).scalars().all()

@@ -87,9 +87,13 @@ def seed() -> None:
             )
         )
 
-        session.add(ModelVersion(accuracy=0.91, false_positive_rate=0.04, is_deployed=True, notes="seed baseline"))
+        session.add(
+            ModelVersion(accuracy=0.91, false_positive_rate=0.04, is_deployed=True, notes="seed baseline")
+        )
 
-        session.add(AnalystFeedback(investigation_id=investigation.investigation_id, verdict_was_correct=True))
+        session.add(
+            AnalystFeedback(investigation_id=investigation.investigation_id, verdict_was_correct=True)
+        )
 
         h1 = compute_entry_hash("watchdog", "credibility_update", {"agent_id": "network_traffic"}, None)
         entry1 = AuditTrail(

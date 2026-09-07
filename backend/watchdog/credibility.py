@@ -66,7 +66,7 @@ def is_isolated(agent_id: str) -> bool:
 
 
 def reset_agent(agent_id: str) -> None:
-    """"Activate a backup" - see module docstring."""
+    """ "Activate a backup" - see module docstring."""
     _client().set(_crs_key(agent_id), STARTING_CRS)
     _client().delete(_isolated_key(agent_id))
 

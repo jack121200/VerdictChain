@@ -86,11 +86,7 @@ def get_rows_for_scenario(scenario_label: str) -> list[RawLog]:
     """
     session = SessionLocal()
     try:
-        query = (
-            select(RawLog)
-            .where(RawLog.ground_truth_label == scenario_label)
-            .order_by(RawLog.timestamp)
-        )
+        query = select(RawLog).where(RawLog.ground_truth_label == scenario_label).order_by(RawLog.timestamp)
         return session.execute(query).scalars().all()
     finally:
         session.close()

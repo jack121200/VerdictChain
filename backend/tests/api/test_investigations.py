@@ -14,7 +14,9 @@ def _auth_headers() -> dict:
     username = f"test_user_{uuid.uuid4().hex[:8]}"
     password = "a_strong_password_123"
     client.post("/auth/register", json={"username": username, "password": password})
-    token = client.post("/auth/login", json={"username": username, "password": password}).json()["access_token"]
+    token = client.post("/auth/login", json={"username": username, "password": password}).json()[
+        "access_token"
+    ]
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -78,7 +80,9 @@ def test_simulate_scenario_returns_502_when_debate_fails(db_session, monkeypatch
 def test_list_and_get_investigation(db_session):
     session = SessionLocal()
     try:
-        inv = Investigation(trigger_type="manual", status="verdict_reached", verdict_class="ddos", verdict_confidence=0.9)
+        inv = Investigation(
+            trigger_type="manual", status="verdict_reached", verdict_class="ddos", verdict_confidence=0.9
+        )
         session.add(inv)
         session.commit()
         session.refresh(inv)
@@ -116,7 +120,9 @@ def test_submit_feedback(db_session):
         session.close()
 
     headers = _auth_headers()
-    resp = client.post(f"/investigations/{inv_id}/feedback", json={"verdict_was_correct": True}, headers=headers)
+    resp = client.post(
+        f"/investigations/{inv_id}/feedback", json={"verdict_was_correct": True}, headers=headers
+    )
     assert resp.status_code == 204
 
 

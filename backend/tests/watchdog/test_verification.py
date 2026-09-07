@@ -21,7 +21,9 @@ def test_verify_all_citations_match(db_session):
     row = _seed_row(db_session, **{"Destination Port": 445})
     db_session.commit()
 
-    rate = verify_cited_evidence([CitedEvidence(row_id=str(row.row_id), field="Destination Port", value="445")])
+    rate = verify_cited_evidence(
+        [CitedEvidence(row_id=str(row.row_id), field="Destination Port", value="445")]
+    )
     assert rate == 1.0
 
 
@@ -29,7 +31,9 @@ def test_verify_citation_with_wrong_value_fails(db_session):
     row = _seed_row(db_session, **{"Destination Port": 445})
     db_session.commit()
 
-    rate = verify_cited_evidence([CitedEvidence(row_id=str(row.row_id), field="Destination Port", value="9999")])
+    rate = verify_cited_evidence(
+        [CitedEvidence(row_id=str(row.row_id), field="Destination Port", value="9999")]
+    )
     assert rate == 0.0
 
 

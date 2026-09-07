@@ -14,9 +14,7 @@ from backend.db.session import SessionLocal
 def _rows(source: str, limit: int = 3) -> list[RawLog]:
     session = SessionLocal()
     try:
-        rows = session.execute(
-            select(RawLog).where(RawLog.source == source).limit(limit)
-        ).scalars().all()
+        rows = session.execute(select(RawLog).where(RawLog.source == source).limit(limit)).scalars().all()
         for r in rows:
             session.refresh(r)
         return rows

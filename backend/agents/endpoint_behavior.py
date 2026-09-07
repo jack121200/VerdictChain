@@ -100,5 +100,7 @@ def investigate(
     raw_text, provider_used = call_with_fallback(GeminiClient(), GroqClient(), SYSTEM_PROMPT, user_prompt)
 
     valid_row_ids = {str(row.row_id) for row in rows}
-    response = parse_and_validate(raw_text, expected_agent_id=AGENT_ID, expected_round=round_no, valid_row_ids=valid_row_ids)
+    response = parse_and_validate(
+        raw_text, expected_agent_id=AGENT_ID, expected_round=round_no, valid_row_ids=valid_row_ids
+    )
     return response, provider_used

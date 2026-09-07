@@ -18,7 +18,9 @@ class RawLog(Base):
         Index("idx_raw_logs_source", "source"),
     )
 
-    row_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    row_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     timestamp: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     source_file: Mapped[str | None] = mapped_column(Text)
@@ -33,7 +35,9 @@ class RawLog(Base):
 class Investigation(Base):
     __tablename__ = "investigations"
 
-    investigation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     trigger_type: Mapped[str] = mapped_column(Text, nullable=False)
     trigger_reason: Mapped[str | None] = mapped_column(Text)
     scenario_label: Mapped[str | None] = mapped_column(Text)
@@ -48,8 +52,12 @@ class DebateTranscript(Base):
     __tablename__ = "debate_transcripts"
     __table_args__ = (Index("idx_debate_transcripts_investigation", "investigation_id"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    investigation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("investigations.investigation_id"))
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    investigation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("investigations.investigation_id")
+    )
     round: Mapped[int] = mapped_column(Integer, nullable=False)
     agent_id: Mapped[str] = mapped_column(Text, nullable=False)
     theory: Mapped[str] = mapped_column(Text, nullable=False)
@@ -62,8 +70,12 @@ class CredibilityLog(Base):
     __tablename__ = "credibility_log"
     __table_args__ = (Index("idx_credibility_log_investigation_agent", "investigation_id", "agent_id"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    investigation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("investigations.investigation_id"))
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    investigation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("investigations.investigation_id")
+    )
     agent_id: Mapped[str] = mapped_column(Text, nullable=False)
     round: Mapped[int] = mapped_column(Integer, nullable=False)
     crs_before: Mapped[float] = mapped_column(Float, nullable=False)
@@ -80,8 +92,12 @@ class ResponseAction(Base):
         CheckConstraint("is_simulated = TRUE", name="ck_response_actions_always_simulated"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    investigation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("investigations.investigation_id"))
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    investigation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("investigations.investigation_id")
+    )
     action_type: Mapped[str] = mapped_column(Text, nullable=False)
     target: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
@@ -92,7 +108,9 @@ class ResponseAction(Base):
 class ModelVersion(Base):
     __tablename__ = "model_versions"
 
-    version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     trained_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     accuracy: Mapped[float | None] = mapped_column(Float)
     false_positive_rate: Mapped[float | None] = mapped_column(Float)
@@ -107,8 +125,12 @@ class AuditTrail(Base):
         Index("idx_audit_trail_created_at", "created_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    investigation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("investigations.investigation_id"))
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    investigation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("investigations.investigation_id")
+    )
     actor: Mapped[str] = mapped_column(Text, nullable=False)
     action: Mapped[str] = mapped_column(Text, nullable=False)
     detail: Mapped[dict | None] = mapped_column(JSONB)
@@ -120,8 +142,12 @@ class AuditTrail(Base):
 class AnalystFeedback(Base):
     __tablename__ = "analyst_feedback"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    investigation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("investigations.investigation_id"))
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    investigation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("investigations.investigation_id")
+    )
     verdict_was_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -133,7 +159,9 @@ class Analyst(Base):
 
     __tablename__ = "analysts"
 
-    analyst_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    analyst_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     username: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())

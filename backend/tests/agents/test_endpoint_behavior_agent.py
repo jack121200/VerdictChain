@@ -56,7 +56,9 @@ def test_investigate_uses_gemini_as_primary_not_groq(monkeypatch):
         "cited_evidence": [{"row_id": str(row.row_id), "field": "connect_count", "value": "15"}],
         "round": 1,
     }
-    monkeypatch.setattr(endpoint_behavior, "GeminiClient", lambda: FakeProvider("gemini", response=json.dumps(payload)))
+    monkeypatch.setattr(
+        endpoint_behavior, "GeminiClient", lambda: FakeProvider("gemini", response=json.dumps(payload))
+    )
     monkeypatch.setattr(endpoint_behavior, "GroqClient", lambda: FakeProvider("groq", response="unused"))
 
     response, provider_used = endpoint_behavior.investigate([row], round_no=1)
@@ -73,8 +75,12 @@ def test_investigate_falls_back_to_groq_on_gemini_failure(monkeypatch):
         "cited_evidence": [{"row_id": str(row.row_id), "field": "off_hours", "value": "False"}],
         "round": 1,
     }
-    monkeypatch.setattr(endpoint_behavior, "GeminiClient", lambda: FakeProvider("gemini", error=RuntimeError("down")))
-    monkeypatch.setattr(endpoint_behavior, "GroqClient", lambda: FakeProvider("groq", response=json.dumps(payload)))
+    monkeypatch.setattr(
+        endpoint_behavior, "GeminiClient", lambda: FakeProvider("gemini", error=RuntimeError("down"))
+    )
+    monkeypatch.setattr(
+        endpoint_behavior, "GroqClient", lambda: FakeProvider("groq", response=json.dumps(payload))
+    )
 
     response, provider_used = endpoint_behavior.investigate([row], round_no=1)
     assert provider_used == "groq"

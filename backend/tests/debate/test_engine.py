@@ -52,15 +52,27 @@ def test_run_debate_persists_all_9_transcript_rows(db_session):
     investigators = {
         "network_traffic": _make_fake_investigator(
             "network_traffic",
-            {1: "Traffic spike suggests DDoS.", 2: "CHALLENGE: still a DDoS flood pattern given volume.", 3: "Final: DDoS confirmed."},
+            {
+                1: "Traffic spike suggests DDoS.",
+                2: "CHALLENGE: still a DDoS flood pattern given volume.",
+                3: "Final: DDoS confirmed.",
+            },
         ),
         "access_log": _make_fake_investigator(
             "access_log",
-            {1: "No anomaly in file access.", 2: "SUPPORT: agree traffic looks like DDoS externally.", 3: "Final: no insider signal."},
+            {
+                1: "No anomaly in file access.",
+                2: "SUPPORT: agree traffic looks like DDoS externally.",
+                3: "Final: no insider signal.",
+            },
         ),
         "endpoint_behavior": _make_fake_investigator(
             "endpoint_behavior",
-            {1: "Normal login pattern.", 2: "SUPPORT: consistent with external DDoS theory.", 3: "Final: normal behavior."},
+            {
+                1: "Normal login pattern.",
+                2: "SUPPORT: consistent with external DDoS theory.",
+                3: "Final: normal behavior.",
+            },
         ),
     }
 
@@ -107,8 +119,12 @@ def test_run_debate_retries_on_near_duplicate_round2(db_session):
 
     investigators = {
         "network_traffic": flaky_investigator,
-        "access_log": _make_fake_investigator("access_log", {1: "a", 2: "b different enough text here", 3: "c"}),
-        "endpoint_behavior": _make_fake_investigator("endpoint_behavior", {1: "d", 2: "e different enough text here", 3: "f"}),
+        "access_log": _make_fake_investigator(
+            "access_log", {1: "a", 2: "b different enough text here", 3: "c"}
+        ),
+        "endpoint_behavior": _make_fake_investigator(
+            "endpoint_behavior", {1: "d", 2: "e different enough text here", 3: "f"}
+        ),
     }
 
     run_debate("network_traffic", network_rows, investigators=investigators)
@@ -165,9 +181,7 @@ def test_run_debate_stores_scenario_label_as_hidden_ground_truth(db_session):
         "endpoint_behavior": _make_fake_investigator("endpoint_behavior", {1: "c", 2: "c2", 3: "c3"}),
     }
 
-    result = run_debate(
-        "network_traffic", network_rows, investigators=investigators, scenario_label="DDoS"
-    )
+    result = run_debate("network_traffic", network_rows, investigators=investigators, scenario_label="DDoS")
 
     investigation = db_session.get(Investigation, uuid.UUID(result["investigation_id"]))
     assert investigation.scenario_label == "DDoS"
@@ -228,14 +242,22 @@ def test_run_debate_scores_every_round_and_persists_credibility_log(db_session):
     investigators = {
         "network_traffic": lying_investigator,
         "access_log": _make_fake_investigator("access_log", {1: "a", 2: "b different enough", 3: "c"}),
-        "endpoint_behavior": _make_fake_investigator("endpoint_behavior", {1: "d", 2: "e different enough", 3: "f"}),
+        "endpoint_behavior": _make_fake_investigator(
+            "endpoint_behavior", {1: "d", 2: "e different enough", 3: "f"}
+        ),
     }
 
     run_debate("network_traffic", network_rows, investigators=investigators)
 
-    logs = db_session.execute(
-        select(CredibilityLog).where(CredibilityLog.agent_id == fake_agent_id).order_by(CredibilityLog.round)
-    ).scalars().all()
+    logs = (
+        db_session.execute(
+            select(CredibilityLog)
+            .where(CredibilityLog.agent_id == fake_agent_id)
+            .order_by(CredibilityLog.round)
+        )
+        .scalars()
+        .all()
+    )
     assert len(logs) == 3
     assert all(log.verification_match_rate == 0.0 for log in logs)
     assert all(not log.isolated for log in logs)  # can't reach isolation from CrS=0.5 - see docstring above
@@ -270,14 +292,22 @@ def test_run_debate_resets_agent_immediately_when_watchdog_isolates_it(db_sessio
     investigators = {
         "network_traffic": lying_investigator,
         "access_log": _make_fake_investigator("access_log", {1: "a", 2: "b different enough", 3: "c"}),
-        "endpoint_behavior": _make_fake_investigator("endpoint_behavior", {1: "d", 2: "e different enough", 3: "f"}),
+        "endpoint_behavior": _make_fake_investigator(
+            "endpoint_behavior", {1: "d", 2: "e different enough", 3: "f"}
+        ),
     }
 
     run_debate("network_traffic", network_rows, investigators=investigators)
 
-    logs = db_session.execute(
-        select(CredibilityLog).where(CredibilityLog.agent_id == fake_agent_id).order_by(CredibilityLog.round)
-    ).scalars().all()
+    logs = (
+        db_session.execute(
+            select(CredibilityLog)
+            .where(CredibilityLog.agent_id == fake_agent_id)
+            .order_by(CredibilityLog.round)
+        )
+        .scalars()
+        .all()
+    )
     assert logs[0].isolated is True  # round 1 caught the pre-seeded low CrS
 
     # reset_agent() fires immediately on detection, so by the end of the debate

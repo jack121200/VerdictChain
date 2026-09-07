@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: verdictchain
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: verdictchain
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: verdictchain
+          RABBITMQ_DEFAULT_PASS: ci_password
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+
+    # No real secrets here - every LLM call is mocked in the test suite
+    # (SKILL-conventions.md / this project's own testing policy: unit tests
+    # mock the LLM boundary, live proof lives in backend/scripts/*_live.py
+    # instead). JWT_SECRET_KEY is a disposable CI-only value, not a real
+    # credential - SKILL-security.md's ".env only" rule is about real secrets,
+    # not this throwaway.
+    env:
+      ENVIRONMENT: development
+      LOCAL_DATABASE_URL: postgresql+psycopg://verdictchain:ci_password@localhost:5432/verdictchain
+      DATABASE_URL: ""
+      REDIS_URL: redis://localhost:6379/0
+      RABBITMQ_URL: amqp://verdictchain:ci_password@localhost:5672/
+      JWT_SECRET_KEY: ci_only_disposable_secret_not_real
+      GROQ_API_KEY: ""
+      GEMINI_API_KEY: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Lint (black --check)
+        run: python -m black --line-length 110 backend --check
+
+      - name: Lint (ruff)
+        run: python -m ruff check backend --line-length 110
+
+      - name: Apply migrations
+        working-directory: backend
+        run: python -m alembic upgrade head
+
+      - name: Run tests
+        run: python -m pytest -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: frontend
+        run: pnpm build

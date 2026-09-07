@@ -110,7 +110,9 @@ def test_parse_and_validate_rejects_fabricated_citation():
 
 def test_parse_and_validate_rejects_wrong_round():
     with pytest.raises(InvalidAgentResponse):
-        parse_and_validate(json.dumps(VALID_PAYLOAD), "network_traffic", expected_round=2, valid_row_ids={"row-1"})
+        parse_and_validate(
+            json.dumps(VALID_PAYLOAD), "network_traffic", expected_round=2, valid_row_ids={"row-1"}
+        )
 
 
 def test_parse_and_validate_backfills_missing_round_field():
@@ -119,7 +121,9 @@ def test_parse_and_validate_backfills_missing_round_field():
     so backfill rather than aborting the whole debate over a dropped field.
     """
     payload = {k: v for k, v in VALID_PAYLOAD.items() if k != "round"}
-    resp = parse_and_validate(json.dumps(payload), "network_traffic", expected_round=2, valid_row_ids={"row-1"})
+    resp = parse_and_validate(
+        json.dumps(payload), "network_traffic", expected_round=2, valid_row_ids={"row-1"}
+    )
     assert resp.round == 2
 
 

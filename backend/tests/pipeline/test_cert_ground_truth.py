@@ -2,9 +2,7 @@ import pytest
 
 from backend.pipeline.cert_ground_truth import ANSWERS_DIR, load_malicious_event_ids, load_malicious_users
 
-pytestmark = pytest.mark.skipif(
-    not ANSWERS_DIR.exists(), reason="CERT answers not extracted yet"
-)
+pytestmark = pytest.mark.skipif(not ANSWERS_DIR.exists(), reason="CERT answers not extracted yet")
 
 
 def test_load_malicious_users_matches_real_r42_counts():

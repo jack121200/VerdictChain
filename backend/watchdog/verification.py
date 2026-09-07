@@ -36,7 +36,11 @@ def verify_cited_evidence(cited_evidence: list[CitedEvidence]) -> float:
             if row is None:
                 continue
 
-            actual = getattr(row, entry.field) if entry.field in _TOP_LEVEL_FIELDS else row.raw_fields.get(entry.field)
+            actual = (
+                getattr(row, entry.field)
+                if entry.field in _TOP_LEVEL_FIELDS
+                else row.raw_fields.get(entry.field)
+            )
             if actual is not None and str(entry.value) == str(actual):
                 matches += 1
 

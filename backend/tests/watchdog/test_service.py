@@ -40,9 +40,7 @@ def test_score_agent_round_persists_credibility_log(db_session):
     assert result["verification_match_rate"] == 1.0
     assert result["isolated"] is False
 
-    log = db_session.execute(
-        select(CredibilityLog).where(CredibilityLog.agent_id == agent_id)
-    ).scalar_one()
+    log = db_session.execute(select(CredibilityLog).where(CredibilityLog.agent_id == agent_id)).scalar_one()
     assert log.round == 1
     assert log.verification_match_rate == 1.0
     assert log.isolated is False

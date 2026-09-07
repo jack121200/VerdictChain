@@ -21,7 +21,13 @@ _CLASS_KEYWORDS = {
     "brute_force": ["brute force", "brute-force", "patator", "credential guessing", "repeated login attempt"],
     "botnet_c2": ["botnet", "c2", "command and control", "beacon"],
     "insider_file_exfiltration": ["exfiltration", "data theft", "unusual file access", "large file transfer"],
-    "insider_logon_anomaly": ["off-hours", "off hours", "login anomaly", "unrecognized device", "unusual login"],
+    "insider_logon_anomaly": [
+        "off-hours",
+        "off hours",
+        "login anomaly",
+        "unrecognized device",
+        "unusual login",
+    ],
     "benign": ["benign", "no anomaly", "no evidence", "normal", "typical activity"],
 }
 

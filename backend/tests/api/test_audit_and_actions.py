@@ -14,7 +14,9 @@ def _auth_headers() -> dict:
     username = f"test_user_{uuid.uuid4().hex[:8]}"
     password = "a_strong_password_123"
     client.post("/auth/register", json={"username": username, "password": password})
-    token = client.post("/auth/login", json={"username": username, "password": password}).json()["access_token"]
+    token = client.post("/auth/login", json={"username": username, "password": password}).json()[
+        "access_token"
+    ]
     return {"Authorization": f"Bearer {token}"}
 
 

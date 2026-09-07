@@ -20,7 +20,12 @@ def upgrade() -> None:
 
     op.create_table(
         "raw_logs",
-        sa.Column("row_id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "row_id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("timestamp", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("source", sa.Text(), nullable=False),
         sa.Column("source_file", sa.Text()),
@@ -36,7 +41,12 @@ def upgrade() -> None:
 
     op.create_table(
         "investigations",
-        sa.Column("investigation_id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "investigation_id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("trigger_type", sa.Text(), nullable=False),
         sa.Column("trigger_reason", sa.Text()),
         sa.Column("scenario_label", sa.Text()),
@@ -49,8 +59,14 @@ def upgrade() -> None:
 
     op.create_table(
         "debate_transcripts",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("investigation_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("investigations.investigation_id")),
+        sa.Column(
+            "id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+        ),
+        sa.Column(
+            "investigation_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("investigations.investigation_id"),
+        ),
         sa.Column("round", sa.Integer(), nullable=False),
         sa.Column("agent_id", sa.Text(), nullable=False),
         sa.Column("theory", sa.Text(), nullable=False),
@@ -62,8 +78,14 @@ def upgrade() -> None:
 
     op.create_table(
         "credibility_log",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("investigation_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("investigations.investigation_id")),
+        sa.Column(
+            "id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+        ),
+        sa.Column(
+            "investigation_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("investigations.investigation_id"),
+        ),
         sa.Column("agent_id", sa.Text(), nullable=False),
         sa.Column("round", sa.Integer(), nullable=False),
         sa.Column("crs_before", sa.Float(), nullable=False),
@@ -72,12 +94,20 @@ def upgrade() -> None:
         sa.Column("isolated", sa.Boolean(), server_default=sa.false()),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()")),
     )
-    op.create_index("idx_credibility_log_investigation_agent", "credibility_log", ["investigation_id", "agent_id"])
+    op.create_index(
+        "idx_credibility_log_investigation_agent", "credibility_log", ["investigation_id", "agent_id"]
+    )
 
     op.create_table(
         "response_actions",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("investigation_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("investigations.investigation_id")),
+        sa.Column(
+            "id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+        ),
+        sa.Column(
+            "investigation_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("investigations.investigation_id"),
+        ),
         sa.Column("action_type", sa.Text(), nullable=False),
         sa.Column("target", sa.Text(), nullable=False),
         sa.Column("reason", sa.Text()),
@@ -89,7 +119,12 @@ def upgrade() -> None:
 
     op.create_table(
         "model_versions",
-        sa.Column("version_id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "version_id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("trained_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()")),
         sa.Column("accuracy", sa.Float()),
         sa.Column("false_positive_rate", sa.Float()),
@@ -99,8 +134,14 @@ def upgrade() -> None:
 
     op.create_table(
         "audit_trail",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("investigation_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("investigations.investigation_id")),
+        sa.Column(
+            "id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+        ),
+        sa.Column(
+            "investigation_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("investigations.investigation_id"),
+        ),
         sa.Column("actor", sa.Text(), nullable=False),
         sa.Column("action", sa.Text(), nullable=False),
         sa.Column("detail", postgresql.JSONB()),
@@ -113,8 +154,14 @@ def upgrade() -> None:
 
     op.create_table(
         "analyst_feedback",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("investigation_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("investigations.investigation_id")),
+        sa.Column(
+            "id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+        ),
+        sa.Column(
+            "investigation_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("investigations.investigation_id"),
+        ),
         sa.Column("verdict_was_correct", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()")),
     )

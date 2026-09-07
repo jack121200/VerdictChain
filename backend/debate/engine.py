@@ -21,6 +21,7 @@ from backend.self_healing.actions import respond_to_verdict
 from backend.watchdog.credibility import get_crs, reset_agent
 from backend.watchdog.service import score_agent_round
 
+
 class DebateFailedError(Exception):
     """Raised when a debate can't complete (e.g. all LLM provider retries
     exhausted). Carries investigation_id so the caller can report which

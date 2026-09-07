@@ -26,4 +26,6 @@ def test_enforce_rate_limit_scoped_per_identifier():
     id_b = f"test_b_{uuid.uuid4().hex[:8]}"
     for _ in range(3):
         enforce_rate_limit("test_action", id_a, limit=3, window_seconds=60)
-    enforce_rate_limit("test_action", id_b, limit=3, window_seconds=60)  # different identifier, must not raise
+    enforce_rate_limit(
+        "test_action", id_b, limit=3, window_seconds=60
+    )  # different identifier, must not raise

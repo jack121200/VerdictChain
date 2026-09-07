@@ -53,7 +53,9 @@ def test_investigate_end_to_end_with_mocked_provider(monkeypatch):
         "round": 1,
     }
 
-    monkeypatch.setattr(network_traffic, "GroqClient", lambda: FakeProvider("groq", response=json.dumps(valid_payload)))
+    monkeypatch.setattr(
+        network_traffic, "GroqClient", lambda: FakeProvider("groq", response=json.dumps(valid_payload))
+    )
     monkeypatch.setattr(network_traffic, "GeminiClient", lambda: FakeProvider("gemini", response="unused"))
 
     response, provider_used = network_traffic.investigate([row], round_no=1)
@@ -73,8 +75,12 @@ def test_investigate_falls_back_to_gemini_on_groq_failure(monkeypatch):
         "round": 1,
     }
 
-    monkeypatch.setattr(network_traffic, "GroqClient", lambda: FakeProvider("groq", error=RuntimeError("down")))
-    monkeypatch.setattr(network_traffic, "GeminiClient", lambda: FakeProvider("gemini", response=json.dumps(valid_payload)))
+    monkeypatch.setattr(
+        network_traffic, "GroqClient", lambda: FakeProvider("groq", error=RuntimeError("down"))
+    )
+    monkeypatch.setattr(
+        network_traffic, "GeminiClient", lambda: FakeProvider("gemini", response=json.dumps(valid_payload))
+    )
 
     response, provider_used = network_traffic.investigate([row], round_no=1)
 

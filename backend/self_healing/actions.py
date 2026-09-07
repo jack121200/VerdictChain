@@ -88,15 +88,25 @@ _SANDBOX_FUNCTIONS = {
 }
 
 
-def _generate_reason(attack_class: str, confidence: float, crs_list: list[float], action_name: str, target: str) -> str:
+def _generate_reason(
+    attack_class: str, confidence: float, crs_list: list[float], action_name: str, target: str
+) -> str:
     prompt = _REASON_PROMPT_TEMPLATE.format(
-        attack_class=attack_class, confidence=confidence, crs_list=crs_list, action_name=action_name, target=target
+        attack_class=attack_class,
+        confidence=confidence,
+        crs_list=crs_list,
+        action_name=action_name,
+        target=target,
     )
     try:
-        return GeminiClient().complete(
-            "You write concise, factual one-sentence audit-log justifications. No JSON, just the sentence.",
-            prompt,
-        ).strip()
+        return (
+            GeminiClient()
+            .complete(
+                "You write concise, factual one-sentence audit-log justifications. No JSON, just the sentence.",
+                prompt,
+            )
+            .strip()
+        )
     except Exception:  # noqa: BLE001 - reason text is a nice-to-have, never block containment on it
         return f"{action_name} on {target}: {attack_class} verdict at confidence {confidence} with credible supporting agents."
 
@@ -127,7 +137,9 @@ def respond_to_verdict(
             sandbox_fn = _SANDBOX_FUNCTIONS[action_type]
             sandbox_fn(target)  # executes in the sandbox - see sandbox.py
 
-            reason = _generate_reason(verdict_class, verdict["verdict_confidence"], crs_list, action_type, target)
+            reason = _generate_reason(
+                verdict_class, verdict["verdict_confidence"], crs_list, action_type, target
+            )
 
             record = ResponseAction(
                 investigation_id=investigation_id,
@@ -144,7 +156,12 @@ def respond_to_verdict(
                 session,
                 actor="self_healing",
                 action=action_type,
-                detail={"target": target, "reason": reason, "verdict_class": verdict_class, "is_simulated": True},
+                detail={
+                    "target": target,
+                    "reason": reason,
+                    "verdict_class": verdict_class,
+                    "is_simulated": True,
+                },
                 investigation_id=investigation_id,
             )
 

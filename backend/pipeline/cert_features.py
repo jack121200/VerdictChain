@@ -14,8 +14,6 @@ from this exact CERT r4.2 file layout, so they're left out rather than faked:
   honest proxy and is what's actually computed here.
 """
 
-from datetime import datetime
-
 import pandas as pd
 
 REPO_ROOT_LDAP_GLOB = "LDAP/*.csv"

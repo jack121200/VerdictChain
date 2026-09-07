@@ -78,10 +78,25 @@ def test_normalize_cert_logon_row_never_leaks_label_into_raw_fields():
 
 
 def test_normalize_cert_device_and_file_rows_never_leak_label():
-    device_row = {"user": "U1", "day": "2010-01-02", "connect_count": 2, "primary_pc": "PC-1",
-                  "ground_truth_label": "insider_scenario_2", "distinct_pcs_with_device_activity": 1, "row_ids": ""}
-    file_row = {"user": "U1", "day": "2010-01-02", "file_access_count": 5, "primary_pc": "PC-1",
-                "ground_truth_label": "benign", "user_department": "Finance", "distinct_filenames": 5, "row_ids": ""}
+    device_row = {
+        "user": "U1",
+        "day": "2010-01-02",
+        "connect_count": 2,
+        "primary_pc": "PC-1",
+        "ground_truth_label": "insider_scenario_2",
+        "distinct_pcs_with_device_activity": 1,
+        "row_ids": "",
+    }
+    file_row = {
+        "user": "U1",
+        "day": "2010-01-02",
+        "file_access_count": 5,
+        "primary_pc": "PC-1",
+        "ground_truth_label": "benign",
+        "user_department": "Finance",
+        "distinct_filenames": 5,
+        "row_ids": "",
+    }
 
     device_out = normalize_cert_device_row(device_row)
     file_out = normalize_cert_file_row(file_row)

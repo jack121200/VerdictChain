@@ -55,10 +55,7 @@ def build_user_prompt(
     normalize_network_row() already keeps the label out of raw_fields, and this
     function never touches ground_truth_label at all, by construction).
     """
-    data_slice = [
-        {"row_id": str(row.row_id), **row.raw_fields}
-        for row in rows
-    ]
+    data_slice = [{"row_id": str(row.row_id), **row.raw_fields} for row in rows]
 
     parts = [
         f"Round: {round_no}",
@@ -97,5 +94,7 @@ def investigate(
     raw_text, provider_used = call_with_fallback(GroqClient(), GeminiClient(), SYSTEM_PROMPT, user_prompt)
 
     valid_row_ids = {str(row.row_id) for row in rows}
-    response = parse_and_validate(raw_text, expected_agent_id=AGENT_ID, expected_round=round_no, valid_row_ids=valid_row_ids)
+    response = parse_and_validate(
+        raw_text, expected_agent_id=AGENT_ID, expected_round=round_no, valid_row_ids=valid_row_ids
+    )
     return response, provider_used

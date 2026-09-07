@@ -51,5 +51,11 @@ def test_module_has_no_networking_imports():
     import inspect
 
     source = inspect.getsource(sandbox)
-    for forbidden in ("import socket", "import httpx", "import requests", "import subprocess", "import urllib"):
+    for forbidden in (
+        "import socket",
+        "import httpx",
+        "import requests",
+        "import subprocess",
+        "import urllib",
+    ):
         assert forbidden not in source, f"sandbox.py must never import {forbidden.split()[-1]}"

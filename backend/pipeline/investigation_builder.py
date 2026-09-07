@@ -47,9 +47,7 @@ def create_investigation(
         session.flush()
 
         rows = (
-            session.execute(
-                select(RawLog).where(RawLog.row_id.in_(row_ids)).order_by(RawLog.timestamp)
-            )
+            session.execute(select(RawLog).where(RawLog.row_id.in_(row_ids)).order_by(RawLog.timestamp))
             .scalars()
             .all()
         )

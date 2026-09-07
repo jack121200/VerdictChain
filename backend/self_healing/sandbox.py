@@ -33,7 +33,9 @@ class _MockDirectoryService:
 
     def lock_account(self, user_id: str) -> str:
         self.locked_accounts.add(user_id)
-        return f"account {user_id} locked in sandboxed directory service (simulated, no real system contacted)"
+        return (
+            f"account {user_id} locked in sandboxed directory service (simulated, no real system contacted)"
+        )
 
 
 @dataclass
@@ -49,7 +51,9 @@ class _MockFirewall:
 
     def trigger_rate_limiting(self, target: str) -> str:
         self.rate_limited_targets.add(target)
-        return f"rate limiting enabled for {target} in sandboxed firewall (simulated, no real system contacted)"
+        return (
+            f"rate limiting enabled for {target} in sandboxed firewall (simulated, no real system contacted)"
+        )
 
 
 _directory_service = _MockDirectoryService()

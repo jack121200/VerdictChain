@@ -36,7 +36,9 @@ def append_entry(
     transaction (caller commits). Looks up the current chain tail itself so
     every caller doesn't have to track prev_hash by hand.
     """
-    tail = session.execute(select(AuditTrail).order_by(AuditTrail.created_at.desc()).limit(1)).scalar_one_or_none()
+    tail = session.execute(
+        select(AuditTrail).order_by(AuditTrail.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
     prev_hash = tail.entry_hash if tail else None
 
     entry = AuditTrail(

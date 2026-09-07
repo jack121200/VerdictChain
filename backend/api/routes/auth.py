@@ -26,7 +26,9 @@ def register(payload: RegisterRequest, request: Request) -> TokenResponse:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken") from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Username already taken"
+            ) from exc
     finally:
         session.close()
 

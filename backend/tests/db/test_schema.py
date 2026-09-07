@@ -98,7 +98,9 @@ def test_response_actions_default_is_simulated_true(db_session):
     db_session.add(inv)
     db_session.flush()
 
-    action = ResponseAction(investigation_id=inv.investigation_id, action_type="trigger_audit", target="system")
+    action = ResponseAction(
+        investigation_id=inv.investigation_id, action_type="trigger_audit", target="system"
+    )
     db_session.add(action)
     db_session.commit()
     db_session.refresh(action)

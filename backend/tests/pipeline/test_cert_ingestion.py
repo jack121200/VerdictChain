@@ -37,8 +37,6 @@ def test_ingest_cert_into_db_scoped_to_its_own_sources(db_session):
 
 def test_ingested_cert_rows_have_no_ground_truth_leak_in_raw_fields(db_session):
     ingest_cert_into_db()
-    row = db_session.execute(
-        select(RawLog).where(RawLog.source == "cert_r4.2_logon").limit(1)
-    ).scalar_one()
+    row = db_session.execute(select(RawLog).where(RawLog.source == "cert_r4.2_logon").limit(1)).scalar_one()
     assert "ground_truth_label" not in row.raw_fields
     assert "user" not in row.raw_fields

@@ -14,16 +14,23 @@ router = APIRouter(prefix="/response-actions", tags=["response-actions"])
 
 
 @router.get("", response_model=list[ResponseActionOut])
-def list_response_actions(limit: int = 100, username: str = Depends(get_current_user)) -> list[ResponseActionOut]:
+def list_response_actions(
+    limit: int = 100, username: str = Depends(get_current_user)
+) -> list[ResponseActionOut]:
     session = SessionLocal()
     try:
-        rows = session.execute(
-            select(ResponseAction).order_by(ResponseAction.created_at.desc()).limit(limit)
-        ).scalars().all()
+        rows = (
+            session.execute(select(ResponseAction).order_by(ResponseAction.created_at.desc()).limit(limit))
+            .scalars()
+            .all()
+        )
         return [
             ResponseActionOut(
-                action_type=r.action_type, target=r.target, reason=r.reason,
-                is_simulated=r.is_simulated, created_at=r.created_at,
+                action_type=r.action_type,
+                target=r.target,
+                reason=r.reason,
+                is_simulated=r.is_simulated,
+                created_at=r.created_at,
             )
             for r in rows
         ]

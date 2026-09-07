@@ -1,11 +1,11 @@
 import socket
 import struct
 
-import pytest
-
 from backend.pipeline.normalization import (
     _decimal_to_dotted_ip,
-    normalize_cert_row,
+    normalize_cert_device_row,
+    normalize_cert_file_row,
+    normalize_cert_logon_row,
     normalize_network_row,
 )
 
@@ -46,6 +46,48 @@ def test_normalize_network_row_never_leaks_label_into_raw_fields():
     assert out["raw_fields"]["Flow Duration"] == 112740690
 
 
-def test_normalize_cert_row_not_implemented_yet():
-    with pytest.raises(NotImplementedError):
-        normalize_cert_row({})
+CERT_LOGON_ROW = {
+    "user": "AAM0658",
+    "day": "2010-01-02",
+    "logon_count": 3,
+    "logoff_count": 3,
+    "distinct_pcs": 1,
+    "primary_pc": "PC-9923",
+    "off_hours": True,
+    "ground_truth_label": "insider_scenario_1",
+    "row_ids": "{e1},{e2}",
+}
+
+
+def test_normalize_cert_logon_row_shape():
+    out = normalize_cert_logon_row(CERT_LOGON_ROW)
+    assert out["source"] == "cert_r4.2_logon"
+    assert out["event_type"] == "logon"
+    assert out["user_id"] == "AAM0658"
+    assert out["host_id"] == "PC-9923"
+    assert out["ground_truth_label"] == "insider_scenario_1"
+    assert out["timestamp"].isoformat() == "2010-01-02T00:00:00+00:00"
+
+
+def test_normalize_cert_logon_row_never_leaks_label_into_raw_fields():
+    out = normalize_cert_logon_row(CERT_LOGON_ROW)
+    assert "ground_truth_label" not in out["raw_fields"]
+    assert "user" not in out["raw_fields"]
+    assert out["raw_fields"]["logon_count"] == 3
+    assert out["raw_fields"]["off_hours"] is True
+
+
+def test_normalize_cert_device_and_file_rows_never_leak_label():
+    device_row = {"user": "U1", "day": "2010-01-02", "connect_count": 2, "primary_pc": "PC-1",
+                  "ground_truth_label": "insider_scenario_2", "distinct_pcs_with_device_activity": 1, "row_ids": ""}
+    file_row = {"user": "U1", "day": "2010-01-02", "file_access_count": 5, "primary_pc": "PC-1",
+                "ground_truth_label": "benign", "user_department": "Finance", "distinct_filenames": 5, "row_ids": ""}
+
+    device_out = normalize_cert_device_row(device_row)
+    file_out = normalize_cert_file_row(file_row)
+
+    assert "ground_truth_label" not in device_out["raw_fields"]
+    assert "ground_truth_label" not in file_out["raw_fields"]
+    assert device_out["event_type"] == "device_event"
+    assert file_out["event_type"] == "file_access"
+    assert file_out["raw_fields"]["user_department"] == "Finance"

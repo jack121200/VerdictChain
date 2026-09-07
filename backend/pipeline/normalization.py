@@ -1,11 +1,12 @@
 """Raw source row -> common raw_logs schema (SKILL-data-schema.md Section 1).
 
-Only the network (CICIDS2017) branch is implemented — the CERT r4.2 branch
-(Access-Log / Endpoint-Behavior agents) is stubbed until that dataset is provided,
-per this session's decision to build external/network first.
+CERT r4.2 rows are pre-aggregated per (user, day, category) by
+backend/pipeline/cert_features.py before reaching these functions — one
+aggregate row in, one raw_logs insert dict out, same contract as the network
+branch's one-flow-row-in/one-insert-dict-out.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 # Columns that are metadata, not flow features — excluded from raw_fields so the
@@ -44,9 +45,57 @@ def normalize_network_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalize_cert_row(row: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError(
-        "CERT r4.2 data has not been provided yet (Access-Log / Endpoint-Behavior "
-        "agents). Implement this once data/raw_data has logon.csv/device.csv/file.csv "
-        "— see SKILL-data-schema.md Section 4 for the required feature spec."
-    )
+_CERT_METADATA_COLUMNS = {"user", "day", "ground_truth_label", "primary_pc"}
+
+
+def _cert_day_timestamp(day_iso: str) -> datetime:
+    """Aggregate rows represent a whole day, not an instant - midnight UTC on
+    that real day. Not fabricated precision: the row genuinely IS a full-day
+    summary, so this is the honest timestamp for it (see cert_features.py).
+    """
+    return datetime.fromisoformat(day_iso).replace(tzinfo=timezone.utc)
+
+
+def normalize_cert_logon_row(row: dict[str, Any]) -> dict[str, Any]:
+    raw_fields = {k: v for k, v in row.items() if k not in _CERT_METADATA_COLUMNS}
+    return {
+        "timestamp": _cert_day_timestamp(row["day"]),
+        "source": "cert_r4.2_logon",
+        "source_file": "logon.csv",
+        "event_type": "logon",
+        "user_id": row["user"],
+        "host_id": row["primary_pc"],
+        "severity": None,
+        "raw_fields": raw_fields,
+        "ground_truth_label": row["ground_truth_label"],
+    }
+
+
+def normalize_cert_device_row(row: dict[str, Any]) -> dict[str, Any]:
+    raw_fields = {k: v for k, v in row.items() if k not in _CERT_METADATA_COLUMNS}
+    return {
+        "timestamp": _cert_day_timestamp(row["day"]),
+        "source": "cert_r4.2_device",
+        "source_file": "device.csv",
+        "event_type": "device_event",
+        "user_id": row["user"],
+        "host_id": row["primary_pc"],
+        "severity": None,
+        "raw_fields": raw_fields,
+        "ground_truth_label": row["ground_truth_label"],
+    }
+
+
+def normalize_cert_file_row(row: dict[str, Any]) -> dict[str, Any]:
+    raw_fields = {k: v for k, v in row.items() if k not in _CERT_METADATA_COLUMNS}
+    return {
+        "timestamp": _cert_day_timestamp(row["day"]),
+        "source": "cert_r4.2_file",
+        "source_file": "file.csv",
+        "event_type": "file_access",
+        "user_id": row["user"],
+        "host_id": row["primary_pc"],
+        "severity": None,
+        "raw_fields": raw_fields,
+        "ground_truth_label": row["ground_truth_label"],
+    }

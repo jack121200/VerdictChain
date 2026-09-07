@@ -19,6 +19,9 @@ MERGED_POOL = REPO_ROOT / "data" / "verdictchain_network_dataset.csv"
 SUBSET_PATH = REPO_ROOT / "data" / "processed" / "network_subset.csv"
 
 
+CHUNK_SIZE = 200_000
+
+
 def build_curated_subset(
     attack_types: list[str],
     n_per_class: int = 600,
@@ -29,21 +32,37 @@ def build_curated_subset(
 ) -> pd.DataFrame:
     """Stratified sample: benign_count BENIGN rows + up to n_per_class rows per
     attack type in attack_types, written to out_path. Returns the sampled frame.
+
+    Reads pool_path in chunks rather than loading the full ~2M-row pool at once
+    (that OOM'd on this session's 7.7GB dev machine under normal system load).
+    Per chunk, takes at most `target` matching rows for each label (a fast
+    approximate sample, not true reservoir sampling - fine for building a demo
+    dataset) into a small running pool, then does one final exact-size sample
+    from that much smaller accumulated pool.
     """
-    pool = pd.read_csv(pool_path, encoding="utf-8")
-    pool["Label"] = pool["Label"].astype(str).str.strip()
+    targets = {"BENIGN": benign_count, **{label: n_per_class for label in attack_types}}
+    accumulated: dict[str, list[pd.DataFrame]] = {label: [] for label in targets}
+    seen_any: dict[str, bool] = {label: False for label in targets}
+
+    for chunk in pd.read_csv(pool_path, chunksize=CHUNK_SIZE, encoding="utf-8"):
+        chunk["Label"] = chunk["Label"].astype(str).str.strip()
+        for label, target in targets.items():
+            match = (
+                chunk[chunk["Label"].str.upper() == "BENIGN"]
+                if label == "BENIGN"
+                else chunk[chunk["Label"] == label]
+            )
+            if match.empty:
+                continue
+            seen_any[label] = True
+            accumulated[label].append(match.sample(n=min(target, len(match)), random_state=seed))
 
     parts = []
-    benign = pool[pool["Label"].str.upper() == "BENIGN"]
-    if len(benign) == 0:
-        raise ValueError(f"No BENIGN rows found in {pool_path}")
-    parts.append(benign.sample(n=min(benign_count, len(benign)), random_state=seed))
-
-    for label in attack_types:
-        subset = pool[pool["Label"] == label]
-        if len(subset) == 0:
+    for label, target in targets.items():
+        if not seen_any[label]:
             raise ValueError(f"No rows with Label == {label!r} found in {pool_path}")
-        parts.append(subset.sample(n=min(n_per_class, len(subset)), random_state=seed))
+        pool_for_label = pd.concat(accumulated[label], ignore_index=True)
+        parts.append(pool_for_label.sample(n=min(target, len(pool_for_label)), random_state=seed))
 
     sample = pd.concat(parts, ignore_index=True)
     sample = sample.sort_values("Timestamp").reset_index(drop=True)

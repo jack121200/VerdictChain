@@ -56,12 +56,19 @@ def build_curated_subset(
 def ingest_into_db(csv_path: Path = SUBSET_PATH) -> int:
     """Normalizes every row of the curated subset and bulk-inserts into raw_logs.
     Returns the number of rows inserted.
+
+    Deletes any existing source="cicids2017" rows first, so this is safe to
+    re-run (e.g. after the test suite truncates and repopulates raw_logs with
+    unrelated fixture rows) without accumulating duplicates. Scoped to this
+    source only - never touches rows from other sources (e.g. CERT r4.2, once
+    that exists).
     """
     df = pd.read_csv(csv_path, encoding="utf-8")
     records = [normalize_network_row(row) for row in df.to_dict(orient="records")]
 
     session = SessionLocal()
     try:
+        session.query(RawLog).filter(RawLog.source == "cicids2017").delete()
         session.bulk_insert_mappings(RawLog, records)
         session.commit()
     finally:

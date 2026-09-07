@@ -48,6 +48,7 @@ def aggregate_verdict(final_responses: list[AgentResponse]) -> dict:
             "verdict_confidence": round(mean(confidences), 4) if confidences else 0.0,
             "status": "verdict_reached",
             "supporting_evidence": [],
+            "contributing_agents": [r.agent_id for r in final_responses],
         }
 
     vote_counts = Counter(cls for _, cls in real_votes)
@@ -64,4 +65,5 @@ def aggregate_verdict(final_responses: list[AgentResponse]) -> dict:
         "verdict_confidence": confidence,
         "status": "ambiguous" if tie else "verdict_reached",
         "supporting_evidence": evidence,
+        "contributing_agents": [r.agent_id for r in supporters],
     }

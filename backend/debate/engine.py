@@ -17,7 +17,8 @@ from backend.db.models import DebateTranscript, Investigation, RawLog
 from backend.db.session import SessionLocal
 from backend.debate.state import assemble_debate_inputs, build_peripheral_digest, is_near_duplicate
 from backend.debate.verdict import aggregate_verdict
-from backend.watchdog.credibility import reset_agent
+from backend.self_healing.actions import respond_to_verdict
+from backend.watchdog.credibility import get_crs, reset_agent
 from backend.watchdog.service import score_agent_round
 
 InvestigatorFn = Callable[..., tuple[AgentResponse, str]]
@@ -139,8 +140,16 @@ def run_debate(
     finally:
         session.close()
 
+    # Self-Healing (SKILL-architecture.md Section 7): fires only if confidence
+    # >= 0.80 AND every agent that actually contributed to the verdict has
+    # CrS >= 0.30 - respond_to_verdict() enforces both, this just supplies
+    # their current (post-debate) credibility scores.
+    contributing_crs = {agent_id: get_crs(agent_id) for agent_id in verdict.get("contributing_agents", [])}
+    actions_taken = respond_to_verdict(investigation_id, verdict, contributing_crs)
+
     return {
         "investigation_id": str(investigation_id),
         "verdict": verdict,
         "providers_used": providers_used,
+        "actions_taken": actions_taken,
     }

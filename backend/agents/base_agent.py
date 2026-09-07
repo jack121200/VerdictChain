@@ -7,6 +7,7 @@ from outside its own data slice is exactly as invalid as citing nothing.
 
 import json
 import logging
+import time
 
 from pydantic import ValidationError
 
@@ -32,13 +33,33 @@ def _extract_json(raw_text: str) -> dict:
         raise InvalidAgentResponse(f"response was not valid JSON: {exc}") from exc
 
 
-def call_with_fallback(primary: LLMProvider, fallback: LLMProvider, system_prompt: str, user_prompt: str) -> tuple[str, str]:
-    """Returns (raw_text, provider_name_that_served_it)."""
-    try:
-        return primary.complete(system_prompt, user_prompt), primary.name
-    except Exception as exc:  # noqa: BLE001 - genuinely any provider failure should fall back
-        logger.warning("primary provider %s failed (%s), falling back to %s", primary.name, exc, fallback.name)
-        return fallback.complete(system_prompt, user_prompt), fallback.name
+def call_with_fallback(
+    primary: LLMProvider,
+    fallback: LLMProvider,
+    system_prompt: str,
+    user_prompt: str,
+    retry_delay_s: float = 5.0,
+) -> tuple[str, str]:
+    """Returns (raw_text, provider_name_that_served_it). Tries primary, then
+    fallback, then (after a short backoff - free-tier 429/503s are often
+    resolved within a few seconds) primary again, then fallback again, before
+    giving up. Observed live: both providers can hit a transient error in the
+    same few seconds (Gemini 503 + Groq 429 back to back), so a single
+    primary->fallback pass isn't always enough.
+    """
+    attempts = [(primary, 0.0), (fallback, 0.0), (primary, retry_delay_s), (fallback, retry_delay_s)]
+    last_exc: Exception | None = None
+
+    for provider, delay in attempts:
+        if delay:
+            time.sleep(delay)
+        try:
+            return provider.complete(system_prompt, user_prompt), provider.name
+        except Exception as exc:  # noqa: BLE001 - genuinely any provider failure should be retried/fall back
+            logger.warning("provider %s failed (%s)", provider.name, exc)
+            last_exc = exc
+
+    raise last_exc
 
 
 def parse_and_validate(
@@ -48,6 +69,15 @@ def parse_and_validate(
     valid_row_ids: set[str],
 ) -> AgentResponse:
     payload = _extract_json(raw_text)
+
+    # Backfill agent_id/round if the model omitted them (observed live: Groq's
+    # openai/gpt-oss-20b dropped "round" from an otherwise-correct response).
+    # Safe because we already know the correct value independently of the
+    # model's output - this never masks a WRONG value, only a missing one, and
+    # doesn't touch citation grounding or cited_evidence at all.
+    if isinstance(payload, dict):
+        payload.setdefault("agent_id", expected_agent_id)
+        payload.setdefault("round", expected_round)
 
     try:
         response = AgentResponse.model_validate(payload)

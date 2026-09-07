@@ -148,6 +148,18 @@ CrS_new = clamp( CrS_old * (1 + η * verification_match_rate), 0.0, 1.0 )
 - **Isolation threshold: 0.30.** CrS < 0.30 → isolate + activate backup, log to
   `credibility_log` with `isolated = true`.
 
+**⚠ FLAGGED DEFECT, found 2026-09-07 (backend/watchdog/credibility.py implements
+this formula literally, unchanged, pending a decision):** for
+`verification_match_rate` in [0, 1] and η > 0, the multiplier `(1 + η·rate)` is
+always ≥ 1.0 — this formula can only hold CrS flat or grow it, never shrink it.
+Starting from CrS = 0.5, it can mathematically never fall below the 0.30
+isolation threshold under any sequence of verification outcomes, so isolation
+is unreachable from normal operation as written. Needs an explicit decision:
+is the formula mis-specified (e.g. penalize failures with something like
+`1 + η·(2·rate − 1)`, which shrinks CrS when rate < 0.5), or is 0.5 too high a
+starting point, or is isolation intentionally a rare safety net fed some other
+way? Not changed without that decision — flagging only.
+
 ## 6. Ground-truth handling — hard boundary
 
 `ground_truth_label` (on `raw_logs`) and `scenario_label` (on `investigations`) exist

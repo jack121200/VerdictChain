@@ -12,6 +12,7 @@ interface LayoutProps {
   currentPage: PageName
   toasts: Toast[]
   addToast: AddToastFn
+  signOut: () => void
 }
 
 const NAV_ITEMS: { page: PageName; label: string; icon: React.ElementType; badge?: number }[] = [
@@ -47,7 +48,7 @@ const NOTIFICATIONS = [
   { id: 4, text: 'INV-0230 contained — External Recon (0.91)', time: '14 hr ago', unread: false },
 ]
 
-export default function Layout({ children, navigate, currentPage, toasts, addToast }: LayoutProps) {
+export default function Layout({ children, navigate, currentPage, toasts, signOut }: LayoutProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [showAvatar, setShowAvatar] = useState(false)
@@ -142,7 +143,7 @@ export default function Layout({ children, navigate, currentPage, toasts, addToa
                 <div className="text-[13px] font-medium text-white truncate">SOC Analyst</div>
                 <div className="text-[11px] truncate" style={{ color: 'rgba(255,255,255,0.45)' }}>analyst@verdictchain.local</div>
               </div>
-              <button className="p-1.5 rounded-[6px] hover:bg-white/5 transition-colors" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              <button onClick={signOut} className="p-1.5 rounded-[6px] hover:bg-white/5 transition-colors" style={{ color: 'rgba(255,255,255,0.4)' }}>
                 <LogOut size={13} />
               </button>
             </div>
@@ -241,7 +242,7 @@ export default function Layout({ children, navigate, currentPage, toasts, addToa
                 >
                   <Settings size={14} /> Settings
                 </button>
-                <button className="w-full flex items-center gap-2 px-4 py-2.5 text-[13px] hover:bg-white/5 transition-colors" style={{ color: 'var(--critical)' }}>
+                <button onClick={signOut} className="w-full flex items-center gap-2 px-4 py-2.5 text-[13px] hover:bg-white/5 transition-colors" style={{ color: 'var(--critical)' }}>
                   <LogOut size={14} /> Sign Out
                 </button>
               </div>

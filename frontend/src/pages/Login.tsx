@@ -1,31 +1,37 @@
 import { useState } from 'react'
 import { Eye, EyeOff, AlertTriangle } from 'lucide-react'
 import type { NavigateFn } from '../types'
+import { login, register, setToken, ApiError } from '../api/client'
 
 export default function Login({ navigate }: { navigate: NavigateFn }) {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
-  const [remember, setRemember] = useState(false)
+  const [mode, setMode] = useState<'login' | 'register'>('login')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    if (!email.includes('@')) {
-      setError('Enter a valid email address.')
+    if (username.length < 3) {
+      setError('Username must be at least 3 characters.')
       return
     }
-    if (password.length < 4) {
-      setError('Invalid credentials — access denied.')
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.')
       return
     }
     setLoading(true)
-    setTimeout(() => {
-      setLoading(false)
+    try {
+      const { access_token } = mode === 'login' ? await login(username, password) : await register(username, password)
+      setToken(access_token)
       navigate('dashboard')
-    }, 900)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reach the VerdictChain API.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -108,16 +114,16 @@ export default function Login({ navigate }: { navigate: NavigateFn }) {
           </div>
 
           <form onSubmit={handleSignIn} className="space-y-4">
-            {/* Email */}
+            {/* Username */}
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-[0.4px] mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                Email Address
+                Username
               </label>
               <input
                 type="text"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="analyst@verdictchain.local"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                placeholder="analyst"
                 className="w-full px-4 py-3 rounded-[10px] text-[14px] text-white outline-none transition-all placeholder:text-white/25"
                 style={{
                   background: 'var(--elevated)',
@@ -166,23 +172,15 @@ export default function Login({ navigate }: { navigate: NavigateFn }) {
               </div>
             )}
 
-            {/* Remember me */}
+            {/* Login / register toggle */}
             <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={e => setRemember(e.target.checked)}
-                  className="w-4 h-4 rounded accent-violet-500"
-                  style={{ accentColor: 'var(--violet)' }}
-                />
-                <span className="text-[13px]" style={{ color: 'rgba(255,255,255,0.6)' }}>Remember me</span>
-              </label>
-              <button type="button" className="text-[13px] transition-colors" style={{ color: 'rgba(255,255,255,0.5)' }}
-                onMouseEnter={e => (e.currentTarget.style.color = 'var(--violet)')}
-                onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}
+              <button
+                type="button"
+                onClick={() => setMode(m => (m === 'login' ? 'register' : 'login'))}
+                className="text-[13px] transition-colors"
+                style={{ color: 'var(--violet)' }}
               >
-                Forgot password?
+                {mode === 'login' ? 'New analyst? Create an account' : 'Already have an account? Sign in'}
               </button>
             </div>
 
@@ -196,7 +194,7 @@ export default function Login({ navigate }: { navigate: NavigateFn }) {
                 cursor: loading ? 'not-allowed' : 'pointer',
               }}
             >
-              {loading ? 'Authenticating...' : 'Sign In'}
+              {loading ? 'Authenticating...' : mode === 'login' ? 'Sign In' : 'Create Account'}
             </button>
           </form>
 

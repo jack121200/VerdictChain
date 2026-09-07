@@ -3,7 +3,7 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes import agents, auth, investigations
+from backend.api.routes import agents, audit, auth, investigations, response_actions
 from backend.api.websocket import investigation_feed
 
 app = FastAPI(title="VerdictChain API")
@@ -21,6 +21,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(investigations.router)
 app.include_router(agents.router)
+app.include_router(audit.router)
+app.include_router(response_actions.router)
 
 
 @app.get("/health")

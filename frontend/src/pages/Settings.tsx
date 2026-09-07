@@ -68,20 +68,19 @@ export default function Settings() {
             <div className="space-y-4">
               <SettingsCard title="Model Backend">
                 <div className="text-[13px] mb-4" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                  All five agents share the same model backend. Configure the Ollama endpoint and model ID below.
+                  Investigator agents call Groq (primary) with Gemini as fallback — no local model backend (cloud-only, per SKILL-agent-prompts.md Section 7).
                 </div>
-                <FieldRow label="Ollama Endpoint" defaultValue="http://localhost:11434" mono />
-                <FieldRow label="Model ID" defaultValue="llama3.1:8b" mono />
-                <FieldRow label="Context Window" defaultValue="8192 tokens" mono />
+                <FieldRow label="Primary provider" defaultValue="Groq (openai/gpt-oss-20b)" mono />
+                <FieldRow label="Fallback provider" defaultValue="Gemini (gemini-flash-latest)" mono />
               </SettingsCard>
               <SettingsCard title="Per-Agent Configuration">
-                {['NT', 'AL', 'EB', 'WD', 'SH'].map((id, i) => (
-                  <div key={id} className="flex items-center justify-between py-2.5" style={{ borderBottom: i < 4 ? '1px solid var(--border)' : 'none' }}>
+                {['NT', 'AL', 'EB'].map((id, i) => (
+                  <div key={id} className="flex items-center justify-between py-2.5" style={{ borderBottom: i < 2 ? '1px solid var(--border)' : 'none' }}>
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ background: ['#36BFFA','#8B5CF6','#12B76A','#F0B429','#F04438'][i], color: '#0A0A0F' }}>{id}</div>
-                      <span className="text-[13px] text-white">{['Network-Traffic', 'Access-Log', 'Endpoint-Behavior', 'Watchdog', 'Self-Healing'][i]} Agent</span>
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ background: ['#36BFFA','#8B5CF6','#12B76A'][i], color: '#0A0A0F' }}>{id}</div>
+                      <span className="text-[13px] text-white">{['Network-Traffic', 'Access-Log', 'Endpoint-Behavior'][i]} Agent</span>
                     </div>
-                    <span className="font-mono-data text-[11px]" style={{ color: 'var(--info)' }}>llama3.1:8b</span>
+                    <span className="font-mono-data text-[11px]" style={{ color: 'var(--info)' }}>{i === 2 ? 'Gemini primary' : 'Groq primary'}</span>
                   </div>
                 ))}
               </SettingsCard>

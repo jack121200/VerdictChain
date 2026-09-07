@@ -78,8 +78,19 @@ def ingest_into_db(csv_path: Path = SUBSET_PATH) -> int:
 
 
 if __name__ == "__main__":
-    # DDoS (flood), Portscan (recon), FTP-Patator (brute-force) - 3 of the 4
-    # attack families SKILL-architecture.md assigns to the Network-Traffic Agent.
-    build_curated_subset(attack_types=["DDoS", "Portscan", "FTP-Patator"])
+    # All 4 attack families SKILL-agent-prompts.md's system prompt actually
+    # describes the agent detecting: DDoS (flood), Portscan (recon),
+    # FTP-Patator + SSH-Patator (brute-force, two protocols), Botnet (C2) -
+    # the original 3-type set left botnet C2 completely untested. DoS
+    # Hulk/GoldenEye/Slowloris deliberately excluded - same flood signal as
+    # DDoS, no added coverage. Kept small (~9.7k) per this machine's memory
+    # constraints (see 2026-09-07 session: 7.7GB host, Postgres was crashing
+    # under load with the earlier ~26k attempt) - revisit larger once on a
+    # machine with more headroom or before the actual demo.
+    build_curated_subset(
+        attack_types=["DDoS", "Portscan", "FTP-Patator", "SSH-Patator", "Botnet"],
+        n_per_class=1500,
+        benign_count=3000,
+    )
     n = ingest_into_db()
     print(f"Ingested {n} network_flow rows into raw_logs.")

@@ -157,8 +157,16 @@ mitigations, both required:
 
 ## 9. Data sources
 
-- **CICIDS2017** (filtered subset, ~2–3k rows, 2–3 attack types + benign) →
-  Network-Traffic Agent.
+- **CICIDS2017** (filtered subset, ~9.7k rows: benign + DDoS + Portscan +
+  FTP-Patator + SSH-Patator + Botnet - revised from an original ~2-3k/3-type
+  target per 2026-09-07 session decisions: first to cover all 4 signal types
+  the Network-Traffic Agent's own system prompt describes (DDoS/port-scan/
+  brute-force/botnet C2 - Botnet was missing entirely), then capped small
+  because this dev machine's 7.7GB RAM couldn't sustain a larger ~26k-row
+  write to the dockerized Postgres without it crashing under memory pressure.
+  Revisit larger once on a machine with more headroom or before the actual
+  demo. Per-call LLM batch size stays small regardless, ~15 rows/call - see
+  backend/agents/network_traffic.py) → Network-Traffic Agent.
 - **CERT r4.2** (`logon.csv`, `device.csv`, `file.csv`) → Access-Log Agent and
   Endpoint-Behavior Agent. Ground-truth labels come from `answers.tar.bz2` and are
   used only for evaluation, never fed to agents.

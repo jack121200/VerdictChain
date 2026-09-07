@@ -78,10 +78,11 @@ def publish_continuous(speed_factor: float = DEFAULT_SPEED_FACTOR, limit: int | 
     return len(logs)
 
 
-def publish_manual(scenario_label: str) -> int:
-    """Immediately injects every row tagged with scenario_label, bypassing replay
-    timing. scenario_label is read here only to pick which rows to inject — the
-    published messages never carry it (see module docstring).
+def get_rows_for_scenario(scenario_label: str) -> list[RawLog]:
+    """Rows tagged with scenario_label, timestamp-ordered. Shared by publish_manual
+    (MQ replay) and backend.pipeline.investigation_builder (actual agent input
+    assembly) so there is exactly one query for "what rows belong to this
+    manually-selected scenario", not two that could drift apart.
     """
     session = SessionLocal()
     try:
@@ -90,9 +91,17 @@ def publish_manual(scenario_label: str) -> int:
             .where(RawLog.ground_truth_label == scenario_label)
             .order_by(RawLog.timestamp)
         )
-        logs = session.execute(query).scalars().all()
+        return session.execute(query).scalars().all()
     finally:
         session.close()
+
+
+def publish_manual(scenario_label: str) -> int:
+    """Immediately injects every row tagged with scenario_label, bypassing replay
+    timing. scenario_label is read here only to pick which rows to inject — the
+    published messages never carry it (see module docstring).
+    """
+    logs = get_rows_for_scenario(scenario_label)
 
     if not logs:
         return 0

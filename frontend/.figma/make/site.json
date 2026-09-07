@@ -1,0 +1,10 @@
+{
+  "description": "A dark-themed AI forensics console enabling multi-agent debates to investigate insider threats, verify evidence credibility, and automate threat containment.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

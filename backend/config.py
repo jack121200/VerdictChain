@@ -1,0 +1,35 @@
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ROOT_ENV = Path(__file__).resolve().parent.parent / ".env"
+
+
+def _with_psycopg_driver(url: str) -> str:
+    """Neon/Supabase hand us plain postgresql:// URLs; we run psycopg3, not psycopg2."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=_ROOT_ENV, extra="ignore")
+
+    environment: str = "development"
+
+    database_url: str = ""
+    local_database_url: str = ""
+
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    rabbitmq_url: str = "amqp://guest:guest@127.0.0.1:5672/"
+
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        raw = self.database_url if self.environment == "production" else self.local_database_url
+        return _with_psycopg_driver(raw)
+
+
+settings = Settings()

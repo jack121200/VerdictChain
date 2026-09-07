@@ -1,0 +1,13 @@
+.env
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/raw_data/
+data/*.csv
+VerdictChain Forensics Console_FIGMA_ONLY_FOR_REFRENCE/
+frontend/node_modules/
+frontend/dist/
+*.log
+.venv/
+venv/

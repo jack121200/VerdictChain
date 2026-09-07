@@ -13,6 +13,7 @@ Fully streaming: chunked read, chunked write, chunked de-duplication via a
 import os
 import glob
 import zipfile
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
@@ -21,8 +22,25 @@ OUTPUT_FILE = "./data/verdictchain_network_dataset.csv"
 CHUNK_SIZE = 200_000
 EXCLUDE_FILES = {"02-14-2018.csv"}      # CSE-CIC-IDS2018: different schema/dataset
 
+# Real, publicly-documented CICIDS2017 capture dates per file. The source
+# "Timestamp" column only carries MM:SS.f (hour/date lost upstream in this CSV
+# export) - see reconstruct_timestamps() for how these anchor a real calendar
+# day while relative time-of-day within it stays honestly labeled as unreliable.
+FILE_CAPTURE_DATES = {
+    "monday_plus.csv": "2017-07-03",
+    "tuesday_plus1.csv": "2017-07-04",
+    "wednesday_plus.csv": "2017-07-05",
+    "thursday_plus.csv": "2017-07-06",
+    "friday.csv": "2017-07-07",
+}
+
 # canonical name -> accepted source aliases
 SCHEMA = {
+    # NOTE: this file's "Timestamp" is truncated to MM:SS.f (no hour/date) in the
+    # source CSVs — see backend/pipeline/normalization.py for how the real capture
+    # date + a wrap-reconstructed relative clock are combined into raw_logs.timestamp.
+    "Timestamp": ["Timestamp"],
+    "Source IP": ["Src IP dec", "Source IP"],
     "Destination Port": ["Destination Port", "Dst Port"],
     "Flow Duration": ["Flow Duration"],
     "Total Fwd Packets": ["Total Fwd Packets", "Total Fwd Packet", "Tot Fwd Pkts"],
@@ -92,7 +110,8 @@ SCHEMA = {
     "Label": ["Label"],
 }
 CANONICAL = list(SCHEMA)
-NUMERIC = [c for c in CANONICAL if c != "Label"]
+NON_NUMERIC = {"Label", "Timestamp"}
+NUMERIC = [c for c in CANONICAL if c not in NON_NUMERIC]
 
 
 def norm(name):
@@ -125,6 +144,32 @@ def resolve_columns(csv_path):
     source_cols = [source_by_canon[c] for c in CANONICAL if c in source_by_canon]
     canon_cols = [c for c in CANONICAL if c in source_by_canon]
     return source_cols, canon_cols, missing
+
+
+def _parse_mmss_seconds(raw):
+    minutes_str, _, sec_str = raw.partition(":")
+    return int(minutes_str) * 60 + float(sec_str)
+
+
+def reconstruct_timestamps(raw_values, state, capture_date):
+    """raw_values: 'MM:SS.f' strings in ORIGINAL file row order (required - wrap
+    detection depends on seeing every consecutive pair as they appeared in the
+    source file). state: {'prev': float|None, 'wraps': int}, mutated in place so
+    it can be threaded across chunks of the same file. Returns ISO-8601 strings.
+
+    Only relative order / elapsed time is trustworthy here, used for real-time
+    replay pacing - the resulting hour-of-day is NOT the true capture hour and
+    must never be treated as one (e.g. no "off-hours" feature off this field).
+    """
+    base = datetime.fromisoformat(capture_date + "T00:00:00+00:00")
+    out = []
+    for raw in raw_values:
+        secs = _parse_mmss_seconds(raw)
+        if state["prev"] is not None and secs < state["prev"] - 1e-6:
+            state["wraps"] += 1
+        state["prev"] = secs
+        out.append((base + timedelta(seconds=state["wraps"] * 3600 + secs)).isoformat())
+    return out
 
 
 def clean_chunk(df):
@@ -160,6 +205,11 @@ def main():
                 "Add the correct alias to SCHEMA and re-run. Nothing was written.".format(
                     os.path.basename(path), len(missing), missing)
             )
+        if os.path.basename(path) not in FILE_CAPTURE_DATES:
+            raise SystemExit(
+                "No FILE_CAPTURE_DATES entry for {}. Add its real capture date "
+                "before running. Nothing was written.".format(os.path.basename(path))
+            )
         plans[path] = (source_cols, canon_cols)
     print("Schema check passed: all files map to all {} canonical columns.\n".format(len(CANONICAL)))
 
@@ -171,10 +221,15 @@ def main():
     total_in = total_clean = total_out = 0
     label_counts = {}
 
+    output_columns = CANONICAL + ["Source File"]
+
     for path in csv_files:
         source_cols, canon_cols = plans[path]
         rename_map = dict(zip(source_cols, canon_cols))
-        print("Processing: {}".format(os.path.basename(path)))
+        source_file_name = os.path.basename(path)
+        capture_date = FILE_CAPTURE_DATES[source_file_name]
+        ts_state = {"prev": None, "wraps": 0}
+        print("Processing: {}".format(source_file_name))
         f_in = f_clean = f_out = 0
 
         # NOTE: no low_memory=False here - it makes the C parser buffer the whole
@@ -185,7 +240,15 @@ def main():
         for chunk in reader:
             f_in += len(chunk)
             chunk = chunk.rename(columns=rename_map)[CANONICAL]
+            # Reconstruct real timestamps BEFORE any row is dropped, on the full
+            # chunk in original order - wrap detection needs every consecutive
+            # pair as they appeared in the source file (see reconstruct_timestamps).
+            chunk["Timestamp"] = reconstruct_timestamps(
+                chunk["Timestamp"].astype(str).str.strip(), ts_state, capture_date
+            )
+            chunk["Source File"] = source_file_name
             chunk = clean_chunk(chunk)
+            chunk = chunk[output_columns]
             f_clean += len(chunk)
             if chunk.empty:
                 continue

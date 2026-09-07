@@ -33,6 +33,10 @@ def apply_migrations():
 
 @pytest.fixture()
 def db_session():
+    """NOTE: truncates the tables below on every use, including raw_logs. Running
+    the suite wipes any real ingested dataset - re-run
+    `python -m backend.pipeline.ingestion` afterward to restore it.
+    """
     session = SessionLocal()
     session.execute(text(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE"))
     session.commit()

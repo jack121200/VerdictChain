@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 data/raw_data/
 data/*.csv
+data/processed/
 VerdictChain Forensics Console_FIGMA_ONLY_FOR_REFRENCE/
 frontend/node_modules/
 frontend/dist/

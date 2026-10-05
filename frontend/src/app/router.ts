@@ -1,0 +1,61 @@
+/**
+ * Hash routes (plan section 4). Refresh-safe: the route is the URL fragment, so no server
+ * rewrite is needed and a reload lands on the same screen.
+ */
+
+export type SimpleRouteName = 'login' | 'dashboard' | 'investigations' | 'trust' | 'fleet' | 'audit' | 'access' | 'overview';
+
+export type Route =
+  | { name: SimpleRouteName }
+  | { name: 'debate' | 'investigation'; id: string }
+  | { name: 'not_found'; path: string };
+
+const SIMPLE_ROUTES: ReadonlySet<string> = new Set<SimpleRouteName>([
+  'login',
+  'dashboard',
+  'investigations',
+  'trust',
+  'fleet',
+  'audit',
+  'access',
+  'overview',
+]);
+
+function decodeSegment(segment: string): string | null {
+  try {
+    const decoded = decodeURIComponent(segment);
+    return decoded === '' ? null : decoded;
+  } catch {
+    return null;
+  }
+}
+
+/** Parses a location hash ("#/debate/9f4d") into a route. Unknown or malformed paths are not_found. */
+export function parseRoute(hash: string): Route {
+  const path = hash.replace(/^#/, '').replace(/^\/+|\/+$/g, '');
+  if (path === '') return { name: 'dashboard' };
+  const segments = path.split('/');
+  const [head, ...rest] = segments;
+
+  if (rest.length === 0 && SIMPLE_ROUTES.has(head)) {
+    return { name: head as SimpleRouteName };
+  }
+  if (rest.length === 1 && (head === 'debate' || head === 'investigations')) {
+    const id = decodeSegment(rest[0]);
+    if (id === null) return { name: 'not_found', path };
+    return head === 'debate' ? { name: 'debate', id } : { name: 'investigation', id };
+  }
+  return { name: 'not_found', path };
+}
+
+/** Builds the hash for a route. Ids are encoded, so parseRoute(buildRoute(r)) returns r. */
+export function buildRoute(route: Exclude<Route, { name: 'not_found' }>): string {
+  switch (route.name) {
+    case 'debate':
+      return `#/debate/${encodeURIComponent(route.id)}`;
+    case 'investigation':
+      return `#/investigations/${encodeURIComponent(route.id)}`;
+    default:
+      return `#/${route.name}`;
+  }
+}

@@ -45,7 +45,7 @@ def test_simulate_scenario_runs_debate_and_returns_verdict(db_session, monkeypat
             "actions_taken": [],
         }
 
-    monkeypatch.setattr("backend.api.routes.investigations.run_debate", fake_run_debate)
+    monkeypatch.setattr("backend.api.routes.simulate.run_debate", fake_run_debate)
 
     headers = _auth_headers()
     resp = client.post("/investigations/simulate", json={"scenario_label": "DDoS"}, headers=headers)
@@ -69,7 +69,7 @@ def test_simulate_scenario_returns_502_when_debate_fails(db_session, monkeypatch
     def failing_run_debate(*args, **kwargs):
         raise DebateFailedError("some-id", "all providers exhausted")
 
-    monkeypatch.setattr("backend.api.routes.investigations.run_debate", failing_run_debate)
+    monkeypatch.setattr("backend.api.routes.simulate.run_debate", failing_run_debate)
 
     headers = _auth_headers()
     resp = client.post("/investigations/simulate", json={"scenario_label": "DDoS"}, headers=headers)

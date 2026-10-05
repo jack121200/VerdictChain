@@ -36,7 +36,7 @@ def test_hash_chain_valid(db_session):
 
     _two_chained_entries(db_session, inv.investigation_id)
 
-    entries = db_session.query(AuditTrail).order_by(AuditTrail.created_at).all()
+    entries = db_session.query(AuditTrail).order_by(AuditTrail.seq).all()
     assert verify_chain(entries) is True
 
 
@@ -51,5 +51,5 @@ def test_hash_chain_detects_tampering(db_session):
     e1.detail = {"agent_id": "endpoint_behavior"}
     db_session.commit()
 
-    entries = db_session.query(AuditTrail).order_by(AuditTrail.created_at).all()
+    entries = db_session.query(AuditTrail).order_by(AuditTrail.seq).all()
     assert verify_chain(entries) is False

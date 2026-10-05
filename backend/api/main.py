@@ -1,10 +1,28 @@
 """FastAPI app assembly. Run: uvicorn backend.api.main:app --reload"""
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes import agents, audit, auth, investigations, response_actions
-from backend.api.websocket import investigation_feed
+from backend.api.routes import (
+    agent_ops,
+    agents,
+    audit,
+    auth,
+    containment,
+    evaluation,
+    evidence,
+    investigations,
+    raw_logs,
+    rbac,
+    response_actions,
+    scenarios,
+    settings,
+    simulate,
+    stats,
+    system,
+    users,
+)
+from backend.api.ws_investigations import router as ws_investigations_router
 
 app = FastAPI(title="VerdictChain API")
 
@@ -24,21 +42,25 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
-app.include_router(investigations.router)
+app.include_router(users.router)
+app.include_router(settings.router)
+app.include_router(system.router)
+app.include_router(rbac.router)
+app.include_router(stats.router)
+app.include_router(evidence.router)
+app.include_router(raw_logs.router)
+app.include_router(evaluation.router)
+app.include_router(scenarios.router)
 app.include_router(agents.router)
+app.include_router(agent_ops.router)
+app.include_router(containment.router)
+app.include_router(simulate.router)
+app.include_router(investigations.router)
 app.include_router(audit.router)
 app.include_router(response_actions.router)
+app.include_router(ws_investigations_router)
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
-
-
-@app.websocket("/ws/scenarios/{scenario_label}")
-async def scenario_feed(websocket: WebSocket, scenario_label: str) -> None:
-    """Subscribe BEFORE calling POST /investigations/simulate with the same
-    scenario_label - see routes/investigations.py's docstring for why the
-    channel is scenario-keyed rather than investigation-id-keyed.
-    """
-    await investigation_feed(websocket, f"scenario:{scenario_label}")

@@ -34,7 +34,7 @@ class AuditTrailOut(BaseModel):
 def list_audit_trail(limit: int = 100, username: str = Depends(get_current_user)) -> AuditTrailOut:
     session = SessionLocal()
     try:
-        all_entries = session.execute(select(AuditTrail).order_by(AuditTrail.created_at)).scalars().all()
+        all_entries = session.execute(select(AuditTrail).order_by(AuditTrail.seq)).scalars().all()
         chain_valid = verify_chain(all_entries)
 
         recent = list(reversed(all_entries))[:limit]

@@ -1,47 +1,8 @@
-"""Pydantic request/response models - SKILL-security.md Section 3: "Every
-FastAPI endpoint has a Pydantic request model - no raw dict/unvalidated JSON."
-"""
+"""Response models for the investigation and agent read endpoints."""
 
 from datetime import datetime
-from typing import Literal
 
-from pydantic import BaseModel, Field
-
-# ---- auth ----
-
-
-class RegisterRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=8, max_length=128)
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: Literal["bearer"] = "bearer"
-
-
-# ---- investigations ----
-
-ScenarioLabel = Literal[
-    "DDoS",
-    "Portscan",
-    "FTP-Patator",
-    "SSH-Patator",
-    "Botnet",
-    "insider_scenario_1",
-    "insider_scenario_2",
-    "insider_scenario_3",
-]
-
-
-class SimulateScenarioRequest(BaseModel):
-    scenario_label: ScenarioLabel
-    max_rows_per_agent: int = Field(default=5, ge=1, le=15)
+from pydantic import BaseModel
 
 
 class CitedEvidenceOut(BaseModel):
@@ -90,10 +51,6 @@ class InvestigationDetailOut(InvestigationSummaryOut):
     debate: list[DebateRoundOut]
     credibility: list[CredibilityLogOut]
     actions: list[ResponseActionOut]
-
-
-class FeedbackRequest(BaseModel):
-    verdict_was_correct: bool
 
 
 class AgentFleetEntryOut(BaseModel):

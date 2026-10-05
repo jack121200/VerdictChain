@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     database_url: str = ""
     local_database_url: str = ""
+    # Test-only. The pytest suite uses this database when set, and refuses to run if the
+    # effective database is the dev DB (backend/tests/conftest.py). The app never reads it.
+    test_database_url: str = ""
 
     redis_url: str = "redis://127.0.0.1:6379/0"
     rabbitmq_url: str = "amqp://guest:guest@127.0.0.1:5672/"
@@ -29,6 +32,14 @@ class Settings(BaseSettings):
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+
+    # Daily caps on debate runs (plan §3.5): per analyst and across all analysts.
+    debate_daily_limit_user: int = 10
+    debate_daily_limit_global: int = 20
+
+    # First SecOps Lead, created by `python -m backend.scripts.bootstrap_lead` (plan §3.6).
+    bootstrap_lead_username: str = ""
+    bootstrap_lead_password: str = ""
 
     @property
     def sqlalchemy_url(self) -> str:

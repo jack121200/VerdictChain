@@ -44,6 +44,26 @@ def primary_agent_for_rows(rows: list[RawLog]) -> str:
     return next(iter(agents))
 
 
+# Ties on row count go to the earliest agent in this order (plan section 3.3).
+_TIE_BREAK_ORDER = ("network_traffic", "access_log", "endpoint_behavior")
+
+
+def dominant_agent_for_rows(rows: list[RawLog]) -> tuple[str, list[RawLog]]:
+    """Returns (agent_id, rows_of_that_domain) for the agent with the most mapped rows.
+    Rows with an unmapped event_type are ignored. No mapped rows raises ValueError.
+    """
+    by_agent: dict[str, list[RawLog]] = {agent: [] for agent in _TIE_BREAK_ORDER}
+    for row in rows:
+        agent = EVENT_TYPE_TO_AGENT.get(row.event_type)
+        if agent is not None:
+            by_agent[agent].append(row)
+    if not any(by_agent.values()):
+        raise ValueError("no rows map to an investigator agent's domain")
+    # max() returns the first maximal item in iteration order, which is the tie-break.
+    winner = max(_TIE_BREAK_ORDER, key=lambda agent: len(by_agent[agent]))
+    return winner, by_agent[winner]
+
+
 def _contextual_sample(agent_id: str, limit: int) -> list[RawLog]:
     session = SessionLocal()
     try:

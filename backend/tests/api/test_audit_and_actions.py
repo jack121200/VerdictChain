@@ -20,12 +20,17 @@ def _auth_headers() -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _non_auth_entries(entries: list[dict]) -> list[dict]:
+    # register and login are audited (plan 3.6); these tests only check the entries they write.
+    return [e for e in entries if e["action"] not in ("register", "login")]
+
+
 def test_audit_trail_empty_chain_is_valid(db_session):
     headers = _auth_headers()
     resp = client.get("/audit-trail", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["chain_valid"] is True
-    assert resp.json()["entries"] == []
+    assert _non_auth_entries(resp.json()["entries"]) == []
 
 
 def test_audit_trail_returns_entries_and_valid_chain(db_session):
@@ -43,7 +48,7 @@ def test_audit_trail_returns_entries_and_valid_chain(db_session):
     assert resp.status_code == 200
     body = resp.json()
     assert body["chain_valid"] is True
-    assert len(body["entries"]) == 2
+    assert len(_non_auth_entries(body["entries"])) == 2
 
 
 def test_response_actions_list_returns_all(db_session):

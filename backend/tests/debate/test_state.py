@@ -5,6 +5,7 @@ import pytest
 from backend.db.models import RawLog
 from backend.debate.state import (
     build_peripheral_digest,
+    dominant_agent_for_rows,
     is_near_duplicate,
     primary_agent_for_rows,
 )
@@ -32,6 +33,50 @@ def test_primary_agent_for_rows_mixed_endpoint_types():
 def test_primary_agent_for_rows_rejects_multi_domain():
     with pytest.raises(ValueError):
         primary_agent_for_rows([_row("network_flow"), _row("file_access")])
+
+
+def test_dominant_agent_picks_domain_with_most_rows_and_returns_only_its_rows():
+    network_a, network_b = _row("network_flow"), _row("network_flow")
+    file_row, logon_row = _row("file_access"), _row("logon")
+
+    agent, rows = dominant_agent_for_rows([file_row, network_a, logon_row, network_b])
+
+    assert agent == "network_traffic"
+    assert rows == [network_a, network_b]
+
+
+def test_dominant_agent_counts_both_endpoint_event_types_together():
+    logon_row, device_row = _row("logon"), _row("device_event")
+
+    agent, rows = dominant_agent_for_rows([logon_row, device_row, _row("file_access")])
+
+    assert agent == "endpoint_behavior"
+    assert rows == [logon_row, device_row]
+
+
+def test_dominant_agent_tie_breaks_in_declared_order():
+    # network_traffic before access_log before endpoint_behavior
+    assert dominant_agent_for_rows([_row("file_access"), _row("network_flow")])[0] == "network_traffic"
+    assert dominant_agent_for_rows([_row("logon"), _row("file_access")])[0] == "access_log"
+    assert dominant_agent_for_rows([_row("logon"), _row("file_access"), _row("network_flow")])[0] == (
+        "network_traffic"
+    )
+
+
+def test_dominant_agent_ignores_unmapped_rows():
+    file_row = _row("file_access")
+
+    agent, rows = dominant_agent_for_rows([_row("mystery_event"), _row("mystery_event"), file_row])
+
+    assert agent == "access_log"
+    assert rows == [file_row]
+
+
+def test_dominant_agent_raises_when_no_row_is_mapped():
+    with pytest.raises(ValueError):
+        dominant_agent_for_rows([_row("mystery_event")])
+    with pytest.raises(ValueError):
+        dominant_agent_for_rows([])
 
 
 def test_build_peripheral_digest_excludes_self_and_never_leaks_label():

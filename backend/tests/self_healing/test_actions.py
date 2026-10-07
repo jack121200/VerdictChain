@@ -42,6 +42,17 @@ def test_should_respond_false_when_no_agents():
     assert should_respond(_verdict(confidence=0.9), {}) is False
 
 
+def test_should_respond_uses_injected_thresholds():
+    assert should_respond(_verdict(confidence=0.7), {"network_traffic": 0.6}) is False  # default 0.80
+    assert (
+        should_respond(_verdict(confidence=0.7), {"network_traffic": 0.6}, confidence_threshold=0.6) is True
+    )
+    assert should_respond(_verdict(confidence=0.9), {"network_traffic": 0.2}) is False  # default 0.30
+    assert (
+        should_respond(_verdict(confidence=0.9), {"network_traffic": 0.2}, credibility_threshold=0.1) is True
+    )
+
+
 def test_respond_to_verdict_no_action_when_gate_not_met(db_session):
     inv = _new_investigation(db_session)
     db_session.commit()
@@ -79,7 +90,7 @@ def test_respond_to_verdict_external_class_triggers_block_and_rate_limit_and_aud
 
     action_types = {a["action_type"] for a in actions}
     assert action_types == {"block_ip_range", "trigger_rate_limiting", "trigger_audit"}
-    assert all(a["target"] == "10.0.0.5" for a in actions if a["action_type"] != "trigger_audit" or True)
+    assert all(a["target"] == "10.0.0.5" for a in actions)
 
     persisted = db_session.execute(select(ResponseAction)).scalars().all()
     assert len(persisted) == 3
@@ -96,8 +107,26 @@ def test_respond_to_verdict_external_class_triggers_block_and_rate_limit_and_aud
     )
     assert len(audit_entries) == 3
     assert {e.action for e in audit_entries} == {"block_ip_range", "trigger_rate_limiting", "trigger_audit"}
-    all_entries = db_session.execute(select(AuditTrail).order_by(AuditTrail.created_at)).scalars().all()
+    all_entries = db_session.execute(select(AuditTrail).order_by(AuditTrail.seq)).scalars().all()
     assert verify_chain(all_entries) is True
+
+
+def test_respond_to_verdict_honours_injected_confidence_threshold(db_session, monkeypatch):
+    inv = _new_investigation(db_session)
+    db_session.commit()
+    monkeypatch.setattr(
+        "backend.self_healing.actions._generate_reason",
+        lambda *a, **kw: "Mocked reason text.",
+    )
+
+    actions = respond_to_verdict(
+        inv.investigation_id,
+        _verdict(verdict_class="ddos", confidence=0.7),
+        {"network_traffic": 0.6},
+        confidence_threshold=0.6,
+    )
+
+    assert {a["action_type"] for a in actions} == {"block_ip_range", "trigger_rate_limiting", "trigger_audit"}
 
 
 def test_respond_to_verdict_insider_class_triggers_lock_and_audit(db_session, monkeypatch):

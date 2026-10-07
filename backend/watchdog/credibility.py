@@ -1,33 +1,20 @@
 """Continuous per-agent Credibility Score (CrS) - SKILL-data-schema.md Section 5.
-CrS_new = clamp(CrS_old * (1 + eta * verification_match_rate), 0, 1), eta=0.15.
+
+CrS_new = clamp(CrS_old * (1 + eta * (2 * rate - 1)), 0, 1), with rate = the round's
+verification match rate in [0, 1] and eta = 0.15 by default.
+rate 0.5 leaves CrS unchanged, rate 1 grows it by eta, rate 0 shrinks it by eta.
+From the starting 0.5 with eta 0.15, four consecutive rate-0 rounds take CrS below the
+0.30 isolation threshold.
+Formula: resolved 2026-10-05, owner-approved (the earlier multiplier 1 + eta * rate could
+only hold or grow CrS, so isolation was unreachable).
+
 Lives in Redis for fast read/write; every update is also logged to Postgres
-credibility_log by watchdog/service.py (Redis is a cache, Postgres is the
-durable audit record).
+credibility_log by watchdog/service.py (Redis is a cache, Postgres is the durable record).
 
-Design note on "activate a backup agent instance" (SKILL-architecture.md
-Section 6): there is one code implementation per agent, not multiple physical
-instances, so a "freshly-activated backup" is represented as a full state
-reset - CrS back to the neutral starting value, isolation flag cleared. This
-is a deliberate interpretation, not something either skill file specifies
-literally, flagged here for review.
-
-*** FLAGGED DEFECT (2026-09-07, verified with real arithmetic, not asserted
-from a failing test) *** The formula as LITERALLY specified is implemented
-here exactly as written, but it is mathematically incapable of ever isolating
-an agent that starts at the spec's own starting value:
-  CrS_new = CrS_old * (1 + eta * verification_match_rate)
-For verification_match_rate in [0, 1] and eta > 0, the multiplier (1 + eta*rate)
-is ALWAYS >= 1.0 - the formula can only hold CrS flat (rate=0) or grow it
-(rate>0). It has no term that ever decreases CrS. Starting from CrS=0.5 (the
-spec's own starting value) and ISOLATION_THRESHOLD=0.30, CrS can never fall
-below 0.30 under ANY sequence of verification outcomes, so the isolation path
-in SKILL-architecture.md Section 6 is unreachable from normal operation as
-currently specified. Isolation still triggers correctly if CrS is ever
-otherwise below 0.30 (verified by test) - the mechanism itself is not broken,
-only the arithmetic that's supposed to feed it. NOT silently changed to a
-different formula (e.g. penalizing failures with something like
-`1 + eta*(2*rate - 1)`) since that would be an unauthorized deviation from a
-locked spec value - needs a decision from the project owner.
+Isolation is persistent and is recorded in Postgres (agent_quarantine, set by
+backend/debate/engine.py). The Redis flag mirrors the last scored state. reset_agent()
+restores the starting CrS and clears the flag. It is called only by the audited restore
+action, never by the debate itself.
 """
 
 import redis
@@ -66,18 +53,30 @@ def is_isolated(agent_id: str) -> bool:
 
 
 def reset_agent(agent_id: str) -> None:
-    """ "Activate a backup" - see module docstring."""
+    """Restores the starting CrS and clears the isolation flag."""
     _client().set(_crs_key(agent_id), STARTING_CRS)
     _client().delete(_isolated_key(agent_id))
 
 
-def update_crs(agent_id: str, verification_match_rate: float) -> tuple[float, float, bool]:
+def compute_crs(c: float, rate: float, eta: float) -> float:
+    """clamp(c * (1 + eta * (2 * rate - 1)), 0, 1). Pure function, no Redis."""
+    if not 0.0 <= rate <= 1.0:
+        raise ValueError(f"verification match rate must be in [0, 1], got {rate}")
+    return max(0.0, min(1.0, c * (1 + eta * (2 * rate - 1))))
+
+
+def update_crs(
+    agent_id: str,
+    rate: float,
+    eta: float = ETA,
+    isolation_threshold: float = ISOLATION_THRESHOLD,
+) -> tuple[float, float, bool]:
     """Returns (crs_before, crs_after, isolated)."""
     crs_before = get_crs(agent_id)
-    crs_after = max(0.0, min(1.0, crs_before * (1 + ETA * verification_match_rate)))
+    crs_after = compute_crs(crs_before, rate, eta)
     _client().set(_crs_key(agent_id), crs_after)
 
-    isolated = crs_after < ISOLATION_THRESHOLD
+    isolated = crs_after < isolation_threshold
     if isolated:
         _client().set(_isolated_key(agent_id), "1")
     return crs_before, crs_after, isolated

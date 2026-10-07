@@ -77,6 +77,23 @@ Each agent:
   a class.
 - Full transcript (every round, every agent, every message) is persisted to
   `debate_transcripts` — this is what the dashboard's "Debate Transcript" tab reads.
+  Each row records the provider that answered that call (`debate_transcripts.provider`).
+- **Lifecycle (implemented in `backend/debate/engine.py`):** `start_investigation()` creates
+  the investigation row and its `investigation_started` audit entry in one transaction. The
+  audit detail carries the settings snapshot, the noise values and the injected row ids. The
+  scenario label stays on the investigation row only. `run_debate()` then runs
+  `DEBATE_ROUNDS = 3` rounds on that investigation.
+- **Active agents:** the three investigators, minus any whose `agent_quarantine` row is
+  active when the debate starts. Fewer than two active agents raises `NotEnoughActiveAgents`
+  (the API returns 409).
+- **Isolation (decision D1):** after an agent's round is scored, a CrS below the isolation
+  threshold sets its quarantine (audited as `agent_isolated`). The agent takes no part in
+  later rounds or in the verdict. If fewer than two agents remain mid-debate, the verdict is
+  `ambiguous` and no containment runs.
+- **Round audit:** each round writes `round_completed` (round, agents, providers). The verdict
+  writes `verdict_reached` in the same transaction as the investigation's status update.
+- **Status:** `investigating` → `verdict_reached` or `ambiguous`. A non-empty set of
+  self-healing actions makes it `contained`. A failed debate is `error`.
 
 ## 4. Hybrid trigger model
 
@@ -93,6 +110,23 @@ Each agent:
 - **Blind-test principle (non-negotiable):** whichever scenario was selected is stored
   ONLY as a hidden ground-truth tag (for later precision/recall evaluation). It is
   never passed to any investigator agent's prompt or context.
+- **Simulate request (implemented in `backend/api/routes/simulate.py`):** `POST
+  /investigations/simulate` takes `scenario_label`, `max_rows_per_agent` (1–15),
+  `noise_pct` (0, 15 or 30) and `wait`. The checks run in this order: authentication,
+  capability `inject_scenario`, rate limit (5 per minute per client), intake paused (423),
+  rows (404), dominant investigator (422), noise dilution, the single debate slot (409),
+  the daily caps per analyst and across analysts (429, 24-hour window), then
+  `start_investigation()`. `wait=true` runs the debate inline and returns 201. `wait=false`
+  returns 202 with the investigation id and runs the debate in a background thread. The
+  slot (`verdictchain:debate:slot`) is released in `finally`.
+- **Noise (`backend/pipeline/noise.py`):** the window the agent reads (the first
+  `max_rows_per_agent` rows) loses k = round(n × pct / 100) scenario rows, always keeping at
+  least one. Each dropped row is replaced by a benign row of the same source, so no value is
+  changed. The effective percentage is stored on the investigation. Agents get no hint.
+- **Live channel:** `POST /auth/ws-ticket` issues a single-use ticket valid for 30 seconds.
+  `WS /ws/investigations/{id}?ticket=…` sends a snapshot built from the database first, then
+  live frames. A missing or bad ticket closes with 4401. Every frame carries
+  `investigation_id`. Clients dedupe on type, round and agent id.
 
 ## 5. Avoiding one-sided debate
 
@@ -113,12 +147,16 @@ mitigations, both required:
 - After each round, for every cited evidence row: look it up directly in the raw
   logs table. If the row doesn't exist or the cited values don't match, that's a
   verification failure.
-- Exact update formula (see `SKILL-data-schema.md` for the persisted fields):
-  `CrS_new = CrS_old * (1 + η * verification_match_rate)`, clamped to `[0, 1]`,
-  with `η = 0.15` as the default learning-rate constant (adjustable via Settings).
-- **Isolation threshold: 0.30.** If an agent's CrS drops below this, it is isolated
-  (its input excluded from the current and future rounds until manually reviewed)
-  and a backup agent instance is activated in its place.
+- Exact update formula (see `SKILL-data-schema.md` Section 5 for the persisted fields):
+  `CrS_new = clamp(CrS_old * (1 + η * (2 * verification_match_rate − 1)), 0, 1)`, with
+  `η = 0.15` as the default (runtime setting `eta`). A rate of 0.5 leaves CrS unchanged,
+  1 grows it, 0 shrinks it. Resolved 2026-10-05, owner-approved.
+- **Isolation threshold: 0.30** (runtime setting `isolation_threshold`). If an agent's CrS
+  drops below it, the agent is isolated: its `agent_quarantine` row is set active (audited as
+  `agent_isolated`). It is excluded from the rest of that debate, from the verdict and from
+  later debates, until an audited restore. Restore resets CrS to 0.5. No backup instance is
+  activated, because each investigator has one implementation. Isolation is exclusion, not
+  replacement.
 - The debate layer itself provides a first line of redundancy (Section 3) — the
   Watchdog is a second, independent layer. Document this as "reduces single-point-
   of-failure risk" — never claim it "eliminates" it. The Watchdog itself becoming
@@ -127,8 +165,11 @@ mitigations, both required:
 
 ## 7. Self-Healing Response Agent
 
-- Fires only when BOTH are true: verdict confidence ≥ 0.80 (configurable in
-  Settings) AND every agent that contributed to the verdict has CrS ≥ 0.30.
+- Fires only when BOTH are true: verdict confidence ≥ the verdict threshold (runtime
+  setting `verdict_confidence_threshold`, default 0.80) AND every contributing agent's CrS
+  ≥ the isolation threshold (default 0.30). The engine passes both live settings in.
+- A verdict with status `ambiguous` never triggers containment. When at least one action
+  is taken, the investigation status becomes `contained`.
 - Action set is threat-type-aware:
   - Insider-threat verdict → `lock_account()`, `trigger_audit()`
   - External/network verdict → `block_ip_range()`, `trigger_rate_limiting()`,
@@ -138,6 +179,21 @@ mitigations, both required:
   reach a real system, not just "we won't call the real API."
 - Each action is logged with a short LLM-generated plain-English reason and a
   timestamp, feeding the `response_actions` table and the Audit Trail.
+- **Manual override (`POST /investigations/{id}/emergency-containment`, implemented in
+  `backend/api/routes/containment.py`):** an analyst with capability
+  `trigger_emergency_containment` runs the same sandbox actions. The verdict is re-derived
+  from the round-3 transcripts with `aggregate_verdict()`. No LLM is called, and the reason
+  is a fixed template. The gates are: a plan exists for the verdict class (insider or
+  external), the investigation is not already contained, and no contributing agent is
+  quarantined. Each action is written with `is_simulated` TRUE and audited with trigger
+  `manual_override`, and the request writes one `emergency_containment` audit entry.
+- **Release (`POST /investigations/{id}/release-containment`):** runs the inverse sandbox
+  functions (`unlock_account`, `unblock_ip_range`, `disable_rate_limiting`) and writes a
+  `release:<action>` row for each. `trigger_audit` has no inverse. The contained state is
+  derived from `response_actions`: a containment row minus its matching release row.
+- **Sandbox proof:** `backend/self_healing/sandbox.py` has no networking import. The manual
+  path also imports no LLM client, and a test enforces both
+  (`tests/self_healing/test_manual_override.py`).
 
 ## 8. Adaptive false-positive handling (human-in-the-loop)
 

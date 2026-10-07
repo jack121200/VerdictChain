@@ -116,6 +116,38 @@ CREATE TABLE analyst_feedback (
 
 Use Alembic for all schema changes — never hand-edit the DB outside a migration.
 
+### 2.1 Read and evidence endpoints (W1-C, plan section 3.4)
+
+All numbers are `Metric` envelopes (`value`, `n`, `as_of`, `source`, `definition`, `reason`). A null value
+always has a reason. Counts are real zeros. Nothing returned here includes `scenario_label` or
+`ground_truth_label`, except `/scenarios` and `/evaluation`, which are analyst-only analytics.
+
+| Endpoint | Purpose | Notes |
+|---|---|---|
+| `GET /stats` | Headline KPIs | Whole audit chain verified per call. Brier from analyst feedback only. |
+| `GET /investigations` | Filtered list | `limit` 1..200, `offset`, `status`, `verdict_class`, `trigger_type`, `primary_agent`, `q` (id prefix, verdict, trigger). |
+| `GET /investigations/{id}` | Detail | `debate` (stance and provider per transcript row), `votes` (`classify_theory` plus matched keywords), `citations`, `credibility`, `actions` (`is_simulated`). |
+| `GET /investigations/{id}/citations` | Per-citation re-check | VERIFIED, DISCREPANCY or INVALID_ROW with a reason and `row_fingerprint`. |
+| `GET /citations` | Global ledger | Paged `limit` 1..200 and `offset`; filters `agent_id`, `status`; adds `investigation_id`. |
+| `GET /investigations/{id}/evidence-bundle` | Bundle plus SHA-256 | `bundle`, `bundle_sha256`, `signatures`. See 2.2. |
+| `POST /investigations/{id}/sign` | Audited acknowledgement | Capability `sign_evidence_bundle`. Status must be verdict_reached, contained or ambiguous, else 409. Not a cryptographic signature. |
+| `GET /raw-logs/{row_id}`, `/recent`, `/counts` | Allow-listed rows and counts | `raw_fields` sanitised: NaN and inf dropped, strings to 2000 chars, control characters removed, nesting capped at 6. |
+| `GET /agents/fleet` | Investigator fleet | Signals are checked against each agent's prompt. Provider chain is read from the agent source. Temperature is read from `llm_clients.py`. |
+| `GET /agents/{id}/credibility-history` | CrS trajectory | `limit` 1..500, `since`; oldest first. |
+| `GET /audit-trail` | Audit entries | Filters `action`, `actor`, `investigation_id`, `before_seq`. Returns `hash_input` (the exact pre-image). |
+| `POST /audit-trail/verify` | Whole-chain verify | 10 per minute per analyst. Not audited. |
+| `GET /response-actions` | Containment actions | Adds `id` and `investigation_id`. |
+| `GET /scenarios` | Eight labels with row counts | `primary_agent` is the dominant domain of the label's rows (ties: network, access, endpoint). |
+| `GET /evaluation` | Accuracy and per-class metrics | Labelled investigations that reached a verdict only. Mapping in 6. |
+
+### 2.2 Evidence bundle canonical form
+
+The bundle is `investigation_id`, `verdict`, `transcript`, `credibility`, `actions` and `citations`. It has
+no labels and no timestamps of the read itself. It is serialised with sorted keys, compact separators
+(`,` and `:`), UTF-8, and `ensure_ascii=False`. Numbers follow JavaScript: an integral float is written
+as an int (`1.0` becomes `1`), and other floats are rounded to 6 decimal places. The browser recomputes
+the SHA-256 from `JSON.stringify` of the same sorted form.
+
 ## 3. Feature extraction spec (CICIDS2017 branch)
 
 Keep only the columns listed as "wanted" in the merge/clean script already produced
@@ -138,27 +170,22 @@ Aggregate `logon.csv`, `device.csv`, `file.csv` into per-user, per-time-bin feat
 ## 5. Credibility Score (CrS) — exact formula
 
 ```
-CrS_new = clamp( CrS_old * (1 + η * verification_match_rate), 0.0, 1.0 )
+CrS_new = clamp( CrS_old * (1 + η * (2 * verification_match_rate − 1)), 0.0, 1.0 )
 ```
-- `η` (eta) = 0.15 by default (exposed in Settings as "Trust Threshold" tab).
+- `η` (eta) = 0.15 by default (runtime setting `eta`, range [0.01, 0.5], shown as the "Trust Threshold" tab).
+- Rate 0.5 leaves CrS unchanged. Rate 1 grows it by η. Rate 0 shrinks it by η.
 - `verification_match_rate` = (# cited_evidence entries that matched raw_logs) /
   (total # cited_evidence entries) for that agent in that round.
 - Starting CrS for any agent (including a freshly-activated backup) = 0.5 (neutral,
   not zero — avoids unfairly punishing a new agent instantly).
-- **Isolation threshold: 0.30.** CrS < 0.30 → isolate + activate backup, log to
-  `credibility_log` with `isolated = true`.
+- **Isolation threshold: 0.30** (runtime setting `isolation_threshold`). CrS below it →
+  the agent's `agent_quarantine` row is set active, and `credibility_log` records
+  `isolated = true`. From 0.5 with η = 0.15, four consecutive rate-0 rounds isolate an agent.
 
-**⚠ FLAGGED DEFECT, found 2026-09-07 (backend/watchdog/credibility.py implements
-this formula literally, unchanged, pending a decision):** for
-`verification_match_rate` in [0, 1] and η > 0, the multiplier `(1 + η·rate)` is
-always ≥ 1.0 — this formula can only hold CrS flat or grow it, never shrink it.
-Starting from CrS = 0.5, it can mathematically never fall below the 0.30
-isolation threshold under any sequence of verification outcomes, so isolation
-is unreachable from normal operation as written. Needs an explicit decision:
-is the formula mis-specified (e.g. penalize failures with something like
-`1 + η·(2·rate − 1)`, which shrinks CrS when rate < 0.5), or is 0.5 too high a
-starting point, or is isolation intentionally a rare safety net fed some other
-way? Not changed without that decision — flagging only.
+**Formula resolved 2026-10-05, owner-approved.** The earlier multiplier `(1 + η·rate)` could
+only hold or grow CrS, so isolation was unreachable from 0.5. The corrected form shrinks CrS
+when the rate is below 0.5, and `backend/watchdog/credibility.py` implements it as
+`compute_crs(c, rate, eta)`.
 
 ## 6. Ground-truth handling — hard boundary
 
@@ -167,3 +194,24 @@ ONLY for evaluation (precision/recall/F1 computation) and for the manual-trigger
 selection UI. No code path in `backend/agents/` may read either column. Enforce this
 with a code-review checklist item, and ideally a lint rule / import boundary if
 feasible in the chosen framework.
+
+### 6.1 Label-to-class mapping (used by `/evaluation` only)
+
+Code: `backend/evaluation/ground_truth_map.py`. A test checks that every `ScenarioLabel` is mapped and
+that every mapped class is in `VERDICT_CLASSES`.
+
+| Scenario label | Expected class | Accepted alternative |
+|---|---|---|
+| DDoS | ddos | none |
+| Portscan | port_scan | none |
+| FTP-Patator | brute_force | none |
+| SSH-Patator | brute_force | none |
+| Botnet | botnet_c2 | none |
+| BENIGN | benign | none |
+| insider_scenario_1 | insider_logon_anomaly | insider_file_exfiltration |
+| insider_scenario_2 | insider_file_exfiltration | insider_logon_anomaly |
+| insider_scenario_3 | insider_logon_anomaly | insider_file_exfiltration |
+
+The insider rows are a **default that the project owner has not confirmed yet** (plan section 8, item 7).
+`ambiguous` counts as an abstention and is never correct. Accuracy is an exact match, acceptable accuracy
+also accepts the listed alternative, and family accuracy compares network, insider and benign families.

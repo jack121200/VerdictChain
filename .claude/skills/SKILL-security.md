@@ -14,13 +14,25 @@ description: Security requirements — auth, secrets, sandbox enforcement, and a
   trace.
 
 ## 2. Auth
-- Login uses hashed passwords (bcrypt/argon2) — never plaintext or reversible
-  encryption for passwords.
-- Issue a short-lived JWT (or session token) on login; protected API routes require
-  a valid token via FastAPI dependency (`Depends(get_current_user)`).
-- Rate-limit the login endpoint and the "Simulate scenario" trigger endpoint
-  specifically (both are abuse-prone: brute-force login attempts, and
-  investigation-spamming).
+- Login uses hashed passwords (bcrypt) — never plaintext or reversible encryption.
+- Login issues a short-lived JWT (`sub` = username, `role` = advisory claim, `exp`).
+  The database is the authority: `get_current_analyst` re-reads the analyst row on
+  every request, so the role claim grants nothing and a demotion applies on the next
+  request. `get_current_user` is a thin wrapper that returns the username.
+- No token, a malformed or invalid token, an expired token, or a token for a deleted
+  analyst is 401 with `WWW-Authenticate: Bearer`, never 403. A 403 means an
+  authenticated analyst lacks a capability: `Missing capability: <name>`.
+- Capabilities are checked by `require_capability(name)` against the deny-by-default
+  matrix in `backend/api/rbac.py`.
+- Self-registration always creates `forensic_analyst`. Its request model forbids extra
+  fields, so a `role` in the body is a 422. Roles change only through
+  `PUT /users/{id}/role` (`manage_users`). The last `secops_lead` cannot be demoted (409).
+  Role changes lock the lead rows first, so concurrent demotions cannot remove every lead.
+- The first lead comes from `python -m backend.scripts.bootstrap_lead`, using
+  `BOOTSTRAP_LEAD_*` from `.env`. It is idempotent and audited with actor `system`.
+- Rate-limit the login endpoint, the register endpoint and the "Simulate scenario"
+  trigger endpoint specifically (abuse-prone: brute-force login attempts, account
+  spam, and investigation-spamming).
 
 ## 3. Input validation & injection prevention
 - Every FastAPI endpoint has a Pydantic request model — no raw dict/unvalidated
@@ -56,6 +68,12 @@ description: Security requirements — auth, secrets, sandbox enforcement, and a
 - The blind-test boundary (agents never see `ground_truth_label` /
   `scenario_label`) is itself a security-relevant invariant — treat any code that
   would leak it into an agent's prompt as a security bug, not just a design bug.
+- Account and admin actions are audited: `register`, `login` (successful logins only),
+  `role_changed` and `settings_changed` (with `before` and `after`). Each is written in
+  the same transaction as the change it records: the domain row is written first, and
+  `append_entry` runs last under the advisory lock (plan section 3.2). A failed audit
+  write rolls the change back.
+- `detail` never holds a secret, a password hash, a token or a scenario label.
 
 ## 6. Dependency & container hygiene
 - Pin dependency versions (`requirements.txt` / `package-lock.json`) — no floating

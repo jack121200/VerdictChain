@@ -1,8 +1,12 @@
-"""Response models for the investigation and agent read endpoints."""
+"""Response models for the investigation, agent, audit, response-action and raw-log read endpoints."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
+
+from backend.api.metrics import Metric
+from backend.api.schemas.evidence import CitationSummaryOut
 
 
 class CitedEvidenceOut(BaseModel):
@@ -16,8 +20,17 @@ class DebateRoundOut(BaseModel):
     agent_id: str
     theory: str
     confidence: float
+    stance: str | None
+    provider: str | None
     cited_evidence: list[CitedEvidenceOut]
     created_at: datetime
+
+
+class AgentVoteOut(BaseModel):
+    agent_id: str
+    round: int
+    vote_class: str
+    matched_keywords: list[str]
 
 
 class CredibilityLogOut(BaseModel):
@@ -30,7 +43,13 @@ class CredibilityLogOut(BaseModel):
     created_at: datetime
 
 
+class CredibilityPointOut(CredibilityLogOut):
+    investigation_id: str | None
+
+
 class ResponseActionOut(BaseModel):
+    id: str
+    investigation_id: str | None
     action_type: str
     target: str
     reason: str | None
@@ -44,16 +63,90 @@ class InvestigationSummaryOut(BaseModel):
     status: str
     verdict_class: str | None
     verdict_confidence: float | None
+    primary_agent: str | None
+    dataset: str | None
+    noise_pct: int
+    rounds_complete: int
+    containment_count: int
     created_at: datetime
 
 
 class InvestigationDetailOut(InvestigationSummaryOut):
+    effective_noise_pct: float | None
     debate: list[DebateRoundOut]
+    votes: list[AgentVoteOut]
+    citations: CitationSummaryOut
     credibility: list[CredibilityLogOut]
     actions: list[ResponseActionOut]
 
 
 class AgentFleetEntryOut(BaseModel):
     agent_id: str
-    credibility_score: float
+    display_name: str
+    domain: str
+    signals: list[str]
+    provider_chain: list[str]
+    model: str
+    temperature: Metric[float]
+    crs: Metric[float]
     isolated: bool
+    rounds_scored: Metric[int]
+    citations_verified: Metric[int]
+    citations_total: Metric[int]
+    invalid_rate: Metric[float]
+    last_vote: str | None
+
+
+class AuditEntryOut(BaseModel):
+    id: str
+    seq: int
+    prev_hash: str | None
+    entry_hash: str
+    hash_input: str
+    actor: str
+    action: str
+    detail: dict[str, Any] | None
+    investigation_id: str | None
+    created_at: datetime
+
+
+class AuditChainOut(BaseModel):
+    valid: bool
+    head_seq: int | None
+    total: int
+
+
+class AuditTrailOut(BaseModel):
+    entries: list[AuditEntryOut]
+    chain: AuditChainOut
+    chain_valid: bool
+
+
+class AuditVerifyOut(BaseModel):
+    chain_valid: bool
+    entries_checked: int
+    first_break_seq: int | None
+    reason: str | None
+    head_hash: str | None
+
+
+class RawLogOut(BaseModel):
+    row_id: str
+    timestamp: datetime
+    source: str
+    source_file: str | None
+    event_type: str
+    user_id: str | None
+    host_id: str | None
+    severity: str | None
+    raw_fields: dict[str, Any]
+
+
+class RawLogCountOut(BaseModel):
+    source: str
+    count: Metric[int]
+
+
+class RawLogCountsOut(BaseModel):
+    total: Metric[int]
+    sources: list[RawLogCountOut]

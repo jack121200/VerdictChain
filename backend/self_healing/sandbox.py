@@ -37,6 +37,12 @@ class _MockDirectoryService:
             f"account {user_id} locked in sandboxed directory service (simulated, no real system contacted)"
         )
 
+    def unlock_account(self, user_id: str) -> str:
+        self.locked_accounts.discard(user_id)
+        return (
+            f"account {user_id} unlocked in sandboxed directory service (simulated, no real system contacted)"
+        )
+
 
 @dataclass
 class _MockFirewall:
@@ -49,10 +55,20 @@ class _MockFirewall:
         self.blocked_ranges.add(ip_range)
         return f"{ip_range} blocked in sandboxed firewall (simulated, no real system contacted)"
 
+    def unblock_ip_range(self, ip_range: str) -> str:
+        self.blocked_ranges.discard(ip_range)
+        return f"{ip_range} unblocked in sandboxed firewall (simulated, no real system contacted)"
+
     def trigger_rate_limiting(self, target: str) -> str:
         self.rate_limited_targets.add(target)
         return (
             f"rate limiting enabled for {target} in sandboxed firewall (simulated, no real system contacted)"
+        )
+
+    def disable_rate_limiting(self, target: str) -> str:
+        self.rate_limited_targets.discard(target)
+        return (
+            f"rate limiting disabled for {target} in sandboxed firewall (simulated, no real system contacted)"
         )
 
 
@@ -64,13 +80,40 @@ def lock_account(user_id: str) -> str:
     return _directory_service.lock_account(user_id)
 
 
+def unlock_account(user_id: str) -> str:
+    return _directory_service.unlock_account(user_id)
+
+
 def block_ip_range(ip_range: str) -> str:
     return _firewall.block_ip_range(ip_range)
+
+
+def unblock_ip_range(ip_range: str) -> str:
+    return _firewall.unblock_ip_range(ip_range)
 
 
 def trigger_rate_limiting(target: str) -> str:
     return _firewall.trigger_rate_limiting(target)
 
 
+def disable_rate_limiting(target: str) -> str:
+    return _firewall.disable_rate_limiting(target)
+
+
 def trigger_audit(target: str) -> str:
     return f"audit triggered for {target} (simulated, no real audit system contacted)"
+
+
+# Forward actions and their inverses. trigger_audit has no inverse: it records an audit event, it
+# does not change any state that could be released.
+FORWARD_ACTIONS = {
+    "lock_account": lock_account,
+    "block_ip_range": block_ip_range,
+    "trigger_rate_limiting": trigger_rate_limiting,
+    "trigger_audit": trigger_audit,
+}
+INVERSE_ACTIONS = {
+    "lock_account": unlock_account,
+    "block_ip_range": unblock_ip_range,
+    "trigger_rate_limiting": disable_rate_limiting,
+}

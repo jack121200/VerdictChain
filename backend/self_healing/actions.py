@@ -16,29 +16,37 @@ from backend.db.models import RawLog, ResponseAction
 from backend.db.session import SessionLocal
 from backend.self_healing import sandbox
 
+# Defaults only. The debate engine passes the live runtime settings (verdict threshold, isolation threshold).
 CONFIDENCE_THRESHOLD = 0.80
 CREDIBILITY_THRESHOLD = 0.30
 
 _EXTERNAL_CLASSES = {"ddos", "port_scan", "brute_force", "botnet_c2"}
 _INSIDER_CLASSES = {"insider_file_exfiltration", "insider_logon_anomaly"}
 
-_REASON_PROMPT_TEMPLATE = """A verdict of "{attack_class}" was reached with confidence {confidence}, verified by
-agents with credibility scores {crs_list}. The system is about to take this
-sandboxed containment action: {action_name} on target {target}. Write one sentence
-(max 30 words) explaining why this action is being taken, for the audit trail."""
+_REASON_PROMPT_TEMPLATE = (
+    'A verdict of "{attack_class}" was reached with confidence {confidence}, verified by\n'
+    "agents with credibility scores {crs_list}. The system is about to take this\n"
+    "sandboxed containment action: {action_name} on target {target}. Write one sentence\n"
+    "(max 30 words) explaining why this action is being taken, for the audit trail."
+)
 
 
-def should_respond(verdict: dict, agent_credibilities: dict[str, float]) -> bool:
-    """Both conditions required (SKILL-architecture.md Section 7): confidence
-    >= 0.80 AND every contributing agent's CrS >= 0.30.
+def should_respond(
+    verdict: dict,
+    agent_credibilities: dict[str, float],
+    confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    credibility_threshold: float = CREDIBILITY_THRESHOLD,
+) -> bool:
+    """Both conditions required (SKILL-architecture.md Section 7): verdict confidence
+    >= the verdict threshold AND every contributing agent's CrS >= the isolation threshold.
     """
     if verdict["status"] != "verdict_reached":
         return False
-    if verdict["verdict_confidence"] < CONFIDENCE_THRESHOLD:
+    if verdict["verdict_confidence"] < confidence_threshold:
         return False
     if not agent_credibilities:
         return False
-    return all(crs >= CREDIBILITY_THRESHOLD for crs in agent_credibilities.values())
+    return all(crs >= credibility_threshold for crs in agent_credibilities.values())
 
 
 def _most_common_target(row_ids: list[str], field: str) -> str | None:
@@ -102,25 +110,32 @@ def _generate_reason(
         return (
             GeminiClient()
             .complete(
-                "You write concise, factual one-sentence audit-log justifications. No JSON, just the sentence.",
+                "You write concise, factual one-sentence audit-log justifications. "
+                "No JSON, just the sentence.",
                 prompt,
             )
             .strip()
         )
     except Exception:  # noqa: BLE001 - reason text is a nice-to-have, never block containment on it
-        return f"{action_name} on {target}: {attack_class} verdict at confidence {confidence} with credible supporting agents."
+        return (
+            f"{action_name} on {target}: {attack_class} verdict at confidence {confidence} "
+            "with credible supporting agents."
+        )
 
 
 def respond_to_verdict(
     investigation_id: uuid.UUID,
     verdict: dict,
     agent_credibilities: dict[str, float],
+    *,
+    confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    credibility_threshold: float = CREDIBILITY_THRESHOLD,
 ) -> list[dict]:
     """Returns the list of actions taken (empty if the trigger conditions
     weren't met). Every action is written to response_actions with
     is_simulated=True (also hardcoded at the schema level - see sandbox.py).
     """
-    if not should_respond(verdict, agent_credibilities):
+    if not should_respond(verdict, agent_credibilities, confidence_threshold, credibility_threshold):
         return []
 
     verdict_class = verdict["verdict_class"]
@@ -129,17 +144,19 @@ def respond_to_verdict(
         return []
 
     crs_list = list(agent_credibilities.values())
+    # The LLM reason text is generated before the audit transaction opens, so the
+    # advisory lock is never held across a provider call (plan section 3.2).
+    reasons = [
+        _generate_reason(verdict_class, verdict["verdict_confidence"], crs_list, action_type, target)
+        for action_type, target in planned
+    ]
     taken = []
 
     session = SessionLocal()
     try:
-        for action_type, target in planned:
+        for (action_type, target), reason in zip(planned, reasons, strict=True):
             sandbox_fn = _SANDBOX_FUNCTIONS[action_type]
             sandbox_fn(target)  # executes in the sandbox - see sandbox.py
-
-            reason = _generate_reason(
-                verdict_class, verdict["verdict_confidence"], crs_list, action_type, target
-            )
 
             record = ResponseAction(
                 investigation_id=investigation_id,

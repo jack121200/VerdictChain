@@ -1,5 +1,6 @@
-import pytest
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from backend.db.models import RawLog
 from backend.pipeline.investigation_builder import create_investigation, create_manual_investigation

@@ -2,11 +2,11 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 
+import pika
+
 from backend.config import settings
 from backend.db.models import RawLog
 from backend.pipeline.log_streamer import QUEUE_NAME, publish_continuous, publish_manual
-
-import pika
 
 
 def _drain_queue(max_messages: int, timeout_s: float = 5.0) -> list[dict]:

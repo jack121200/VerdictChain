@@ -36,8 +36,9 @@
   --color-on-error-container: #ffdad6;
   --color-error-strong: #ba1a1a;
 
-  /* Surfaces */
-  --color-background: #0a0e15;
+  /* Surfaces. Background is pure jet black (user preference 2026-10-09); every
+     surface step above it stays as-is so cards/panels still read as elevated. */
+  --color-background: #000000;
   --color-surface: #0f131b;
   --color-surface-dim: #0f131b;
   --color-surface-bright: #353941;

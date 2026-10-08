@@ -96,7 +96,8 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-horse' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeTruthy();
+    // The sidebar nav renders once the dashboard shell is up.
+    expect(await screen.findByRole('link', { name: 'Dashboard' })).toBeTruthy();
     expect(window.location.hash).toBe('#/dashboard');
     expect(localStorage.getItem('verdictchain_token')).toBe('token-1');
     // Shell values come from the API, not from the component.
@@ -112,7 +113,7 @@ describe('App', () => {
     window.location.hash = '#/dashboard';
     render(<App />);
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy();
-    expect(await screen.findByText('Your session has expired. Sign in again.')).toBeTruthy();
+    expect((await screen.findAllByText('Your session has expired. Sign in again.')).length).toBeGreaterThan(0);
     expect(localStorage.getItem('verdictchain_token')).toBeNull();
     expect(window.location.hash).toBe('#/login');
   });

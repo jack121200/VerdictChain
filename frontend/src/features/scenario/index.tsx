@@ -99,6 +99,10 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
 
   const footer = (
     <>
+      <span className="mr-auto inline-flex items-center gap-1.5 font-mono text-[10px] text-on-surface-variant">
+        <Icon name="verified_user" size={12} className="text-secondary" />
+        Investigation id is auto-assigned by the server on injection
+      </span>
       <Button variant="ghost" onClick={onClose} disabled={busy}>
         Cancel
       </Button>
@@ -125,15 +129,20 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
   return (
     <Modal open={open} onClose={onClose} title="Inject simulated threat scenario" footer={footer}>
       <div className="flex flex-col gap-5">
-        <p className="text-caption text-on-surface-variant">
-          Trigger a real scenario from the datasets into the multi-agent debate queue. The selection below is the only
-          thing sent to the backend.
-        </p>
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-primary-container/40 bg-primary-container/20 text-primary">
+            <Icon name="sync_alt" size={20} />
+          </span>
+          <p className="font-body text-xs text-on-surface-variant">
+            Trigger a real scenario from the datasets into the multi-agent debate queue. The selection below is the only
+            thing sent to the backend.
+          </p>
+        </div>
 
         {/* 1. Scenario, grouped by dataset */}
         <fieldset className="flex flex-col gap-3">
-          <legend className="flex items-center gap-2 text-label uppercase text-on-surface-variant">
-            Benchmark scenario
+          <legend className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase text-on-surface-variant">
+            1. Benchmark testbed scenario
             <Proof
               source="GET /scenarios"
               n={scenarios?.length ?? 0}
@@ -192,8 +201,8 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
 
         {/* 2. Noise */}
         <div className="flex flex-col gap-2">
-          <span className="flex items-center gap-2 text-label uppercase text-on-surface-variant">
-            Noise · benign-row dilution
+          <span className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase text-on-surface-variant">
+            2. Noise · benign-row dilution
             <Proof
               source="POST /investigations/simulate (noise_pct)"
               n={1}

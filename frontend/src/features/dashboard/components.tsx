@@ -8,27 +8,22 @@ import type {
   InvestigationSummary,
   InvestigatorId,
   Metric as MetricEnvelope,
+  ScenarioSummary,
   StatsResponse,
 } from '../../api/types';
 import { buildRoute } from '../../app/router';
 import { cn } from '../../lib/cn';
-import { formatCount, formatNumber, formatPercent, shortId } from '../../lib/format';
-import { AgentChip } from '../../ui/AgentChip';
+import { formatCount, formatPercent, shortId } from '../../lib/format';
 import { Button } from '../../ui/Button';
-import { Card } from '../../ui/Card';
 import type { Tone } from '../../ui/classes';
 import { CopyHash } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
-import { Metric } from '../../ui/Metric';
-import { Pill } from '../../ui/Pill';
 import { Proof, type ProofInput } from '../../ui/Proof';
 import { Ring } from '../../ui/Ring';
-import { SectionHeader } from '../../ui/Headings';
 import { Skeleton } from '../../ui/Skeleton';
 import { Sparkline } from '../../ui/Sparkline';
-import { StatusDot } from '../../ui/StatusDot';
-import { citationStatusMeta, investigationStatusMeta, verdictClassTone } from './derive';
+import { citationStatusMeta, verdictClassTone } from './derive';
 
 /** Chart tone per investigator (matches the agent chip colours, SKILL section 5). */
 const AGENT_TONE: Record<InvestigatorId, Tone> = {
@@ -37,12 +32,82 @@ const AGENT_TONE: Record<InvestigatorId, Tone> = {
   endpoint_behavior: 'tertiary',
 };
 
+const TONE_TEXT: Record<Tone, string> = {
+  primary: 'text-primary',
+  secondary: 'text-secondary',
+  tertiary: 'text-tertiary',
+  error: 'text-error',
+};
+
+const TONE_GLYPH_BOX: Record<Tone, string> = {
+  primary: 'bg-primary/10 border-primary/30 text-primary',
+  secondary: 'bg-secondary/10 border-secondary/30 text-secondary',
+  tertiary: 'bg-tertiary/10 border-tertiary/30 text-tertiary',
+  error: 'bg-error-container/30 border-error/40 text-error',
+};
+
+const TONE_HOVER: Record<Tone, string> = {
+  primary: 'hover:border-primary/50',
+  secondary: 'hover:border-secondary/50',
+  tertiary: 'hover:border-tertiary/50',
+  error: 'hover:border-error/50',
+};
+
+const TONE_BAR: Record<Tone, string> = {
+  primary: 'bg-primary',
+  secondary: 'bg-secondary',
+  tertiary: 'bg-tertiary',
+  error: 'bg-error',
+};
+
+const AGENT_GLYPH: Record<InvestigatorId, string> = {
+  network_traffic: 'α',
+  access_log: 'β',
+  endpoint_behavior: 'γ',
+};
+
 const PERCENT0 = (value: number) => formatPercent(value, 0);
 const PERCENT1 = (value: number) => formatPercent(value, 1);
 
-// ---- incident banner ---------------------------------------------------------------
+/**
+ * A live value rendered in the reference's exact typography, backed by a Metric envelope: it
+ * shows "—" with no fabricated number when value is null, and always carries a Proof (no-bluff R1/R2).
+ */
+function Stat({
+  metric,
+  className,
+  format = formatCount,
+  label,
+  proofInputs,
+}: {
+  metric: MetricEnvelope<number> | undefined;
+  className?: string;
+  format?: (value: number) => string;
+  label: string;
+  proofInputs?: readonly ProofInput[];
+}) {
+  const text = !metric || metric.value === null ? '—' : format(metric.value);
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={className}>{text}</span>
+      {metric && (
+        <Proof
+          source={metric.source}
+          n={metric.n}
+          asOf={metric.as_of}
+          definition={metric.definition}
+          reason={metric.reason}
+          inputs={proofInputs}
+          label={label}
+        />
+      )}
+    </span>
+  );
+}
 
-export interface IncidentBannerProps {
+// ---- 1. Tactical status banner + telemetry cards ----------------------------------
+
+export interface TacticalBannerProps {
   threat: InvestigationSummary | null;
   loading: boolean;
   subject: string | null;
@@ -50,193 +115,271 @@ export interface IncidentBannerProps {
   primaryAgentName: string | null;
   chain: AuditChain | undefined;
   chainLoadedAt: string | null;
+  stats: StatsResponse | undefined;
 }
 
-export function IncidentBanner({ threat, loading, subject, host, primaryAgentName, chain, chainLoadedAt }: IncidentBannerProps) {
+export function TacticalBanner({
+  threat,
+  loading,
+  subject,
+  host,
+  primaryAgentName,
+  chain,
+  chainLoadedAt,
+  stats,
+}: TacticalBannerProps) {
   return (
-    <Card variant="panel" hairline className="flex flex-col gap-3">
-      <div className="flex flex-col gap-3 rounded-lg border border-outline-variant/30 bg-background p-3 lg:flex-row lg:items-center lg:justify-between">
+    <section className="relative flex flex-col gap-4 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4 shadow-xl">
+      {/* Incident strip */}
+      <div className="flex flex-col justify-between gap-3 rounded-lg border border-outline-variant/30 bg-background p-3 lg:flex-row lg:items-center">
         {threat === null ? (
           loading ? (
             <Skeleton className="h-10 w-full" />
           ) : (
-            <EmptyState
-              title="No threat verdict yet"
-              description="The incident banner shows the most recent investigation whose verdict is a threat class."
-            />
+            <span className="font-body text-[13px] text-on-surface-variant">
+              No threat verdict yet — the incident banner tracks the most recent investigation with a threat-class verdict.
+            </span>
           )
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <Pill tone="error" icon="warning">
-              Active incident
-            </Pill>
-            <span className="font-mono text-evidence text-primary">{shortId(threat.id)}</span>
-            <Pill tone={verdictClassTone(threat.verdict_class)}>{threat.verdict_class ?? 'no class'}</Pill>
-            {threat.dataset && <span className="text-caption text-on-surface-variant">{threat.dataset}</span>}
-            {primaryAgentName && threat.primary_agent && (
-              <span className="inline-flex items-center gap-1.5 text-caption text-on-surface-variant">
-                domain
-                <AgentChip agentId={threat.primary_agent} name={primaryAgentName} />
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 rounded border border-error/40 bg-error-container/30 px-2 py-0.5 font-mono text-xs font-semibold uppercase text-error">
+              <span className="relative inline-flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-1.5 w-1.5 animate-ping rounded-full bg-error opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-error" />
               </span>
-            )}
-            <span className="inline-flex items-center gap-1.5 font-mono text-evidence text-on-surface-variant">
-              subject
-              <span className="rounded border border-outline-variant/30 bg-surface-card px-1.5 py-0.5 text-tertiary">
+              Active incident
+            </span>
+            <span className="font-headline text-base font-semibold tracking-tight text-on-surface sm:text-lg">
+              {threat.dataset ?? 'Investigation'} ·{' '}
+              <strong className="font-mono text-primary">{shortId(threat.id)}</strong>
+            </span>
+            <span className="hidden text-outline-variant sm:inline">•</span>
+            <span className="inline-flex items-center gap-1">
+              <span className={cn('rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase', verdictPillClass(threat.verdict_class))}>
+                {threat.verdict_class ?? 'no class'}
+              </span>
+            </span>
+            <div className="flex items-center gap-2 font-mono text-xs text-on-surface-variant">
+              <span>SUBJECT</span>
+              <span className="rounded border border-outline-variant/30 bg-surface-card px-1.5 py-0.5 font-semibold text-tertiary">
                 {subject ?? '—'}
               </span>
-              host
-              <span className="rounded border border-outline-variant/30 bg-surface-card px-1.5 py-0.5 text-primary">
+              <span>HOST</span>
+              <span className="rounded border border-outline-variant/30 bg-surface-card px-1.5 py-0.5 font-semibold text-primary">
                 {host ?? '—'}
               </span>
+              {primaryAgentName && threat.primary_agent && (
+                <span className="text-outline">· domain {primaryAgentName}</span>
+              )}
               <Proof
                 source="GET /investigations/{id}/citations"
                 n={1}
                 asOf={null}
                 label="Incident subject and host"
-                definition="The most-cited user_id and host_id values across this investigation's citations. '—' when no citation names that field."
+                definition="The most-cited user_id and host_id across this investigation's citations. '—' when no citation names that field. No identifiers are typed in."
               />
-            </span>
+            </div>
           </div>
         )}
 
-        <div className="flex shrink-0 items-center gap-2 font-mono text-evidence">
+        <div className="flex shrink-0 items-center gap-3 font-mono text-xs">
           {chain ? (
             <span
               className={cn(
                 'inline-flex items-center gap-1.5 rounded border px-2.5 py-1',
-                chain.valid ? 'border-secondary/30 text-secondary' : 'border-error/40 text-error',
+                chain.valid ? 'border-secondary/30 bg-surface-card text-secondary' : 'border-error/40 bg-surface-card text-error',
               )}
             >
               <Icon name={chain.valid ? 'verified_user' : 'warning'} size={12} />
-              {chain.valid ? 'Log integrity: chain valid' : 'Log integrity: chain broken'}
+              <span>Log integrity: {chain.valid ? 'chain valid' : 'chain broken'}</span>
               <Proof
                 source="GET /audit-trail (chain.valid)"
                 n={chain.total}
                 asOf={chainLoadedAt}
                 label="Log integrity"
-                definition="chain.valid over the hash-chained audit entries. n is the total number of entries."
+                definition="chain.valid over the SHA-256 hash-chained audit entries. n is the total number of entries."
               />
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 rounded border border-outline-variant/40 px-2.5 py-1 text-on-surface-variant">
+            <span className="inline-flex items-center gap-1.5 rounded border border-outline-variant/40 bg-surface-card px-2.5 py-1 text-on-surface-variant">
               Log integrity: not verified
             </span>
           )}
         </div>
       </div>
-    </Card>
-  );
-}
 
-// ---- KPI tiles ---------------------------------------------------------------------
-
-interface KpiTileProps {
-  label: string;
-  metric: MetricEnvelope<number> | undefined;
-  proofLabel: string;
-  tone: Tone;
-  sub?: ReactNode;
-  format?: (value: number) => string;
-  proofInputs?: readonly ProofInput[];
-}
-
-function KpiTile({ label, metric, proofLabel, tone, sub, format, proofInputs }: KpiTileProps) {
-  const TONE_BAR: Record<Tone, string> = {
-    primary: 'bg-primary',
-    secondary: 'bg-secondary',
-    tertiary: 'bg-tertiary',
-    error: 'bg-error',
-  };
-  return (
-    <Card className="flex flex-col justify-between gap-3">
-      <span className="text-label uppercase text-on-surface-variant">{label}</span>
-      <Metric metric={metric} label={proofLabel} size="kpi" format={format} proofInputs={proofInputs} />
-      <div className="flex items-center justify-between text-caption text-on-surface-variant">{sub}</div>
-      <div aria-hidden="true" className="h-0.5 w-full rounded-full bg-surface-container-highest">
-        <div className={cn('h-full w-full rounded-full', TONE_BAR[tone])} />
+      {/* Telemetry cards */}
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+        <TelemetryCard
+          label="Investigating now"
+          icon="hub"
+          tone="primary"
+          metric={stats?.active}
+          sub={<span className="text-on-surface-variant">Live debate slots</span>}
+        />
+        <TelemetryCard
+          label="Insider verdicts"
+          icon="warning"
+          tone="tertiary"
+          metric={stats?.insider_count}
+          sub={
+            <span className="inline-flex items-center gap-1 text-on-surface-variant">
+              agent-reported conf.
+              <Stat
+                metric={stats?.mean_agent_confidence}
+                className="font-semibold text-tertiary"
+                format={PERCENT1}
+                label="Mean agent-reported confidence (insider)"
+              />
+            </span>
+          }
+        />
+        <TelemetryCard
+          label="Fleet credibility"
+          icon="verified_user"
+          tone="secondary"
+          metric={stats?.mean_crs}
+          format={PERCENT1}
+          sub={<span className="text-on-surface-variant">Mean CrS · n = 3</span>}
+        />
+        <TelemetryCard
+          label="Containment actions"
+          icon="admin_panel_settings"
+          tone="primary"
+          metric={stats?.self_healing?.actions_total}
+          sub={
+            <span className="inline-flex items-center gap-1 text-on-surface-variant">
+              non-simulated
+              <Stat metric={stats?.self_healing?.non_simulated} className="font-semibold text-secondary" label="Non-simulated containment actions" />
+            </span>
+          }
+        />
       </div>
-    </Card>
+    </section>
   );
 }
 
-export function KpiTiles({ stats, loadedAt }: { stats: StatsResponse | undefined; loadedAt: string | null }) {
-  const confidence = stats?.mean_agent_confidence;
+function TelemetryCard({
+  label,
+  icon,
+  tone,
+  metric,
+  format = formatCount,
+  sub,
+}: {
+  label: string;
+  icon: 'hub' | 'warning' | 'verified_user' | 'admin_panel_settings';
+  tone: Tone;
+  metric: MetricEnvelope<number> | undefined;
+  format?: (value: number) => string;
+  sub: ReactNode;
+}) {
   return (
-    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
-      <KpiTile label="Investigating now" metric={stats?.active} proofLabel="Investigations running now" tone="primary" sub={<span>Live debate slots</span>} />
-      <KpiTile
-        label="Insider verdicts"
-        metric={stats?.insider_count}
-        proofLabel="Insider verdicts"
-        tone="tertiary"
-        sub={
-          <span className="inline-flex items-center gap-1.5">
-            agent-reported conf.
-            <Metric metric={confidence} size="body" label="Mean agent-reported confidence (insider)" format={PERCENT1} />
-          </span>
-        }
-      />
-      <KpiTile
-        label="Fleet credibility"
-        metric={stats?.mean_crs}
-        proofLabel="Mean credibility across the 3 investigators"
-        tone="secondary"
-        format={PERCENT1}
-        proofInputs={loadedAt ? [{ label: 'as of', value: loadedAt }] : undefined}
-        sub={<span>Mean CrS · n = 3</span>}
-      />
-      <KpiTile
-        label="Containment actions"
-        metric={stats?.self_healing.actions_total}
-        proofLabel="Containment actions (all simulated)"
-        tone="primary"
-        sub={
-          <span className="inline-flex items-center gap-1.5">
-            non-simulated
-            <Metric metric={stats?.self_healing.non_simulated} size="body" label="Non-simulated containment actions" />
-          </span>
-        }
-      />
+    <div
+      className={cn(
+        'group relative flex flex-col justify-between overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-card p-4 shadow-md transition-all',
+        TONE_HOVER[tone],
+      )}
+    >
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant">{label}</span>
+        <Icon name={icon} size={20} className={TONE_TEXT[tone]} />
+      </div>
+      <Stat metric={metric} className={cn('font-headline text-3xl font-bold', TONE_TEXT[tone])} format={format} label={label} />
+      <div className="mt-3 flex items-center justify-between border-t border-outline-variant/30 pt-2 font-mono text-[10px]">{sub}</div>
+      <div aria-hidden="true" className="absolute bottom-0 left-0 h-0.5 w-full bg-surface-container-highest">
+        <div className={cn('h-full w-full', TONE_BAR[tone])} />
+      </div>
     </div>
   );
 }
 
-// ---- scenario control bar ----------------------------------------------------------
-
-export interface ScenarioControlProps {
-  canInject: boolean;
-  onInject: () => void;
-  blindTestNote: ReactNode;
+function verdictPillClass(verdictClass: InvestigationSummary['verdict_class']): string {
+  const tone = verdictClassTone(verdictClass);
+  switch (tone) {
+    case 'error':
+      return 'border border-error/30 bg-error-container/40 text-error';
+    case 'secondary':
+      return 'border border-secondary/30 bg-secondary/20 text-secondary';
+    case 'tertiary':
+      return 'border border-tertiary/30 bg-tertiary/20 text-tertiary';
+    default:
+      return 'border border-outline-variant/40 bg-surface-container-high text-on-surface-variant';
+  }
 }
 
-export function ScenarioControl({ canInject, onInject, blindTestNote }: ScenarioControlProps) {
+// ---- 2. Scenario control bar ------------------------------------------------------
+
+export interface ScenarioBarProps {
+  scenarios: readonly ScenarioSummary[] | undefined;
+  selected: string | null;
+  onSelect: (label: string) => void;
+  canInject: boolean;
+  onInject: () => void;
+  onConfigure: () => void;
+  blindProof: ReactNode;
+}
+
+export function ScenarioBar({ scenarios, selected, onSelect, canInject, onInject, onConfigure, blindProof }: ScenarioBarProps) {
   return (
-    <Card variant="panel" className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-label uppercase text-on-surface-variant">Scenario injection</span>
-        <span className="inline-flex items-center gap-1.5 rounded border border-secondary/30 bg-secondary/10 px-2.5 py-1 text-caption text-secondary">
-          <StatusDot tone="ok" />
-          Ground-truth masked from the pod swarm
-          {blindTestNote}
+    <section className="flex flex-col justify-between gap-4 rounded-xl border border-outline-variant/40 bg-surface-container-low p-4 shadow-lg md:flex-row md:items-center">
+      <div className="flex flex-1 flex-wrap items-center gap-3">
+        <div className="flex shrink-0 items-center gap-1.5 font-mono text-xs font-semibold uppercase text-on-surface-variant">
+          <Icon name="dashboard" size={16} className="text-primary" />
+          <span>Attack dataset matrix:</span>
+        </div>
+
+        <div className="relative min-w-[260px] max-w-md flex-1">
+          <select
+            value={selected ?? ''}
+            onChange={(event) => onSelect(event.target.value)}
+            aria-label="Attack dataset scenario"
+            className="w-full cursor-pointer appearance-none rounded border border-outline-variant/60 bg-background py-2 pl-3 pr-8 font-mono text-xs text-on-surface transition-all focus:border-primary focus:outline-none"
+          >
+            {scenarios === undefined ? (
+              <option value="">Loading scenarios…</option>
+            ) : (
+              scenarios.map((scenario) => (
+                <option key={scenario.label} value={scenario.label}>
+                  {scenario.dataset} · {scenario.label} — {scenario.description}
+                </option>
+              ))
+            )}
+          </select>
+          <svg aria-hidden="true" viewBox="0 0 16 16" className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-outline">
+            <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+
+        <span className="inline-flex items-center gap-1.5 rounded border border-outline-variant/40 bg-surface-container-high px-3 py-1.5 font-mono text-xs text-on-surface-variant">
+          <span className="h-2 w-2 rounded-full bg-secondary" aria-hidden="true" />
+          <span>
+            Ground-truth: <strong className="text-on-surface">masked from pod swarm</strong>
+          </span>
+          {blindProof}
         </span>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <Button variant="primary" onClick={onInject} disabled={!canInject}>
-          Inject simulation
+
+      <div className="flex shrink-0 items-center gap-2.5">
+        <Button variant="primary" icon="sync_alt" onClick={onInject} disabled={!canInject}>
+          Inject simulation stream
         </Button>
-        <Proof
-          source="POST /investigations/simulate (opened via the modal)"
-          n={1}
-          asOf={null}
-          label="Inject simulation"
-          definition="Opens the scenario modal. The modal starts a real simulated investigation (wait=false) and opens its debate room. Disabled without the inject_scenario capability."
-        />
+        <button
+          type="button"
+          onClick={onConfigure}
+          title="Configure scenario"
+          aria-label="Configure scenario"
+          disabled={!canInject}
+          className="cursor-pointer rounded border border-outline-variant/40 bg-surface-container-high p-2 text-primary transition-colors hover:bg-surface-bright disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Icon name="admin_panel_settings" size={16} />
+        </button>
       </div>
-    </Card>
+    </section>
   );
 }
 
-// ---- pod triad ---------------------------------------------------------------------
+// ---- 3. Investigator pod triad ----------------------------------------------------
 
 function agentTurnsAcrossRounds(rounds: readonly DebateRound[], agentId: InvestigatorId) {
   return [...rounds]
@@ -245,151 +388,140 @@ function agentTurnsAcrossRounds(rounds: readonly DebateRound[], agentId: Investi
     .filter((entry): entry is { round: number; turn: NonNullable<(typeof entry)['turn']> } => entry.turn !== undefined);
 }
 
-function StanceBadge({ stance }: { stance: string | null }) {
-  if (stance === null) return <Pill tone="neutral">stance not stated</Pill>;
-  const tone: Tone = stance === 'SUPPORT' ? 'secondary' : stance === 'CHALLENGE' ? 'tertiary' : 'primary';
-  return <Pill tone={tone}>{stance}</Pill>;
+function stanceLabel(stance: string | null): string {
+  return stance ?? 'stance not stated';
 }
 
-function CitationsPerRound({ counts, tone }: { counts: readonly number[]; tone: Tone }) {
-  const max = counts.reduce((top, value) => Math.max(top, value), 0);
-  const BAR: Record<Tone, string> = {
-    primary: 'bg-primary-container',
-    secondary: 'bg-secondary',
-    tertiary: 'bg-tertiary',
-    error: 'bg-error',
-  };
-  if (counts.length === 0 || max === 0) {
-    return <span className="text-caption text-on-surface-variant">no citations yet</span>;
-  }
-  return (
-    <div className="flex h-8 items-end gap-1" role="img" aria-label={`Citations per round: ${counts.join(', ')}`}>
-      {counts.map((count, index) => (
-        <div key={index} className="flex flex-1 flex-col items-center justify-end">
-          <div
-            className={cn('w-full rounded-t', BAR[tone])}
-            style={{ height: `${Math.max(8, (count / max) * 100)}%` }}
-          />
-        </div>
-      ))}
-    </div>
-  );
+function stanceToneText(stance: string | null): string {
+  if (stance === 'SUPPORT') return 'text-secondary';
+  if (stance === 'CHALLENGE') return 'text-tertiary';
+  if (stance === 'REVISE') return 'text-primary';
+  return 'text-on-surface-variant';
 }
 
-interface PodProps {
-  entry: FleetEntry;
-  detail: InvestigationDetail | undefined;
-}
-
-function Pod({ entry, detail }: PodProps) {
+function Pod({ entry, detail }: { entry: FleetEntry; detail: InvestigationDetail | undefined }) {
   const agentId = entry.agent_id;
   const tone = AGENT_TONE[agentId];
   const turns = detail ? agentTurnsAcrossRounds(detail.rounds, agentId) : [];
   const latest = turns.length > 0 ? turns[turns.length - 1] : null;
   const confidences = turns.map((entry) => entry.turn.confidence);
-  const citationCounts = turns.map((entry) => entry.turn.cited_evidence.length);
 
   return (
-    <Card hoverTone={tone} className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2 border-b border-outline-variant/30 pb-3">
-        <div className="flex flex-col gap-1">
-          <AgentChip agentId={agentId} name={entry.display_name} />
-          <span className="text-caption text-on-surface-variant">{entry.domain}</span>
-        </div>
-        <Ring value={entry.crs.value} tone={tone} label={`Credibility, ${entry.display_name}`}>
-          <span className="font-mono text-evidence text-on-surface">
-            {entry.crs.value === null ? '—' : PERCENT0(entry.crs.value)}
-          </span>
-        </Ring>
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1.5 text-caption text-on-surface-variant">
-          Credibility
-          <Metric metric={entry.crs} size="body" label={`Credibility, ${entry.display_name}`} format={PERCENT1} />
-        </span>
-        {entry.isolated && <Pill tone="error" icon="warning">Isolated</Pill>}
-      </div>
-
-      <div className="flex flex-col gap-1.5 rounded-lg border border-outline-variant/30 bg-background p-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-label uppercase text-on-surface-variant">Formal stance</span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="font-mono text-evidence text-on-surface">{entry.last_vote ?? 'no vote'}</span>
-            <Proof
-              source="GET /agents/fleet (last_vote)"
-              n={1}
-              asOf={null}
-              label="Formal stance class"
-              definition="The verdict class this agent voted in its latest scored debate (server classify_theory). 'no vote' until a debate is scored."
-            />
-          </span>
-        </div>
-        {latest === null ? (
-          <p className="text-caption text-on-surface-variant">no debate yet</p>
-        ) : (
-          <>
-            <StanceBadge stance={latest.turn.stance} />
-            <p className="line-clamp-4 text-caption text-on-surface">{latest.turn.theory}</p>
-          </>
-        )}
-      </div>
-
-      <div className="flex items-center justify-between gap-2 rounded-lg border border-outline-variant/20 bg-background p-2.5">
-        <span className="inline-flex items-center gap-1.5 text-caption text-on-surface-variant">
-          Agent-reported confidence
-          <Proof
-            source="GET /investigations/{id} (rounds[].agents[].confidence)"
-            n={confidences.length}
-            asOf={null}
-            label="Confidence trajectory"
-            definition="Self-reported confidence per round in this agent's latest investigation. Self-reported, not calibrated accuracy (R4)."
-          />
-        </span>
-        {latest === null ? (
-          <span className="text-caption text-on-surface-variant">—</span>
-        ) : (
-          <span className="flex items-center gap-2">
-            <Sparkline values={confidences} min={0} max={1} tone={tone} label="Confidence by round" />
-            <span className="font-mono text-evidence" style={undefined}>
-              <span className={`text-${tone === 'primary' ? 'primary' : tone}`}>{PERCENT0(latest.turn.confidence)}</span>
+    <div className={cn('flex flex-col justify-between rounded-xl border border-outline-variant/40 bg-surface-card p-4 shadow-xl transition-all', TONE_HOVER[tone])}>
+      <div>
+        <div className="mb-3 flex items-center justify-between border-b border-outline-variant/30 pb-3">
+          <div className="flex items-center gap-2.5">
+            <span className={cn('flex h-9 w-9 items-center justify-center rounded-lg border font-mono text-base font-bold', TONE_GLYPH_BOX[tone])}>
+              {AGENT_GLYPH[agentId]}
             </span>
+            <div>
+              <div className="font-headline text-base font-bold text-on-surface">{entry.display_name}</div>
+              <div className="font-mono text-[10px] text-on-surface-variant">{entry.domain}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-right">
+            <Ring value={entry.crs.value} tone={tone} size={44} strokeWidth={4} label={`Credibility, ${entry.display_name}`}>
+              <span className={cn('font-mono text-[10px] font-bold', TONE_TEXT[tone])}>
+                {entry.crs.value === null ? '—' : PERCENT0(entry.crs.value)}
+              </span>
+            </Ring>
+            <div>
+              <Stat metric={entry.crs} className={cn('font-headline text-lg font-bold', TONE_TEXT[tone])} format={PERCENT1} label={`Credibility, ${entry.display_name}`} />
+              <div className="font-mono text-[9px] uppercase text-on-surface-variant">Credibility</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-3 rounded-lg border border-outline-variant/30 bg-background p-3">
+          <div className="mb-1 flex items-center justify-between font-mono text-[10px]">
+            <span className="text-on-surface-variant">FORMAL STANCE</span>
+            <span className={cn('font-semibold', stanceToneText(latest?.turn.stance ?? null))}>{stanceLabel(latest?.turn.stance ?? null)}</span>
+          </div>
+          {latest === null ? (
+            <p className="font-body text-xs leading-relaxed text-on-surface-variant">No debate yet for this agent.</p>
+          ) : (
+            <p className="line-clamp-4 font-body text-xs leading-relaxed text-on-surface">{latest.turn.theory}</p>
+          )}
+          <div className="mt-2 flex items-center justify-between border-t border-outline-variant/20 pt-1.5 font-mono text-[9px] text-on-surface-variant">
+            <span>
+              Last vote: <span className="text-on-surface">{entry.last_vote ?? 'no vote'}</span>
+            </span>
+            <Proof
+              source="GET /agents/fleet (last_vote) · GET /investigations/{id} (rounds)"
+              n={turns.length}
+              asOf={null}
+              label="Formal stance"
+              definition="The verdict class this agent voted in its latest scored debate (server classify_theory), plus the server-parsed stance prefix (SUPPORT / CHALLENGE / REVISE) of its latest theory."
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1 rounded-lg border border-outline-variant/30 bg-surface-container-low p-2.5">
+          <div className="flex items-center justify-between font-mono text-[10px] text-on-surface-variant">
+            <span>Agent-reported confidence by round</span>
+            <span className={cn('font-semibold', TONE_TEXT[tone])}>{latest === null ? '—' : PERCENT1(latest.turn.confidence)}</span>
+          </div>
+          {confidences.length === 0 ? (
+            <p className="font-mono text-[10px] text-on-surface-variant">no rounds yet</p>
+          ) : (
+            <Sparkline values={confidences} min={0} max={1} tone={tone} width={240} height={40} className="w-full" label="Confidence by round" />
+          )}
+          <div className="flex items-center justify-end">
+            <Proof
+              source="GET /investigations/{id} (rounds[].agents[].confidence)"
+              n={confidences.length}
+              asOf={null}
+              label="Confidence trajectory"
+              definition="Self-reported confidence per round in this agent's latest investigation. Self-reported, not calibrated accuracy (R4)."
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-outline-variant/20 pt-2 font-mono text-[10px] text-on-surface-variant">
+        <span>
+          Rounds scored: <Stat metric={entry.rounds_scored} className="text-on-surface" label="Rounds scored" />
+        </span>
+        {entry.isolated ? (
+          <span className="flex items-center gap-1 font-semibold text-error">
+            <Icon name="warning" size={12} /> Isolated
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 font-semibold text-secondary">
+            <Icon name="verified_user" size={12} /> Active
           </span>
         )}
       </div>
-
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 text-caption text-on-surface-variant">
-            Verified citations
-            <Proof
-              source="GET /agents/fleet (citations_verified / citations_total)"
-              n={entry.citations_total.value ?? 0}
-              asOf={null}
-              label="Verified citations"
-              definition="Citations by this agent that the Watchdog verified against raw_logs, over its total citations."
-            />
-          </span>
-          <span className="font-mono text-evidence text-on-surface">
-            <Metric metric={entry.citations_verified} size="body" label="Verified citations" /> /{' '}
-            <Metric metric={entry.citations_total} size="body" label="Total citations" />
-          </span>
-        </div>
-        <CitationsPerRound counts={citationCounts} tone={tone} />
-      </div>
-    </Card>
+    </div>
   );
 }
 
-export function PodTriad({ fleet, detail }: { fleet: FleetEntry[] | undefined; detail: InvestigationDetail | undefined }) {
+export interface PodTriadProps {
+  fleet: FleetEntry[] | undefined;
+  detail: InvestigationDetail | undefined;
+  meanCrs: MetricEnvelope<number> | undefined;
+}
+
+export function PodTriad({ fleet, detail, meanCrs }: PodTriadProps) {
   return (
-    <section className="flex flex-col gap-2">
-      <SectionHeader eyebrow="3 rounds of dialectical scrutiny" title="Investigator pod triad" />
+    <section className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
+          <span className="font-headline text-base font-semibold uppercase tracking-wider text-on-surface">Investigator pod triad</span>
+          <span className="text-outline-variant">•</span>
+          <span className="font-mono text-xs text-on-surface-variant">3 rounds of dialectical scrutiny</span>
+        </div>
+        <span className="inline-flex items-center gap-1.5 rounded border border-secondary/30 bg-surface-card px-2.5 py-0.5 font-mono text-xs font-semibold text-secondary">
+          Mean credibility <Stat metric={meanCrs} className="font-semibold text-secondary" format={PERCENT1} label="Mean fleet credibility" />
+        </span>
+      </div>
+
       {fleet === undefined ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <Skeleton className="h-72 w-full" />
-          <Skeleton className="h-72 w-full" />
-          <Skeleton className="h-72 w-full" />
+          <Skeleton className="h-80 w-full" />
+          <Skeleton className="h-80 w-full" />
+          <Skeleton className="h-80 w-full" />
         </div>
       ) : fleet.length === 0 ? (
         <EmptyState title="No investigators reported" description="GET /agents/fleet returned no investigators." />
@@ -404,7 +536,7 @@ export function PodTriad({ fleet, detail }: { fleet: FleetEntry[] | undefined; d
   );
 }
 
-// ---- verdict ledger ----------------------------------------------------------------
+// ---- 4. Verdict ledger + terminal -------------------------------------------------
 
 export interface VerdictLedgerProps {
   rows: readonly InvestigationSummary[];
@@ -417,100 +549,104 @@ export interface VerdictLedgerProps {
 
 export function VerdictLedger({ rows, loading, hashFor, debateRounds, headSeq, chainLoadedAt }: VerdictLedgerProps) {
   return (
-    <Card variant="panel" className="flex flex-col gap-3">
-      <SectionHeader
-        eyebrow="Recent investigations"
-        title="Verdict ledger"
-        action={
-          <Proof
-            source="GET /investigations · GET /audit-trail (verdict_reached)"
-            n={rows.length}
-            asOf={chainLoadedAt}
-            label="Verdict ledger"
-            definition="The most recent investigations. The audit hash is the entry_hash of each investigation's verdict_reached audit entry."
-          />
-        }
-      />
-      {rows.length === 0 ? (
-        loading ? (
-          <Skeleton className="h-24 w-full" />
-        ) : (
-          <EmptyState title="No investigations yet" description="Inject a scenario to start the first debate." />
-        )
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-outline-variant/40 bg-surface-card">
-          <table className="w-full min-w-max border-collapse text-left text-body">
-            <caption className="sr-only">Recent investigations and their verdicts</caption>
-            <thead className="bg-surface-container-low">
-              <tr>
-                {['Investigation', 'Dataset', 'Debate', 'Verdict', 'Agent-reported conf.', 'Verdict hash'].map((header) => (
-                  <th key={header} scope="col" className="px-3 py-2 text-label uppercase text-on-surface-variant">
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const hash = hashFor(row.id);
-                const status = investigationStatusMeta(row.status);
-                return (
-                  <tr key={row.id} className="border-t border-outline-variant/40 transition-colors hover:bg-surface-container-high/50">
-                    <td className="px-3 py-2">
-                      <a href={buildRoute({ name: 'debate', id: row.id })} className="font-mono text-evidence text-primary hover:underline">
-                        {shortId(row.id)}
-                      </a>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-evidence text-on-surface-variant">{row.dataset ?? '—'}</td>
-                    <td className="px-3 py-2 font-mono text-evidence text-on-surface">
-                      {row.rounds_complete}
-                      {debateRounds !== undefined ? `/${debateRounds}` : ''}
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className="flex items-center gap-1.5">
-                        <Pill tone={verdictClassTone(row.verdict_class)}>{row.verdict_class ?? status.label}</Pill>
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-evidence text-on-surface">
-                      {row.verdict_confidence === null ? '—' : formatPercent(row.verdict_confidence, 1)}
-                    </td>
-                    <td className="px-3 py-2">
-                      {hash ? <CopyHash value={hash} label={`verdict audit hash for ${shortId(row.id)}`} /> : <span className="text-on-surface-variant">—</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+    <div className="flex flex-col justify-between rounded-xl border border-outline-variant/40 bg-surface-container-low p-4 shadow-xl lg:col-span-7">
+      <div>
+        <div className="mb-3 flex items-center justify-between border-b border-outline-variant/30 pb-2">
+          <div className="flex items-center gap-2">
+            <Icon name="receipt_long" size={20} className="text-primary" />
+            <span className="font-headline text-base font-semibold uppercase tracking-wider text-on-surface">Verdict ledger</span>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded border border-secondary/30 bg-secondary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-secondary">
+            Deterministic aggregation
+            <Proof
+              source="GET /investigations · GET /audit-trail (verdict_reached)"
+              n={rows.length}
+              asOf={chainLoadedAt}
+              label="Verdict ledger"
+              definition="The most recent investigations. The audit hash is the entry_hash of each investigation's verdict_reached audit entry. Aggregation of votes is deterministic code."
+            />
+          </span>
         </div>
-      )}
 
-      <div className="flex items-center justify-between rounded-lg bg-background p-2 text-caption text-on-surface-variant">
+        {rows.length === 0 ? (
+          loading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : (
+            <EmptyState title="No investigations yet" description="Inject a scenario to start the first debate." />
+          )
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left font-mono text-[11px]">
+              <caption className="sr-only">Recent investigations and their verdicts</caption>
+              <thead>
+                <tr className="border-b border-outline-variant/40 bg-background text-[10px] uppercase text-on-surface-variant">
+                  {['Incident ref', 'Vector / ingestion', 'Debate', 'Final verdict', 'Agent-reported conf.', 'Audit hash'].map((header, index) => (
+                    <th key={header} scope="col" className={cn('px-3 py-2 font-semibold', index === 5 && 'text-right')}>
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/20">
+                {rows.map((row) => {
+                  const hash = hashFor(row.id);
+                  return (
+                    <tr key={row.id} className="transition-colors hover:bg-surface-card">
+                      <td className="px-3 py-2.5">
+                        <a href={buildRoute({ name: 'debate', id: row.id })} className="font-semibold text-primary hover:underline">
+                          {shortId(row.id)}
+                        </a>
+                      </td>
+                      <td className="px-3 py-2.5 text-on-surface">{row.dataset ?? '—'}</td>
+                      <td className="px-3 py-2.5 font-semibold text-secondary">
+                        {row.rounds_complete}
+                        {debateRounds !== undefined ? `/${debateRounds}` : ''}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className={cn('inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase', verdictPillClass(row.verdict_class))}>
+                          {row.verdict_class ?? row.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 font-semibold text-on-surface">
+                        {row.verdict_confidence === null ? '—' : PERCENT1(row.verdict_confidence)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        {hash ? <CopyHash value={hash} label={`verdict audit hash for ${shortId(row.id)}`} /> : <span className="text-on-surface-variant">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between rounded border-t border-outline-variant/30 bg-background p-2 font-mono text-[10px] text-on-surface-variant">
         <span className="inline-flex items-center gap-1.5">
-          Audit head seq
-          <span className="font-mono text-evidence text-secondary">{headSeq ?? '—'}</span>
+          <Icon name="receipt_long" size={12} className="text-secondary" />
+          Audit head seq <span className="text-secondary">{headSeq ?? '—'}</span>
           <Proof source="GET /audit-trail (chain.head_seq)" n={1} asOf={chainLoadedAt} label="Audit head seq" definition="The sequence number of the latest audit entry." />
         </span>
         <a href={buildRoute({ name: 'audit' })} className="text-primary hover:underline">
           Open audit trail →
         </a>
       </div>
-    </Card>
+    </div>
   );
 }
 
-// ---- terminal stream ---------------------------------------------------------------
+// ---- terminal stream --------------------------------------------------------------
 
 export interface TerminalLine {
   key: string;
-  seq: number;
   time: string;
   body: string;
   tone: Tone | 'neutral';
 }
 
-const TONE_TEXT: Record<Tone | 'neutral', string> = {
-  neutral: 'text-on-surface',
+const TERMINAL_TEXT: Record<Tone | 'neutral', string> = {
+  neutral: 'text-on-surface-variant',
   primary: 'text-primary',
   secondary: 'text-secondary',
   tertiary: 'text-tertiary',
@@ -519,89 +655,135 @@ const TONE_TEXT: Record<Tone | 'neutral', string> = {
 
 export function TerminalStream({ lines, onClear, loadedAt }: { lines: readonly TerminalLine[]; onClear: () => void; loadedAt: string | null }) {
   return (
-    <Card className="flex flex-col gap-2 bg-surface-container-lowest">
-      <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2">
-        <span className="inline-flex items-center gap-2">
-          <StatusDot tone="live" label="Live audit stream" />
-          <span className="text-label uppercase text-on-surface">Audit stream</span>
-          <Proof
-            source="GET /audit-trail (tail) + live WS events"
-            n={lines.length}
-            asOf={loadedAt}
-            label="Audit stream"
-            definition="The last audit entries, plus live WebSocket events while a debate is running. Clear hides the view only; a refresh restores it."
-          />
-        </span>
-        <Button variant="ghost" size="sm" onClick={onClear}>
-          Clear
-        </Button>
+    <div className="flex flex-col justify-between rounded-xl border border-outline-variant/40 bg-background p-4 shadow-2xl lg:col-span-5">
+      <div>
+        <div className="mb-2 flex items-center justify-between border-b border-outline-variant/30 pb-2">
+          <div className="flex items-center gap-2">
+            <span className="relative inline-flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-primary opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
+            </span>
+            <span className="font-mono text-xs font-semibold uppercase text-on-surface">Audit event stream</span>
+            <Proof
+              source="GET /audit-trail (tail)"
+              n={lines.length}
+              asOf={loadedAt}
+              label="Audit stream"
+              definition="The most recent audit-trail entries, newest last. Clear hides the view only; a refresh restores it. Live WebSocket events appear on the debate room."
+            />
+          </div>
+          <button type="button" onClick={onClear} className="cursor-pointer font-mono text-[10px] text-on-surface-variant hover:text-on-surface">
+            CLEAR
+          </button>
+        </div>
+
+        <div className="h-64 space-y-1.5 overflow-y-auto rounded border border-outline-variant/20 bg-surface-container-lowest p-2 font-mono text-[10px]">
+          {lines.length === 0 ? (
+            <p className="text-on-surface-variant">No audit entries to show.</p>
+          ) : (
+            lines.map((line) => (
+              <div key={line.key} className="leading-relaxed">
+                <span className="text-primary">[{line.time}]</span> <span className={TERMINAL_TEXT[line.tone]}>{line.body}</span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
-      <div className="h-64 overflow-y-auto rounded border border-outline-variant/20 bg-surface-container-lowest p-2 font-mono text-evidence-dense">
-        {lines.length === 0 ? (
-          <p className="text-on-surface-variant">No audit entries to show.</p>
-        ) : (
-          lines.map((line) => (
-            <div key={line.key} className="leading-relaxed">
-              <span className="text-primary">[{line.time}]</span> <span className={TONE_TEXT[line.tone]}>{line.body}</span>
-            </div>
-          ))
-        )}
-      </div>
-    </Card>
+    </div>
   );
 }
 
-// ---- evidence traces ---------------------------------------------------------------
+// ---- 5. Forensic evidence traces --------------------------------------------------
+
+/** Decorative reference images, kept per user directive 0b. Captions are driven by real citations only. */
+const EVIDENCE_IMAGES: readonly { src: string; alt: string }[] = [
+  { src: '/assets/usb-chip-macro.jpg', alt: 'Abstract macro photograph of a circuit board, decorative' },
+  { src: '/assets/datacenter-racks.jpg', alt: 'Abstract server racks with fibre cabling, decorative' },
+  { src: '/assets/turnstile-badge-desk.jpg', alt: 'Abstract security operations desk, decorative' },
+];
 
 export function EvidenceTraces({ citations, loading }: { citations: readonly Citation[] | undefined; loading: boolean }) {
-  const shown = (citations ?? []).slice(0, 6);
+  const shown = (citations ?? []).slice(0, 3);
   return (
-    <section className="flex flex-col gap-2">
-      <SectionHeader
-        eyebrow="Latest cited rows, checked against raw_logs"
-        title="Forensic evidence traces"
-        action={
+    <section className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <span className="font-headline text-base font-semibold uppercase tracking-wider text-on-surface">Cited forensic evidence</span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-xs uppercase text-on-surface-variant">
+          Latest cited rows, checked against raw_logs
           <Proof
             source="GET /investigations/{id}/citations"
             n={citations?.length ?? 0}
             asOf={null}
             label="Evidence traces"
-            definition="The latest investigation's cited raw_logs rows, with the Watchdog's per-citation status and the canonical row fingerprint."
+            definition="The latest investigation's cited raw_logs rows: row id, field, value and the Watchdog's per-citation status. The images are decorative; every caption is a real cited value."
           />
-        }
-      />
-      {shown.length === 0 ? (
-        loading ? (
-          <Skeleton className="h-28 w-full" />
-        ) : (
-          <EmptyState title="No citations yet" description="Citations appear once an investigation cites raw_logs rows." />
-        )
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Skeleton className="h-72 w-full" />
+          <Skeleton className="h-72 w-full" />
+          <Skeleton className="h-72 w-full" />
+        </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {shown.map((citation, index) => {
-            const meta = citationStatusMeta(citation.status);
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {EVIDENCE_IMAGES.map((image, index) => {
+            const citation = shown[index];
+            const meta = citation ? citationStatusMeta(citation.status) : null;
             return (
-              <Card key={`${citation.row_id}-${citation.field}-${index}`} hoverTone={meta.tone} className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-evidence text-primary">row {citation.row_id}</span>
-                  <Pill tone={meta.tone} icon={meta.icon}>
-                    {meta.label}
-                  </Pill>
-                </div>
-                <div className="font-mono text-evidence text-on-surface">
-                  {citation.field}: <span className="text-on-surface-variant">{citation.value ?? '—'}</span>
-                </div>
-                {citation.status === 'DISCREPANCY' && citation.expected !== null && (
-                  <div className="font-mono text-evidence-dense text-tertiary">expected: {citation.expected}</div>
+              <div
+                key={image.src}
+                className={cn(
+                  'group flex flex-col justify-between overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-card shadow-lg transition-all',
+                  meta ? TONE_HOVER[meta.tone] : 'hover:border-outline-variant',
                 )}
-                <div className="flex items-center justify-between gap-2 pt-1 text-caption text-on-surface-variant">
-                  <AgentChip agentId={citation.agent_id} name={citation.agent_id} />
-                  <span>round {citation.round}</span>
+              >
+                <div className="relative h-44 w-full overflow-hidden">
+                  <img src={image.src} alt={image.alt} className="h-full w-full object-cover opacity-90 transition-transform duration-500 group-hover:scale-105" />
+                  <div aria-hidden="true" className="absolute inset-0 bg-linear-to-t from-surface-card via-transparent to-transparent" />
+                  {citation ? (
+                    <>
+                      <div className="absolute left-2 top-2 rounded bg-surface-container-lowest/80 px-2 py-0.5 font-mono text-[10px] font-semibold text-primary backdrop-blur">
+                        row {citation.row_id}
+                      </div>
+                      <div className={cn('absolute bottom-2 left-2 inline-flex items-center gap-1 rounded bg-surface-container-lowest/80 px-2 py-0.5 font-mono text-[10px] font-semibold backdrop-blur', TONE_TEXT[meta!.tone])}>
+                        <Icon name={meta!.icon} size={12} /> {meta!.label}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="absolute left-2 top-2 rounded bg-surface-container-lowest/80 px-2 py-0.5 font-mono text-[10px] font-semibold text-on-surface-variant backdrop-blur">
+                      Forensic console
+                    </div>
+                  )}
                 </div>
-                {citation.row_fingerprint && (
-                  <CopyHash value={citation.row_fingerprint} label={`row fingerprint for row ${citation.row_id}`} />
-                )}
-              </Card>
+                <div className="space-y-1.5 p-3.5">
+                  {citation ? (
+                    <>
+                      <div className="font-mono text-xs font-semibold text-on-surface">
+                        {citation.field}: <span className="text-on-surface-variant">{citation.value ?? '—'}</span>
+                      </div>
+                      {citation.status === 'DISCREPANCY' && citation.expected !== null && (
+                        <div className="font-mono text-[10px] text-tertiary">expected: {citation.expected}</div>
+                      )}
+                      <div className="flex items-center justify-between border-t border-outline-variant/20 pt-2 font-mono text-[10px] text-on-surface-variant">
+                        <span>
+                          cited by <span className="text-on-surface">{AGENT_GLYPH[citation.agent_id]} {citation.agent_id}</span>
+                        </span>
+                        <span>round {citation.round}</span>
+                      </div>
+                      {citation.row_fingerprint && <CopyHash value={citation.row_fingerprint} label={`row fingerprint for row ${citation.row_id}`} />}
+                    </>
+                  ) : (
+                    <>
+                      <div className="font-headline text-base font-semibold text-on-surface">Awaiting cited evidence</div>
+                      <p className="font-body text-xs leading-relaxed text-on-surface-variant">
+                        This panel fills with a real cited raw_logs row once the latest investigation cites more evidence.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -609,5 +791,3 @@ export function EvidenceTraces({ citations, loading }: { citations: readonly Cit
     </section>
   );
 }
-
-export { formatCount, formatNumber };

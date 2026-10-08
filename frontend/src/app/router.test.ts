@@ -19,10 +19,13 @@ describe('parseRoute', () => {
     expect(parseRoute('#/investigations/abc%20d')).toEqual({ name: 'investigation', id: 'abc d' });
   });
 
+  it('parses the debate list route (no id, with or without a trailing slash)', () => {
+    expect(parseRoute('#/debate')).toEqual({ name: 'debate' });
+    expect(parseRoute('#/debate/')).toEqual({ name: 'debate' });
+  });
+
   it('treats unknown, extra or malformed paths as not_found', () => {
     expect(parseRoute('#/nope')).toEqual({ name: 'not_found', path: 'nope' });
-    expect(parseRoute('#/debate')).toMatchObject({ name: 'not_found' });
-    expect(parseRoute('#/debate/')).toMatchObject({ name: 'not_found' });
     expect(parseRoute('#/investigations/a/b')).toMatchObject({ name: 'not_found' });
     expect(parseRoute('#/debate/%E0%A4%A')).toMatchObject({ name: 'not_found' });
   });

@@ -1,0 +1,167 @@
+import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EvaluationResponse, FleetEntry, InvestigationPage, Metric, RawLogRow, ScenarioSummary, Settings, StatsResponse, SystemStatus } from '../../api/types';
+
+vi.mock('../../api/client', () => ({
+  describeError: (error: unknown) => String(error),
+  getAgentFleet: vi.fn(),
+  getEvaluation: vi.fn(),
+  getInvestigationCitations: vi.fn(),
+  getRawLogCounts: vi.fn(),
+  getSettings: vi.fn(),
+  getStats: vi.fn(),
+  getSystemStatus: vi.fn(),
+  listAuditTrail: vi.fn(),
+  listInvestigations: vi.fn(),
+  listRecentRawLogs: vi.fn(),
+  listScenarios: vi.fn(),
+}));
+
+import {
+  getAgentFleet,
+  getEvaluation,
+  getInvestigationCitations,
+  getRawLogCounts,
+  getSettings,
+  getStats,
+  getSystemStatus,
+  listAuditTrail,
+  listInvestigations,
+  listRecentRawLogs,
+  listScenarios,
+} from '../../api/client';
+import OverviewPage from './index';
+
+const metric = (value: number | null, reason: string | null = null): Metric<number> => ({
+  value,
+  n: value === null ? 0 : 3,
+  as_of: '2026-10-08T00:00:00Z',
+  source: 'test',
+  definition: 'test',
+  reason: value === null ? (reason ?? 'no data yet') : null,
+});
+
+function makeStats(overrides: Partial<StatsResponse> = {}): StatsResponse {
+  return {
+    threats_24h: metric(0),
+    active: metric(0),
+    insider_count: metric(0),
+    mean_agent_confidence: metric(0.5),
+    mean_crs: metric(0.9),
+    citations: { total: metric(50), verified: metric(48), discrepancy: metric(1), invalid_row: metric(1), verified_rate: metric(0.96) },
+    self_healing: { actions_total: metric(14), non_simulated: metric(0), simulated_share: metric(1) },
+    watchdog: { checks: metric(8), citations_checked: metric(50), discrepancies: metric(1), isolations: metric(0) },
+    feedback: { total: metric(0), confirmed: metric(0), false_positive: metric(0) },
+    brier: metric(null),
+    ...overrides,
+  };
+}
+
+const EVAL = { accuracy: metric(0.95) } as unknown as EvaluationResponse;
+
+const FLEET: FleetEntry[] = [
+  {
+    agent_id: 'network_traffic',
+    display_name: 'Network-Traffic',
+    domain: 'network traffic',
+    signals: ['tls'],
+    provider_chain: ['groq'],
+    model: 'm',
+    temperature: metric(0.2),
+    crs: metric(0.9),
+    isolated: false,
+    rounds_scored: metric(3),
+    citations_verified: metric(10),
+    citations_total: metric(12),
+    invalid_rate: metric(0.1),
+    last_vote: 'ddos',
+  },
+];
+
+const SCENARIO: ScenarioSummary = { label: 'DDoS', dataset: 'CICIDS2017', primary_agent: 'network_traffic', row_count: metric(10), description: 'volumetric flood' };
+
+const SETTINGS: Settings = {
+  eta: 0.15,
+  isolation_threshold: 0.3,
+  verdict_confidence_threshold: 0.8,
+  intake_paused: false,
+  debate_rounds: 3,
+  starting_crs: 0.5,
+  updated_at: null,
+  updated_by: null,
+};
+
+const STATUS = {
+  api_version: 'v2',
+  providers: {
+    groq: { configured: true, model: 'groq-model', temperature: metric(0.2), calls_24h: metric(0) },
+    gemini: { configured: false, model: null, temperature: metric(0.2), calls_24h: metric(0) },
+  },
+  sandbox: { is_simulated_violations: metric(0), actions_total: metric(0) },
+} as unknown as SystemStatus;
+
+const RECENT: RawLogRow[] = [
+  { row_id: 'row-7', timestamp: '2026-10-08T12:00:00Z', source: 'cicids2017', source_file: null, event_type: 'FLOW_START', user_id: 'u1', host_id: 'h1', severity: 'low', raw_fields: {} },
+];
+
+const INVESTIGATIONS = {
+  items: [
+    {
+      id: 'inv-1',
+      status: 'verdict_reached',
+      verdict_class: 'ddos',
+      verdict_confidence: 0.8,
+      primary_agent: 'network_traffic',
+      dataset: 'CICIDS2017',
+      noise_pct: 0,
+      rounds_complete: 3,
+      containment_count: 0,
+      trigger_type: 'simulate',
+      created_at: '2026-10-08T12:00:00Z',
+    },
+  ],
+  total: metric(1),
+  limit: 1,
+  offset: 0,
+} as unknown as InvestigationPage;
+
+beforeEach(() => {
+  vi.mocked(getEvaluation).mockResolvedValue(EVAL);
+  vi.mocked(getStats).mockResolvedValue(makeStats());
+  vi.mocked(getAgentFleet).mockResolvedValue(FLEET);
+  vi.mocked(listScenarios).mockResolvedValue([SCENARIO]);
+  vi.mocked(getRawLogCounts).mockResolvedValue([{ source: 'cicids2017', count: metric(1000) }]);
+  vi.mocked(getSettings).mockResolvedValue(SETTINGS);
+  vi.mocked(getSystemStatus).mockResolvedValue(STATUS);
+  vi.mocked(listAuditTrail).mockResolvedValue({ entries: [], chain: { valid: true, head_seq: 1, total: 5 } });
+  vi.mocked(listRecentRawLogs).mockResolvedValue(RECENT);
+  vi.mocked(listInvestigations).mockResolvedValue(INVESTIGATIONS);
+  vi.mocked(getInvestigationCitations).mockResolvedValue({
+    summary: { total: 1, verified: 1, discrepancy: 0, invalid_row: 0, match_rate: metric(1) },
+    citations: [
+      { row_id: 'row-7', field: 'total_bytes', value: '48200', expected: '48200', status: 'VERIFIED', reason: 'ok', agent_id: 'network_traffic', round: 1, row_fingerprint: 'abc123' },
+    ],
+  });
+});
+
+describe('OverviewPage', () => {
+  it('renders real evaluated accuracy, scenario labels and the raw ingestion ledger', async () => {
+    render(<OverviewPage />);
+    expect(await screen.findByText('95.0%')).toBeTruthy(); // evaluated accuracy
+    expect(await screen.findByText('DDoS')).toBeTruthy(); // real scenario label
+    expect(await screen.findByText('FLOW_START')).toBeTruthy(); // real raw-log event from the ledger
+  });
+
+  it('shows the latest verdict confidence and a real Watchdog citation', async () => {
+    render(<OverviewPage />);
+    expect(await screen.findByText('80.0%')).toBeTruthy(); // latest agent-reported confidence
+    expect(await screen.findByText('Watchdog citation OK')).toBeTruthy();
+    expect(await screen.findByText('row-7')).toBeTruthy();
+  });
+
+  it('shows an em dash and the reason for a null metric, never 0', async () => {
+    vi.mocked(getEvaluation).mockResolvedValue({ accuracy: metric(null, 'not evaluated yet') } as unknown as EvaluationResponse);
+    render(<OverviewPage />);
+    expect(await screen.findByText('not evaluated yet')).toBeTruthy();
+  });
+});

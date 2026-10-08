@@ -2,34 +2,41 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { describeError, listAuditTrail, listResponseActions, verifyAuditTrail } from '../../api/client';
 import type { AuditEntry, AuditTrailResponse, AuditVerifyResult, ResponseAction } from '../../api/types';
 import { useAsync } from '../../app/use-async';
+import { cn } from '../../lib/cn';
 import { sha256Hex } from '../../lib/derive/hash';
 import { formatCount, formatTimestamp, shortId } from '../../lib/format';
-import { Button } from '../../ui/Button';
-import { Card } from '../../ui/Card';
-import { CopyHash } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
-import { Pill } from '../../ui/Pill';
 import { Proof } from '../../ui/Proof';
-import { StatusDot } from '../../ui/StatusDot';
 import { Table, type TableColumn } from '../../ui/Table';
 import { Tabs } from '../../ui/Tabs';
 import { pushToast } from '../../ui/toast-store';
 
 type AuditTab = 'ledger' | 'containment';
 
-function HudTile({ label, children, sub }: { label: string; children: ReactNode; sub?: ReactNode }) {
+/** Presentation label for an audit action code: a pure function of the API field. */
+function humanizeAction(action: string): string {
+  const base = action.startsWith('release:') ? `release ${action.slice('release:'.length)}` : action;
+  return base.replace(/[_:]/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function HudTile({ label, children, sub, subTone }: { label: string; children: ReactNode; sub: ReactNode; subTone?: string }) {
   return (
-    <Card variant="panel" className="flex flex-col gap-1">
-      <span className="text-label uppercase text-on-surface-variant">{label}</span>
-      <div className="flex flex-wrap items-baseline gap-2">{children}</div>
-      {sub ? <span className="text-caption text-on-surface-variant">{sub}</span> : null}
-    </Card>
+    <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/80 p-4 backdrop-blur-md">
+      <div className="font-mono text-[10px] uppercase text-on-surface-variant">{label}</div>
+      <div className="mt-1 flex flex-wrap items-baseline gap-2">{children}</div>
+      <div className={cn('mt-1 font-mono text-[10px]', subTone ?? 'text-on-surface-variant')}>{sub}</div>
+    </div>
   );
 }
 
-function KpiValue({ children }: { children: ReactNode }) {
-  return <span className="font-headline text-kpi tabular-nums text-on-surface">{children}</span>;
+function BoxLabel({ children, trailing }: { children: ReactNode; trailing?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between font-mono text-[10px] font-semibold uppercase text-outline">
+      <span>{children}</span>
+      {trailing}
+    </div>
+  );
 }
 
 /** Recomputes SHA-256 over the selected entry's hash_input in the browser and checks it against entry_hash. */
@@ -59,36 +66,39 @@ function BrowserRecompute({ entry }: { entry: AuditEntry }) {
   }, [entry]);
 
   return (
-    <div className="space-y-2 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5">
-      <div className="flex items-center justify-between">
-        <span className="text-label uppercase text-on-surface-variant">Browser SHA-256 recompute</span>
-        <Proof
-          source="browser: lib/derive/hash.ts sha256Hex(hash_input)"
-          n={1}
-          asOf={null}
-          definition="WebCrypto SHA-256 over the API-supplied hash_input (the exact pre-image). Compared with entry_hash from the same response."
-          inputs={[
-            { label: 'entry_hash', value: entry.entry_hash },
-            { label: 'computed', value: computed ?? 'computing…' },
-          ]}
-          label="Browser SHA-256 recompute"
-        />
-      </div>
+    <div className="space-y-2 rounded-xl border border-outline-variant/40 bg-background p-3.5">
+      <BoxLabel
+        trailing={
+          <Proof
+            source="browser: lib/derive/hash.ts sha256Hex(hash_input)"
+            n={1}
+            asOf={null}
+            definition="WebCrypto SHA-256 over the API-supplied hash_input (the exact pre-image). Compared with entry_hash from the same response."
+            inputs={[
+              { label: 'entry_hash', value: entry.entry_hash },
+              { label: 'computed', value: computed ?? 'computing…' },
+            ]}
+            label="Browser SHA-256 recompute"
+          />
+        }
+      >
+        Browser SHA-256 recompute
+      </BoxLabel>
       {error ? (
-        <p className="flex items-center gap-1.5 text-caption text-error">
+        <p className="flex items-center gap-1.5 font-body text-xs text-error">
           <Icon name="warning" size={12} label="Error" /> {error}
         </p>
       ) : match === null ? (
-        <p className="text-caption text-on-surface-variant">Computing…</p>
+        <p className="font-body text-xs text-on-surface-variant">Computing…</p>
       ) : (
         <>
-          <p className="break-all font-mono text-evidence text-on-surface">{computed}</p>
+          <code className="block break-all font-mono text-[11px] leading-relaxed text-on-surface">{computed}</code>
           {match ? (
-            <p className="flex items-center gap-1.5 text-caption text-secondary">
+            <p className="flex items-center gap-1.5 font-mono text-[11px] font-bold text-secondary">
               <Icon name="verified_user" size={12} label="Match" /> Matches entry_hash
             </p>
           ) : (
-            <p className="flex items-center gap-1.5 text-caption text-error">
+            <p className="flex items-center gap-1.5 font-mono text-[11px] font-bold text-error">
               <Icon name="warning" size={12} label="Mismatch" /> Does not match entry_hash
             </p>
           )}
@@ -98,71 +108,68 @@ function BrowserRecompute({ entry }: { entry: AuditEntry }) {
   );
 }
 
-function HashRow({ label, value, tone }: { label: string; value: string | null; tone: 'muted' | 'primary' | 'secondary' }) {
-  const text = tone === 'muted' ? 'text-on-surface-variant' : tone === 'secondary' ? 'text-secondary' : 'text-primary';
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-label uppercase text-on-surface-variant">{label}</span>
-      {value === null ? (
-        <span className="font-mono text-evidence text-on-surface-variant">none (genesis)</span>
-      ) : (
-        <span className={`truncate font-mono text-evidence ${text}`} title={value}>
-          {value}
-        </span>
-      )}
-    </div>
-  );
-}
-
 function EntryInspector({ entry }: { entry: AuditEntry }) {
   return (
-    <Card className="sticky top-24 space-y-5" hairline>
+    <div className="sticky top-24 space-y-5 rounded-2xl border border-outline-variant/50 bg-surface-container-low p-5 shadow-2xl backdrop-blur-xl">
       <div className="flex items-start justify-between gap-3 border-b border-outline-variant/40 pb-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-evidence font-bold text-primary">seq #{entry.seq}</span>
-            <Pill tone="primary">{entry.action}</Pill>
+            <span className="font-mono text-xs font-bold text-primary">seq #{entry.seq}</span>
+            <span className="rounded bg-secondary/20 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-secondary">Verified proof</span>
           </div>
-          <p className="mt-1 text-body text-on-surface">
-            {entry.actor} · <span className="font-mono text-evidence text-on-surface-variant">{formatTimestamp(entry.created_at)}</span>
+          <h2 className="mt-1 font-headline text-lg font-bold text-on-surface">{humanizeAction(entry.action)}</h2>
+          <p className="mt-0.5 font-mono text-[11px] text-on-surface-variant">
+            {entry.actor} · {formatTimestamp(entry.created_at)}
           </p>
         </div>
-        <Icon name="receipt_long" size={20} className="shrink-0 text-primary" />
+        <Icon name="verified_user" size={20} className="shrink-0 text-secondary" />
       </div>
 
-      <div className="space-y-2 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5">
-        <div className="flex items-center justify-between">
-          <span className="text-label uppercase text-on-surface-variant">Hash input (pre-image)</span>
-          <Proof
-            source="GET /audit-trail entries[].hash_input"
-            n={1}
-            asOf={entry.created_at}
-            definition="The exact canonical string the server hashes. The browser recomputes SHA-256 over it below."
-            label="Hash input"
-          />
-        </div>
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-outline-variant/40 bg-background p-2.5 font-mono text-evidence leading-relaxed text-primary">
+      {/* Canonical pre-image the server hashes */}
+      <div className="space-y-2 rounded-xl border border-outline-variant/40 bg-background p-3.5">
+        <BoxLabel
+          trailing={
+            <Proof
+              source="GET /audit-trail entries[].hash_input"
+              n={1}
+              asOf={entry.created_at}
+              definition="The exact canonical string the server hashes. The browser recomputes SHA-256 over it below."
+              label="Hash input"
+            />
+          }
+        >
+          Hash input (pre-image)
+        </BoxLabel>
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-outline-variant/40 bg-surface-container-lowest p-2.5 font-mono text-[11px] leading-relaxed text-primary">
           {entry.hash_input}
         </pre>
       </div>
 
-      <div className="space-y-3 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5">
-        <span className="text-label uppercase text-on-surface-variant">Hash chain link</span>
-        <HashRow label="Previous hash" value={entry.prev_hash} tone="muted" />
-        <HashRow label="Entry hash" value={entry.entry_hash} tone="primary" />
+      {/* Hash chain link: previous and current entry hash */}
+      <div className="space-y-2 rounded-xl border border-outline-variant/40 bg-background p-3.5 font-mono text-xs">
+        <BoxLabel>Hash chain link</BoxLabel>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-on-surface-variant">Previous entry hash:</span>
+          <code className="truncate text-[11px] text-outline">{entry.prev_hash ?? 'none (genesis)'}</code>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-on-surface-variant">Current entry hash:</span>
+          <code className="truncate text-[11px] text-primary">{entry.entry_hash}</code>
+        </div>
       </div>
 
+      {/* Honest browser SHA-256 recompute of this entry */}
       <BrowserRecompute entry={entry} />
 
       {entry.detail && Object.keys(entry.detail).length > 0 ? (
-        <div className="space-y-2 rounded-xl border border-outline-variant/40 bg-surface-container-lowest p-3.5">
-          <span className="text-label uppercase text-on-surface-variant">Detail (canonical, no labels)</span>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-outline-variant/40 bg-background p-2.5 font-mono text-evidence leading-relaxed text-on-surface">
+        <div className="space-y-2 rounded-xl border border-outline-variant/40 bg-background p-3.5">
+          <BoxLabel>Detail (canonical, no labels)</BoxLabel>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-outline-variant/40 bg-surface-container-lowest p-2.5 font-mono text-[11px] leading-relaxed text-on-surface">
             {JSON.stringify(entry.detail, null, 2)}
           </pre>
         </div>
       ) : null}
-    </Card>
+    </div>
   );
 }
 
@@ -175,13 +182,13 @@ const CONTAINMENT_COLUMNS: readonly TableColumn<ResponseAction>[] = [
     header: 'Mode',
     cell: (row) =>
       row.is_simulated ? (
-        <Pill tone="secondary" icon="check">
-          Simulated
-        </Pill>
+        <span className="inline-flex items-center gap-1 font-mono text-[11px] font-bold text-secondary">
+          <Icon name="check" size={12} /> Simulated
+        </span>
       ) : (
-        <Pill tone="error" icon="warning">
-          Not simulated
-        </Pill>
+        <span className="inline-flex items-center gap-1 font-mono text-[11px] font-bold text-error">
+          <Icon name="warning" size={12} /> Not simulated
+        </span>
       ),
   },
   { key: 'when', header: 'Recorded', cell: (row) => formatTimestamp(row.created_at), mono: true },
@@ -192,7 +199,7 @@ function ContainmentTab() {
   return (
     <div className="mt-4 space-y-3">
       <div className="flex items-center gap-2">
-        <p className="text-caption text-on-surface-variant">
+        <p className="font-body text-xs text-on-surface-variant">
           Every self-healing response is recorded with its simulation flag (GET /response-actions). Sandbox actions never reach a real system.
         </p>
         <Proof
@@ -272,24 +279,33 @@ export default function AuditPage() {
   const integrityValid = verifyResult ? verifyResult.chain_valid : chain?.valid;
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-6">
-      <header className="flex flex-col gap-4 border-b border-outline-variant/40 pb-6 md:flex-row md:items-end md:justify-between">
-        <div className="flex flex-col gap-2">
-          <span className="inline-flex items-center gap-2 text-label uppercase text-primary">
-            <StatusDot tone="live" /> Tamper-evident ledger · SHA-256 hash chain
-          </span>
-          <h1 className="font-headline text-h1 tracking-tight text-on-surface sm:text-h1-sm">
-            Audit <span className="text-primary">trail</span>
+    <section className="relative mx-auto min-h-screen w-full max-w-7xl px-4 py-6 lg:px-6">
+      {/* Screen header */}
+      <div className="flex flex-col justify-between gap-4 border-b border-outline-variant/40 pb-6 md:flex-row md:items-end">
+        <div>
+          <div className="mb-2 flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-primary">
+            <span className="h-2 w-2 rounded-full bg-secondary animate-pulse" aria-hidden="true" />
+            <span>Tamper-evident chain-of-custody • SHA-256 hash chain</span>
+          </div>
+          <h1 className="font-headline text-3xl font-bold tracking-tight text-on-surface sm:text-4xl">
+            Tamper-evident <span className="text-primary">audit ledger</span>
           </h1>
-          <p className="max-w-2xl text-body text-on-surface-variant">
-            Every debate round, credibility update, containment action and sign-off, hash-chained in PostgreSQL. Verify on the server and recompute each entry's SHA-256 in your browser.
+          <p className="mt-1 max-w-2xl font-body text-sm text-on-surface-variant">
+            A tamper-evident, hash-chained event sequence recording every debate round, raw-log Watchdog check and automated containment response. Verify on the server and recompute each entry's SHA-256 in your browser.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+
+        <div className="flex shrink-0 items-center gap-3">
           <span className="inline-flex items-center gap-1">
-            <Button variant="secondary" icon="verified_user" busy={verifying} onClick={runVerify} disabled={!trail.data}>
-              Verify chain
-            </Button>
+            <button
+              type="button"
+              onClick={runVerify}
+              disabled={verifying || !trail.data}
+              className="flex items-center gap-2 rounded border border-secondary/40 bg-surface-card px-3 py-2 font-mono text-xs font-bold uppercase text-secondary shadow-glow-emerald transition-all hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Icon name="verified_user" size={16} className={verifying ? 'animate-pulse' : ''} />
+              {verifying ? 'Verifying hashes…' : 'Verify cryptographic proof'}
+            </button>
             <Proof
               source="POST /audit-trail/verify"
               n={verifyResult?.entries_checked ?? chain?.total ?? 0}
@@ -299,9 +315,14 @@ export default function AuditPage() {
             />
           </span>
           <span className="inline-flex items-center gap-1">
-            <Button variant="primary" onClick={() => trail.data && exportCustodyBundle(trail.data)} disabled={!trail.data}>
-              Export custody bundle
-            </Button>
+            <button
+              type="button"
+              onClick={() => trail.data && exportCustodyBundle(trail.data)}
+              disabled={!trail.data}
+              className="flex items-center gap-2 rounded bg-primary-container px-3 py-2 font-mono text-xs font-bold uppercase text-on-primary shadow-glow-cyan transition-all hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Icon name="receipt_long" size={16} /> Export custody bundle
+            </button>
             <Proof
               source="browser: GET /audit-trail entries + head hash"
               n={entries.length}
@@ -311,11 +332,12 @@ export default function AuditPage() {
             />
           </span>
         </div>
-      </header>
+      </div>
 
+      {/* Ledger status badges */}
       <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <HudTile label="Chain head" sub="Latest audit sequence">
-          <KpiValue>{chain?.head_seq != null ? `#${formatCount(chain.head_seq)}` : '—'}</KpiValue>
+        <HudTile label="Chain head" subTone="text-secondary" sub="Gapless identity sequence">
+          <span className="font-headline text-2xl font-bold text-primary">{chain?.head_seq != null ? `#${formatCount(chain.head_seq)}` : '—'}</span>
           <Proof
             source="GET /audit-trail chain.head_seq"
             n={chain?.total ?? 0}
@@ -325,17 +347,24 @@ export default function AuditPage() {
           />
         </HudTile>
         <HudTile label="Total entries" sub="Hash-chained records">
-          <KpiValue>{chain ? formatCount(chain.total) : '—'}</KpiValue>
+          <span className="font-headline text-2xl font-bold text-on-surface">{chain ? formatCount(chain.total) : '—'}</span>
           <Proof source="GET /audit-trail chain.total" n={chain?.total ?? 0} asOf={trail.loadedAt} definition="Count of audit entries in the chain." label="Total entries" />
         </HudTile>
         <HudTile
-          label="Chain integrity"
+          label="Integrity verification"
+          subTone={integrityValid ? 'text-secondary' : 'text-on-surface-variant'}
           sub={verifyResult ? `${formatCount(verifyResult.entries_checked)} entries checked by server` : 'Run verify for a full server check'}
         >
           <span className="inline-flex items-center gap-2">
-            <StatusDot tone={integrityValid === undefined ? 'idle' : integrityValid ? 'ok' : 'error'} label="Chain integrity" />
-            <span className="font-headline text-kpi text-on-surface">
-              {integrityValid === undefined ? '—' : integrityValid ? 'Valid' : 'Broken'}
+            <span
+              className={cn(
+                'h-2 w-2 rounded-full',
+                integrityValid === undefined ? 'bg-outline' : integrityValid ? 'bg-secondary animate-pulse' : 'bg-error',
+              )}
+              aria-hidden="true"
+            />
+            <span className={cn('font-headline text-2xl font-bold', integrityValid ? 'text-secondary' : 'text-on-surface')}>
+              {integrityValid === undefined ? '—' : integrityValid ? '100% intact' : 'Broken'}
             </span>
           </span>
           <Proof
@@ -347,11 +376,13 @@ export default function AuditPage() {
             label="Chain integrity"
           />
         </HudTile>
-        <HudTile label="Head hash" sub="SHA-256 of the latest entry">
+        <HudTile label="Head hash" subTone="text-primary" sub="SHA-256 of the latest entry">
           {entries[0] ? (
-            <CopyHash value={entries[0].entry_hash} label="Head entry hash" />
+            <code className="block max-w-full truncate font-mono text-sm text-primary" title={entries[0].entry_hash}>
+              {entries[0].entry_hash}
+            </code>
           ) : (
-            <KpiValue>—</KpiValue>
+            <span className="font-headline text-2xl font-bold text-on-surface">—</span>
           )}
         </HudTile>
       </div>
@@ -379,11 +410,12 @@ export default function AuditPage() {
           <EmptyState title="No audit entries yet" description="The ledger fills as investigations run. Every action is appended here." icon="receipt_long" />
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          {/* Entry history list */}
           <div className="space-y-3 lg:col-span-7">
-            <div className="flex items-center justify-between px-1 text-label uppercase text-on-surface-variant">
+            <div className="flex items-center justify-between px-1 font-mono text-xs text-on-surface-variant">
               <span>Hash-chain history</span>
-              <span>Newest first</span>
+              <span>SHA-256 hash chain</span>
             </div>
             {entries.map((entry) => {
               const isSelected = selected?.seq === entry.seq;
@@ -393,40 +425,51 @@ export default function AuditPage() {
                   type="button"
                   onClick={() => setSelectedSeq(entry.seq)}
                   aria-pressed={isSelected}
-                  className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                  className={cn(
+                    'relative w-full rounded-xl border p-4 text-left transition-all',
                     isSelected
-                      ? 'border-primary bg-surface-card shadow-glow-cyan'
-                      : 'border-outline-variant/40 bg-surface-card hover:border-primary/50'
-                  }`}
+                      ? 'border-primary bg-surface-card shadow-glow-cyan ring-1 ring-primary/50'
+                      : 'border-outline-variant/40 bg-surface-container-low/70 hover:border-outline-variant hover:bg-surface-card/60',
+                  )}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-evidence font-bold text-primary">seq #{entry.seq}</span>
-                        <Pill tone="primary">{entry.action}</Pill>
-                        {entry.investigation_id ? (
-                          <span className="font-mono text-evidence text-on-surface-variant">{shortId(entry.investigation_id)}</span>
-                        ) : null}
+                        <span className="font-mono text-xs font-bold text-primary">seq #{entry.seq}</span>
+                        <span
+                          className={cn(
+                            'rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase',
+                            chain?.valid ? 'bg-secondary/20 text-secondary' : 'bg-error-container/40 text-error',
+                          )}
+                        >
+                          {chain?.valid ? 'Chain OK' : 'Chain broken'}
+                        </span>
+                        {entry.investigation_id ? <span className="font-mono text-[10px] text-outline">{shortId(entry.investigation_id)}</span> : null}
                       </div>
-                      <p className="mt-1 truncate font-mono text-evidence text-on-surface-variant">
-                        hash: <span className="text-primary">{entry.entry_hash}</span>
-                      </p>
+                      <h3 className="mt-1 font-headline text-base font-semibold text-on-surface">{humanizeAction(entry.action)}</h3>
+                      <div className="mt-1 truncate font-mono text-[11px] text-on-surface-variant">
+                        Hash: <code className="text-primary">{entry.entry_hash}</code>
+                      </div>
                     </div>
-                    <span className="shrink-0 font-mono text-evidence text-on-surface-variant">{formatTimestamp(entry.created_at)}</span>
+                    <span className="shrink-0 font-mono text-[10px] text-outline">{entry.created_at.substring(11, 19)} UTC</span>
                   </div>
-                  <div className="mt-3 flex items-center justify-between border-t border-outline-variant/40 pt-2.5 text-label uppercase text-on-surface-variant">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Icon name="verified_user" size={12} className="text-secondary" /> actor {entry.actor}
-                    </span>
-                    <span className="font-mono normal-case text-on-surface-variant">prev {entry.prev_hash ? shortId(entry.prev_hash, 10) : 'genesis'}</span>
+
+                  <div className="mt-3 flex items-center justify-between border-t border-outline-variant/30 pt-2.5 font-mono text-[10px] text-on-surface-variant">
+                    <div className="flex items-center gap-1.5">
+                      <Icon name="verified_user" size={12} className="text-secondary" />
+                      <span>actor {entry.actor}</span>
+                    </div>
+                    <span className="text-primary">prev {entry.prev_hash ? shortId(entry.prev_hash, 12) : 'genesis'}</span>
                   </div>
                 </button>
               );
             })}
           </div>
+
+          {/* Proof inspector */}
           <div className="lg:col-span-5">{selected ? <EntryInspector entry={selected} /> : null}</div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

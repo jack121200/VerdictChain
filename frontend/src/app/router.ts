@@ -7,7 +7,8 @@ export type SimpleRouteName = 'login' | 'dashboard' | 'investigations' | 'trust'
 
 export type Route =
   | { name: SimpleRouteName }
-  | { name: 'debate' | 'investigation'; id: string }
+  | { name: 'debate'; id?: string }
+  | { name: 'investigation'; id: string }
   | { name: 'not_found'; path: string };
 
 const SIMPLE_ROUTES: ReadonlySet<string> = new Set<SimpleRouteName>([
@@ -40,6 +41,9 @@ export function parseRoute(hash: string): Route {
   if (rest.length === 0 && SIMPLE_ROUTES.has(head)) {
     return { name: head as SimpleRouteName };
   }
+  if (rest.length === 0 && head === 'debate') {
+    return { name: 'debate' };
+  }
   if (rest.length === 1 && (head === 'debate' || head === 'investigations')) {
     const id = decodeSegment(rest[0]);
     if (id === null) return { name: 'not_found', path };
@@ -52,7 +56,7 @@ export function parseRoute(hash: string): Route {
 export function buildRoute(route: Exclude<Route, { name: 'not_found' }>): string {
   switch (route.name) {
     case 'debate':
-      return `#/debate/${encodeURIComponent(route.id)}`;
+      return route.id ? `#/debate/${encodeURIComponent(route.id)}` : '#/debate';
     case 'investigation':
       return `#/investigations/${encodeURIComponent(route.id)}`;
     default:

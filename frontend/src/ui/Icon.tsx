@@ -1,9 +1,10 @@
 import { cn } from '../lib/cn';
 import type { IconName } from './icon-names';
 
-export type IconSize = 12 | 16 | 20;
+/** Pixel size of the glyph. Any value is allowed; common ones keep a utility class. */
+export type IconSize = number;
 
-const SIZE_CLASS: Record<IconSize, string> = {
+const SIZE_CLASS: Record<number, string> = {
   12: 'vc-icon-12',
   16: 'vc-icon-16',
   20: 'vc-icon-20',
@@ -19,9 +20,11 @@ export interface IconProps {
 
 /** Material Symbols Outlined glyph. Render icons through this component, not raw spans. */
 export function Icon({ name, size = 16, label, className }: IconProps) {
+  const sizeClass = SIZE_CLASS[size];
   return (
     <span
-      className={cn('vc-icon', SIZE_CLASS[size], className)}
+      className={cn('vc-icon', sizeClass, className)}
+      style={sizeClass ? undefined : { fontSize: `${size}px` }}
       role={label ? 'img' : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}

@@ -39,7 +39,7 @@ function navKeyFor(route: Route): NavKey | null {
     case 'not_found':
       return null;
     case 'debate':
-      return 'dashboard';
+      return 'debate';
     case 'investigation':
       return 'investigations';
     default:

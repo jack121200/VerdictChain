@@ -510,6 +510,12 @@ export interface RawLogCount {
   count: Metric<number>;
 }
 
+/** GET /raw-logs/counts: total rows plus a per-source breakdown. */
+export interface RawLogCounts {
+  total: Metric<number>;
+  sources: RawLogCount[];
+}
+
 // ---- audit --------------------------------------------------------------------
 
 export interface AuditEntry {

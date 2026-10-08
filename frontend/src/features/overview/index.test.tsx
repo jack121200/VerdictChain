@@ -130,7 +130,10 @@ beforeEach(() => {
   vi.mocked(getStats).mockResolvedValue(makeStats());
   vi.mocked(getAgentFleet).mockResolvedValue(FLEET);
   vi.mocked(listScenarios).mockResolvedValue([SCENARIO]);
-  vi.mocked(getRawLogCounts).mockResolvedValue([{ source: 'cicids2017', count: metric(1000) }]);
+  vi.mocked(getRawLogCounts).mockResolvedValue({
+    total: metric(1000),
+    sources: [{ source: 'cicids2017', count: metric(1000) }],
+  });
   vi.mocked(getSettings).mockResolvedValue(SETTINGS);
   vi.mocked(getSystemStatus).mockResolvedValue(STATUS);
   vi.mocked(listAuditTrail).mockResolvedValue({ entries: [], chain: { valid: true, head_seq: 1, total: 5 } });

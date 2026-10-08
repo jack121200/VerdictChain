@@ -54,6 +54,8 @@ describe('ScenarioModal', () => {
     await screen.findByText('Botnet');
 
     const authorize = screen.getByRole('button', { name: 'Authorize injection' });
+    // The modal auto-selects the first scenario once the list loads, which enables the button.
+    await waitFor(() => expect((authorize as HTMLButtonElement).disabled).toBe(false));
     await act(async () => {
       fireEvent.click(authorize);
     });

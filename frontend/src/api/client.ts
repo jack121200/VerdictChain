@@ -24,7 +24,7 @@ import type {
   ContainmentResponse,
   Me,
   QuarantineState,
-  RawLogCount,
+  RawLogCounts,
   RawLogRecentParams,
   RawLogRow,
   RbacMatrix,
@@ -338,8 +338,8 @@ export function listRecentRawLogs(params: RawLogRecentParams = {}): Promise<RawL
   return request<RawLogRow[]>(withQuery('/raw-logs/recent', params));
 }
 
-export function getRawLogCounts(): Promise<RawLogCount[]> {
-  return request<RawLogCount[]>('/raw-logs/counts');
+export function getRawLogCounts(): Promise<RawLogCounts> {
+  return request<RawLogCounts>('/raw-logs/counts');
 }
 
 // ---- audit and response actions -----------------------------------------------------

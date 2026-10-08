@@ -110,7 +110,7 @@ const CITATION_TONE: Record<CitationStatus, { label: string; cls: string }> = {
 /** One real citation from the latest investigation, floating over the hero image. */
 function CitationPin({ investigationId }: { investigationId: string }) {
   const citations = useAsync(() => getInvestigationCitations(investigationId));
-  const first = citations.data?.citations[0];
+  const first = citations.data?.citations?.[0];
   const summary = citations.data?.summary;
 
   return (
@@ -163,7 +163,7 @@ export default function OverviewPage() {
 
   const latency = useMemo(() => deriveMeanLatencyMs(audit.data?.entries ?? []), [audit.data]);
   const providers = status.data?.providers;
-  const latestItem = latest.data?.items[0];
+  const latestItem = latest.data?.items?.[0];
   const latestConfidence = latestItem?.verdict_confidence ?? null;
   const recentRows = recent.data ?? [];
 
@@ -329,7 +329,7 @@ export default function OverviewPage() {
                         {latestConfidence === null ? 'no verdict yet' : percent(latestConfidence)}
                         <Proof
                           source="GET /investigations?limit=1 verdict_confidence"
-                          n={latest.data?.items.length ?? 0}
+                          n={latest.data?.items?.length ?? 0}
                           asOf={latest.loadedAt}
                           definition="Latest investigation's aggregated agent-reported confidence (self-reported, not calibrated accuracy). Accuracy comes only from /evaluation."
                           label="Latest verdict confidence"
@@ -378,10 +378,10 @@ export default function OverviewPage() {
             accent="border-primary/20 bg-primary/10 text-primary"
             title="Multi-source ingestion"
             footer={
-              (rawCounts.data ?? []).length === 0 ? (
+              (rawCounts.data?.sources ?? []).length === 0 ? (
                 <FooterRow label="Rows">—</FooterRow>
               ) : (
-                (rawCounts.data ?? []).map((row) => (
+                (rawCounts.data?.sources ?? []).map((row) => (
                   <FooterRow key={row.source} label={row.source}>
                     <Metric metric={row.count} size="body" label={`${row.source} rows`} />
                   </FooterRow>

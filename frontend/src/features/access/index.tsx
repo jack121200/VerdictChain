@@ -455,14 +455,14 @@ export default function AccessPage() {
               <CardTitle icon="receipt_long" iconClass="text-tertiary">
                 Data sources
               </CardTitle>
-              <Proof source="GET /raw-logs/counts" n={rawCounts.data?.length ?? 0} asOf={rawCounts.loadedAt} definition="Ingested raw_logs row count per source." label="Data sources" />
+              <Proof source="GET /raw-logs/counts" n={rawCounts.data?.sources.length ?? 0} asOf={rawCounts.loadedAt} definition="Ingested raw_logs row count per source." label="Data sources" />
             </div>
             {rawCounts.error && !rawCounts.data ? (
               <EmptyState title="Counts unavailable" description={rawCounts.error} icon="warning" />
-            ) : (rawCounts.data ?? []).length === 0 ? (
+            ) : (rawCounts.data?.sources ?? []).length === 0 ? (
               <EmptyState title="No ingested sources yet" icon="info" />
             ) : (
-              (rawCounts.data ?? []).map((row) => (
+              (rawCounts.data?.sources ?? []).map((row) => (
                 <Field key={row.source} label={row.source}>
                   <Metric metric={row.count} size="body" label={`${row.source} rows`} />
                 </Field>

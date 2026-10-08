@@ -77,7 +77,10 @@ beforeEach(() => {
   vi.mocked(getSettings).mockResolvedValue(SETTINGS);
   vi.mocked(getSystemStatus).mockResolvedValue(STATUS);
   vi.mocked(getRbacMatrix).mockResolvedValue(RBAC);
-  vi.mocked(getRawLogCounts).mockResolvedValue([{ source: 'cicids2017', count: metric(1000) }]);
+  vi.mocked(getRawLogCounts).mockResolvedValue({
+    total: metric(1000),
+    sources: [{ source: 'cicids2017', count: metric(1000) }],
+  });
   vi.mocked(listUsers).mockResolvedValue([]);
   vi.mocked(getMe).mockResolvedValue(me([]));
 });

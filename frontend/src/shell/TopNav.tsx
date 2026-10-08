@@ -1,7 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import { buildRoute, type SimpleRouteName } from '../app/router';
+import { type ReactNode } from 'react';
 import { ROLE_LABEL } from '../lib/labels';
-import { cn } from '../lib/cn';
 import { formatCount, formatDuration, shortId } from '../lib/format';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
@@ -10,20 +8,9 @@ import { Metric } from '../ui/Metric';
 import { Proof, type ProofProps } from '../ui/Proof';
 import { useShellData } from './shell-data';
 
-export type NavKey = Exclude<SimpleRouteName, 'login'>;
-
-const NAV_ITEMS: ReadonlyArray<{ key: NavKey; label: string; icon: IconName }> = [
-  { key: 'overview', label: 'Overview', icon: 'menu_book' },
-  { key: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-  { key: 'investigations', label: 'Investigations', icon: 'travel_explore' },
-  { key: 'trust', label: 'Trust & credibility', icon: 'verified_user' },
-  { key: 'fleet', label: 'Agent fleet', icon: 'hub' },
-  { key: 'audit', label: 'Audit trail', icon: 'receipt_long' },
-  { key: 'access', label: 'Access & system', icon: 'admin_panel_settings' },
-];
-
 export interface TopNavProps {
-  active: NavKey | null;
+  /** Opens the sidebar drawer on small screens. */
+  onMenuToggle: () => void;
   onSignOut: () => void;
 }
 
@@ -149,59 +136,30 @@ function UserBadge() {
   );
 }
 
-function NavLinks({ active, onNavigate, className }: { active: NavKey | null; onNavigate?: () => void; className?: string }) {
+/**
+ * Slim top bar beside the sidebar: a menu button (mobile), live status chips,
+ * the open-threats count, the analyst badge and sign-out. Every value is loaded, never typed.
+ */
+export function TopNav({ onMenuToggle, onSignOut }: TopNavProps) {
   return (
-    <>
-      {NAV_ITEMS.map((item) => {
-        const selected = active === item.key;
-        return (
-          <a
-            key={item.key}
-            href={buildRoute({ name: item.key })}
-            aria-current={selected ? 'page' : undefined}
-            onClick={onNavigate}
-            className={cn(
-              'flex items-center gap-1.5 rounded px-2.5 py-1.5 text-label font-semibold uppercase transition-all',
-              selected ? 'bg-primary-container font-bold text-on-primary shadow-glow-cyan' : 'text-on-surface-variant hover:bg-surface-card hover:text-on-surface',
-              className,
-            )}
-          >
-            <Icon name={item.icon} size={12} />
-            {item.label}
-          </a>
-        );
-      })}
-    </>
-  );
-}
-
-/** Fixed top bar: brand, status chips, primary navigation, analyst badge and sign-out. Every value is loaded, never typed. */
-export function TopNav({ active, onSignOut }: TopNavProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-outline-variant/40 bg-surface-container-lowest/90 shadow-panel backdrop-blur-xl">
+    <header className="sticky top-0 z-30 border-b border-outline-variant/40 bg-surface-container-lowest/90 shadow-panel backdrop-blur-xl">
       <div className="flex h-16 items-center justify-between gap-4 px-4 lg:h-20 lg:px-6">
-        <div className="flex min-w-0 items-center gap-4">
-          <a href={buildRoute({ name: 'dashboard' })} className="flex shrink-0 items-center gap-2.5">
-            <img src="/assets/logo-emblem.png" alt="VerdictChain logo" className="h-8 w-8 rounded-lg border border-primary-container/40 bg-surface-card p-1" />
-            <span className="flex flex-col leading-none">
-              <span className="font-headline text-base font-bold uppercase tracking-tight text-primary lg:text-lg">
-                Verdict<span className="text-on-surface">Chain</span>
-              </span>
-              <span className="mt-0.5 text-label uppercase text-on-surface-variant">Multi-agent console</span>
-            </span>
-          </a>
-          <div className="hidden items-center gap-1.5 border-l border-outline-variant/40 pl-3 2xl:flex">
+        <div className="flex min-w-0 items-center gap-3">
+          <button
+            type="button"
+            aria-label="Open menu"
+            onClick={onMenuToggle}
+            className="cursor-pointer rounded-lg bg-surface-card p-1.5 text-on-surface-variant hover:text-on-surface lg:hidden"
+          >
+            <Icon name="menu" size={20} />
+          </button>
+          <div className="hidden items-center gap-1.5 md:flex">
             <ApiChip />
             <LatencyChip />
             <DebateChip />
             <SandboxChip />
           </div>
         </div>
-
-        <nav aria-label="Primary" className="hidden items-center gap-1 rounded-lg border border-outline-variant/40 bg-background p-1 xl:flex">
-          <NavLinks active={active} />
-        </nav>
 
         <div className="flex shrink-0 items-center gap-3">
           <div className="hidden items-center gap-2 md:flex">
@@ -222,24 +180,8 @@ export function TopNav({ active, onSignOut }: TopNavProps) {
               label="Sign out"
             />
           </span>
-          <button
-            type="button"
-            aria-expanded={menuOpen}
-            aria-controls="primary-menu"
-            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-            onClick={() => setMenuOpen((open) => !open)}
-            className="cursor-pointer rounded-lg bg-surface-card p-1.5 text-on-surface-variant hover:text-on-surface xl:hidden"
-          >
-            <Icon name={menuOpen ? 'close' : 'menu'} size={20} />
-          </button>
         </div>
       </div>
-
-      {menuOpen && (
-        <nav id="primary-menu" aria-label="Primary (menu)" className="grid grid-cols-2 gap-1.5 border-t border-outline-variant/40 bg-surface-container-lowest px-4 py-3 xl:hidden">
-          <NavLinks active={active} onNavigate={() => setMenuOpen(false)} className="w-full" />
-        </nav>
-      )}
     </header>
   );
 }

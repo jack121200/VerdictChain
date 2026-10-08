@@ -6,7 +6,9 @@ import { PageSkeleton } from './PageSkeleton';
 import { buildRoute, parseRoute, type Route } from './router';
 import { Footer } from '../shell/Footer';
 import { ShellDataProvider } from '../shell/shell-data';
-import { TopNav, type NavKey } from '../shell/TopNav';
+import { TopNav } from '../shell/TopNav';
+import { Sidebar } from '../shell/Sidebar';
+import type { NavKey } from '../shell/nav';
 import { Toaster } from '../ui/Toaster';
 import { pushToast } from '../ui/toast-store';
 import { EmptyState } from '../ui/EmptyState';
@@ -85,6 +87,12 @@ function toLogin(message: string): void {
 export default function App() {
   const route = useRoute();
   const [authed, setAuthed] = useState<boolean>(() => getToken() !== null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [route.name]);
 
   const signOut = useCallback(() => {
     clearToken();
@@ -124,12 +132,15 @@ export default function App() {
 
   return (
     <ShellDataProvider>
-      <div className="flex min-h-screen flex-col bg-background text-on-surface">
-        <TopNav active={navKeyFor(route)} onSignOut={signOut} />
-        <main className="flex flex-1 flex-col pt-16 lg:pt-20">
-          <Suspense fallback={<PageSkeleton />}>{renderPage(route)}</Suspense>
-        </main>
-        <Footer />
+      <div className="min-h-screen bg-background text-on-surface">
+        <Sidebar active={navKeyFor(route)} open={menuOpen} onNavigate={() => setMenuOpen(false)} />
+        <div className="flex min-h-screen flex-col lg:pl-60">
+          <TopNav onMenuToggle={() => setMenuOpen((open) => !open)} onSignOut={signOut} />
+          <main className="flex flex-1 flex-col">
+            <Suspense fallback={<PageSkeleton />}>{renderPage(route)}</Suspense>
+          </main>
+          <Footer />
+        </div>
       </div>
       <Toaster />
     </ShellDataProvider>

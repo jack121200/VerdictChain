@@ -3,7 +3,7 @@
  * rewrite is needed and a reload lands on the same screen.
  */
 
-export type SimpleRouteName = 'login' | 'dashboard' | 'investigations' | 'trust' | 'fleet' | 'audit' | 'access' | 'overview';
+export type SimpleRouteName = 'landing' | 'login' | 'dashboard' | 'investigations' | 'trust' | 'fleet' | 'audit' | 'access' | 'overview';
 
 export type Route =
   | { name: SimpleRouteName }
@@ -12,6 +12,7 @@ export type Route =
   | { name: 'not_found'; path: string };
 
 const SIMPLE_ROUTES: ReadonlySet<string> = new Set<SimpleRouteName>([
+  'landing',
   'login',
   'dashboard',
   'investigations',

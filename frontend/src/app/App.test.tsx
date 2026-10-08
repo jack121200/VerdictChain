@@ -84,13 +84,14 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  it('sends a visitor with no session to sign-in', async () => {
+  it('shows the public landing to a visitor with no session', async () => {
     render(<App />);
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy();
-    expect(window.location.hash).toBe('#/login');
+    expect(await screen.findByRole('button', { name: /launch console/i })).toBeTruthy();
+    expect(window.location.hash).toBe('#/landing');
   });
 
   it('signs in through the API and opens the dashboard shell', async () => {
+    window.location.hash = '#/login';
     render(<App />);
     fireEvent.change(await screen.findByLabelText('Username'), { target: { value: 'analyst' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-horse' } });

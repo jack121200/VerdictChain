@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { clearToken, getToken, setUnauthorizedHandler } from '../api/client';
 import LoginPage from '../features/login';
+import LandingPage from '../features/landing';
 import { PAGES } from '../features';
 import { PageSkeleton } from './PageSkeleton';
 import { buildRoute, parseRoute, type Route } from './router';
@@ -35,6 +36,7 @@ function navigate(route: Exclude<Route, { name: 'not_found' }>): void {
 /** The top-level nav item a route belongs to. Debate rooms sit under the dashboard, investigation detail under investigations. */
 function navKeyFor(route: Route): NavKey | null {
   switch (route.name) {
+    case 'landing':
     case 'login':
     case 'not_found':
       return null;
@@ -50,6 +52,8 @@ function navKeyFor(route: Route): NavKey | null {
 function renderPage(route: Route): ReactNode {
   switch (route.name) {
     case 'login':
+    case 'landing':
+      // Rendered by the unauthenticated branch of App, never inside the shell.
       return null;
     case 'not_found':
       return (
@@ -109,22 +113,29 @@ export default function App() {
     return () => setUnauthorizedHandler(null);
   }, []);
 
-  // Unauthenticated visitors always land on sign-in. A signed-in visitor on sign-in goes to the dashboard.
+  // A visitor with no session sees the public landing page; sign-in is one click away.
+  // A signed-in visitor on the landing or sign-in screen is taken to the dashboard.
   useEffect(() => {
-    if (!authed && route.name !== 'login') navigate({ name: 'login' });
-    if (authed && route.name === 'login') navigate({ name: 'dashboard' });
+    if (!authed && route.name !== 'login' && route.name !== 'landing') navigate({ name: 'landing' });
+    if (authed && (route.name === 'login' || route.name === 'landing')) navigate({ name: 'dashboard' });
   }, [authed, route.name]);
 
   // The toaster sits outside both branches so a session-expired notice shows on the sign-in screen too.
-  if (!authed || route.name === 'login') {
-    return (
-      <>
+  if (!authed || route.name === 'login' || route.name === 'landing') {
+    const onLogin =
+      route.name === 'login' ? (
         <LoginPage
           onSignedIn={() => {
             setAuthed(true);
             navigate({ name: 'dashboard' });
           }}
         />
+      ) : (
+        <LandingPage onEnter={() => navigate({ name: 'login' })} />
+      );
+    return (
+      <>
+        {onLogin}
         <Toaster />
       </>
     );

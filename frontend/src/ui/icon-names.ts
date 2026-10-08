@@ -18,6 +18,7 @@ export const ICON_NAMES = [
   'travel_explore',
   'verified_user',
   'forum',
+  'login',
   'logout',
   'close',
   'search',

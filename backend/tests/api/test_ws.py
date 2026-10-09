@@ -215,7 +215,9 @@ def event_loop_thread():
     loop.close()
 
 
-def test_the_broadcaster_tags_every_frame_and_feeds_both_channels(monkeypatch, event_loop_thread):
+def test_the_broadcaster_tags_every_frame_and_feeds_the_investigation_channel_only(
+    monkeypatch, event_loop_thread
+):
     sent: list[tuple[str, dict]] = []
 
     async def record(key, message):
@@ -226,10 +228,10 @@ def test_the_broadcaster_tags_every_frame_and_feeds_both_channels(monkeypatch, e
     on_update({"type": "round_completed", "round": 1, "agents": []})
 
     deadline = time.monotonic() + 5
-    while len(sent) < 2 and time.monotonic() < deadline:
+    while not sent and time.monotonic() < deadline:
         time.sleep(0.01)
-    keys = {key for key, _ in sent}
-    assert keys == {investigation_key("inv-1"), "scenario:DDoS"}  # the legacy channel gets the frame too
+    time.sleep(0.1)  # a second, wrongly keyed frame would arrive in this window
+    assert [key for key, _ in sent] == [investigation_key("inv-1")]  # no scenario-keyed channel any more
     assert all(message["investigation_id"] == "inv-1" for _, message in sent)
     assert all(message["type"] == "round_completed" for _, message in sent)
 

@@ -709,6 +709,41 @@ def test_verdict_at_threshold_is_contained_and_status_becomes_contained(db_sessi
     assert verdict_entry.detail["status"] == "verdict_reached"
 
 
+@pytest.mark.parametrize(
+    ("start_crs", "contained"),
+    [
+        (0.28, False),  # 0.28 -> 0.34 -> 0.40 -> 0.48 after three honest rounds: below the 0.50 floor
+        (0.32, True),  # 0.32 -> 0.38 -> 0.46 -> 0.55: above it
+    ],
+)
+def test_a_degraded_agent_cannot_trigger_autonomous_containment(
+    db_session, monkeypatch, start_crs, contained
+):
+    """The gate bites between isolation (0.30) and a fresh agent's credibility (0.50): the agent still debates
+    and its vote counts, but the verdict is not acted on automatically."""
+    network_rows = _seed_all_domains(db_session)
+    monkeypatch.setattr("backend.self_healing.actions._generate_reason", lambda *a, **kw: "Mocked reason.")
+    _client().set(_crs_key("network_traffic"), start_crs)
+    investigators = {
+        agent: _make_fake_investigator(
+            agent,
+            {1: "Traffic spike suggests DDoS.", 2: "CHALLENGE: DDoS flood.", 3: "Final: DDoS flood."},
+            confidence=0.9,
+        )
+        for agent in DOMAIN_AGENTS
+    }
+
+    events = []
+    result = _debate(network_rows, investigators, on_update=events.append)
+
+    assert result["verdict"]["verdict_class"] == "ddos"
+    assert result["verdict"]["verdict_confidence"] >= SETTINGS.verdict_confidence_threshold
+    assert "network_traffic" in result["verdict"]["contributing_agents"]  # it was not isolated
+    assert not [e for e in events if e["type"] == "agent_isolated"]
+    assert bool(result["actions_taken"]) is contained
+    assert result["status"] == ("contained" if contained else "verdict_reached")
+
+
 def test_verdict_below_a_higher_threshold_is_not_contained(db_session, monkeypatch):
     network_rows = _seed_all_domains(db_session)
     monkeypatch.setattr(

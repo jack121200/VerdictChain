@@ -7,6 +7,7 @@ server from the debate transcripts, so the browser never parses theory text.
 import re
 import uuid
 from collections import Counter
+from datetime import datetime, timezone
 from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.agents.schemas import AgentId
 from backend.api.auth import get_current_user
+from backend.api.rate_limit import slot_holder
 from backend.api.routes.evidence import (
     citation_summary,
     investigation_transcripts,
@@ -31,6 +33,7 @@ from backend.api.schemas.read import (
     InvestigationSummaryOut,
     ResponseActionOut,
 )
+from backend.api.schemas.realtime import InvestigationProgressOut
 from backend.db.models import (
     AnalystFeedback,
     AuditTrail,
@@ -40,6 +43,7 @@ from backend.db.models import (
     ResponseAction,
 )
 from backend.db.session import SessionLocal
+from backend.debate.engine import DEBATE_ROUNDS
 from backend.debate.verdict import _CLASS_KEYWORDS, classify_theory
 
 router = APIRouter(prefix="/investigations", tags=["investigations"])
@@ -302,6 +306,40 @@ def get_investigation(
         )
     finally:
         session.close()
+
+
+_FINISHED_STATUSES = frozenset({"verdict_reached", "ambiguous", "contained"})
+
+
+@router.get("/{investigation_id}/progress", response_model=InvestigationProgressOut)
+def get_progress(
+    investigation_id: uuid.UUID, username: str = Depends(get_current_user)
+) -> InvestigationProgressOut:
+    """Cheap to poll: where the debate is, from the database and the debate slot."""
+    with SessionLocal() as session:
+        inv = session.get(Investigation, investigation_id)
+        if inv is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Investigation not found")
+        done = rounds_complete_by_investigation(session, [investigation_id])[investigation_id]
+        current_status, created_at = inv.status, inv.created_at
+
+    if current_status == "error":
+        phase = "error"
+    elif current_status in _FINISHED_STATUSES:
+        phase = "finished"
+    elif slot_holder() == str(investigation_id):
+        phase = "running"
+    else:
+        phase = "unknown"
+    return InvestigationProgressOut(
+        investigation_id=str(investigation_id),
+        phase=phase,
+        status=current_status,
+        rounds_total=DEBATE_ROUNDS,
+        rounds_complete=done,
+        round=min(done + 1, DEBATE_ROUNDS) if phase == "running" else None,
+        elapsed_seconds=round((datetime.now(timezone.utc) - created_at).total_seconds(), 1),
+    )
 
 
 @router.post("/{investigation_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)

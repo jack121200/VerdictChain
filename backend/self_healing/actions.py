@@ -15,10 +15,11 @@ from backend.db.audit import append_entry
 from backend.db.models import RawLog, ResponseAction
 from backend.db.session import SessionLocal
 from backend.self_healing import sandbox
+from backend.watchdog.credibility import AUTONOMOUS_ACTION_MIN_CRS
 
-# Defaults only. The debate engine passes the live runtime settings (verdict threshold, isolation threshold).
+# Defaults only. The debate engine passes the live verdict threshold and the credibility floor.
 CONFIDENCE_THRESHOLD = 0.80
-CREDIBILITY_THRESHOLD = 0.30
+CREDIBILITY_THRESHOLD = AUTONOMOUS_ACTION_MIN_CRS
 
 _EXTERNAL_CLASSES = {"ddos", "port_scan", "brute_force", "botnet_c2"}
 _INSIDER_CLASSES = {"insider_file_exfiltration", "insider_logon_anomaly"}
@@ -37,8 +38,8 @@ def should_respond(
     confidence_threshold: float = CONFIDENCE_THRESHOLD,
     credibility_threshold: float = CREDIBILITY_THRESHOLD,
 ) -> bool:
-    """Both conditions required (SKILL-architecture.md Section 7): verdict confidence
-    >= the verdict threshold AND every contributing agent's CrS >= the isolation threshold.
+    """Both conditions required (SKILL-architecture.md Section 7): verdict confidence >= the verdict
+    threshold AND every contributing agent's CrS >= the autonomous-action floor (a fresh agent's 0.50).
     """
     if verdict["status"] != "verdict_reached":
         return False
@@ -47,6 +48,16 @@ def should_respond(
     if not agent_credibilities:
         return False
     return all(crs >= credibility_threshold for crs in agent_credibilities.values())
+
+
+def most_common_value(values: list[str]) -> str | None:
+    """The most frequent value. On a tie the smallest value wins, so the choice never depends on the order the
+    database returned rows in (the console breaks subject ties the same way)."""
+    if not values:
+        return None
+    counts = Counter(values)
+    top = max(counts.values())
+    return min(value for value, count in counts.items() if count == top)
 
 
 def _most_common_target(row_ids: list[str], field: str) -> str | None:
@@ -64,9 +75,7 @@ def _most_common_target(row_ids: list[str], field: str) -> str | None:
             return None
         rows = session.execute(select(RawLog).where(RawLog.row_id.in_(uuids))).scalars().all()
         values = [getattr(row, field) for row in rows if getattr(row, field, None)]
-        if not values:
-            return None
-        return Counter(values).most_common(1)[0][0]
+        return most_common_value(values)
     finally:
         session.close()
 

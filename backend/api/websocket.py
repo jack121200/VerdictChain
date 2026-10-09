@@ -39,10 +39,6 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._connections: dict[str, list[WebSocket]] = {}
 
-    async def connect(self, key: str, websocket: WebSocket) -> None:
-        await websocket.accept()
-        self.register(key, websocket)
-
     def register(self, key: str, websocket: WebSocket) -> None:
         """Subscribes an already-accepted socket."""
         self._connections.setdefault(key, []).append(websocket)
@@ -68,28 +64,25 @@ def investigation_key(investigation_id: str) -> str:
     return f"investigation:{investigation_id}"
 
 
-def scenario_key(scenario_label: str) -> str:
-    return f"scenario:{scenario_label}"
-
-
 def make_debate_broadcaster(
     investigation_id: str, scenario_label: str, loop: asyncio.AbstractEventLoop
 ) -> Callable[[dict], None]:
-    """run_debate() calls the returned function from a worker thread. Each frame gets investigation_id,
-    and goes to the investigation channel and to the legacy scenario channel. A failed broadcast never
-    breaks the debate.
+    """run_debate() calls the returned function from a worker thread. Each frame gets investigation_id and
+    goes to the investigation channel. A failed broadcast never breaks the debate.
+
+    `scenario_label` is unused since the legacy scenario-keyed channel was removed (BE7). It stays in the
+    signature only so the caller in routes/simulate.py need not change in the same step.
     """
-    keys = (investigation_key(investigation_id), scenario_key(scenario_label))
+    key = investigation_key(investigation_id)
 
     def _on_update(message: dict) -> None:
         frame = {**message, "investigation_id": investigation_id}
-        for key in keys:
-            coro = manager.broadcast(key, frame)
-            try:
-                asyncio.run_coroutine_threadsafe(coro, loop)
-            except RuntimeError:  # the event loop has stopped (for example, the request has ended)
-                coro.close()
-                logger.warning("no event loop to broadcast %s to", key)
+        coro = manager.broadcast(key, frame)
+        try:
+            asyncio.run_coroutine_threadsafe(coro, loop)
+        except RuntimeError:  # the event loop has stopped (for example, the request has ended)
+            coro.close()
+            logger.warning("no event loop to broadcast %s to", key)
 
     return _on_update
 
@@ -195,14 +188,4 @@ async def investigation_channel(websocket: WebSocket, investigation_id: uuid.UUI
     except WebSocketDisconnect:
         pass
     finally:
-        manager.disconnect(key, websocket)
-
-
-async def investigation_feed(websocket: WebSocket, key: str) -> None:
-    """The legacy scenario-keyed feed (removed at cleanup, plan section 3.5). Accepts and holds open."""
-    await manager.connect(key, websocket)
-    try:
-        while True:
-            await websocket.receive_text()  # clients don't send anything meaningful; just detects disconnects
-    except WebSocketDisconnect:
         manager.disconnect(key, websocket)

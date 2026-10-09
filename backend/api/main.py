@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.event_stream import run_event_forwarder
+from backend.api.recovery import recover_after_restart
+from backend.api.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
 from backend.api.routes import (
     agent_ops,
     agents,
@@ -28,12 +30,16 @@ from backend.api.routes import (
     system,
     users,
 )
+from backend.api.startup_checks import run_startup_checks
 from backend.api.ws_investigations import router as ws_investigations_router
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """One Redis subscriber per API process forwards change events to the /ws/events sockets."""
+    """Startup checks first (production aborts on a problem), then one Redis subscriber per API process
+    forwards change events to the /ws/events sockets."""
+    await run_startup_checks()
+    await asyncio.to_thread(recover_after_restart)
     forwarder = asyncio.create_task(run_event_forwarder())
     try:
         yield
@@ -58,7 +64,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[REQUEST_ID_HEADER],  # so the dashboard can show the id of a failed request
 )
+# Added last, so it is the outermost middleware and times everything, CORS included.
+app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(auth.router)
 app.include_router(users.router)

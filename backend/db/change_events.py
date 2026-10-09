@@ -101,6 +101,49 @@ def publish_change(actions: list[str], investigation_ids: list[str] | None = Non
         return False
 
 
+# The GET /stats response cache (backend/api/routes/stats.py). Any committed transaction drops it, audited or
+# not (POST feedback commits without an audit entry), and the event is published only after the drop, so a
+# client that refetches on the event never reads the old response. The generation counter stops a /stats
+# computation that began before a commit from storing its older result after the commit dropped the cache.
+STATS_CACHE_KEY = "verdictchain:cache:stats:v1"
+STATS_CACHE_GENERATION_KEY = "verdictchain:cache:stats:generation"
+
+_STORE_IF_CURRENT = (
+    "if (redis.call('GET', KEYS[2]) or '0') == ARGV[1] then "
+    "redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3]) return 1 end return 0"
+)
+
+
+def invalidate_stats_cache() -> None:
+    """Drops the cached /stats response and starts a new generation. Never raises."""
+    try:
+        pipe = _redis().pipeline()
+        pipe.incr(STATS_CACHE_GENERATION_KEY)
+        pipe.delete(STATS_CACHE_KEY)
+        pipe.execute()
+    except Exception:  # noqa: BLE001 - a stale cache is bounded by its TTL; the commit already happened
+        logger.warning("could not invalidate the stats cache", exc_info=True)
+
+
+def stats_cache_generation() -> str:
+    """Read this before computing a response, and hand it to store_stats_cache()."""
+    value = _redis().get(STATS_CACHE_GENERATION_KEY)
+    return value.decode() if value else "0"
+
+
+def load_stats_cache() -> str | None:
+    value = _redis().get(STATS_CACHE_KEY)
+    return value.decode() if value else None
+
+
+def store_stats_cache(generation: str, payload: str, ttl_seconds: int) -> bool:
+    """Stores `payload` only if no commit invalidated the cache since `generation` was read."""
+    stored = _redis().eval(
+        _STORE_IF_CURRENT, 2, STATS_CACHE_KEY, STATS_CACHE_GENERATION_KEY, generation, payload, ttl_seconds
+    )
+    return bool(stored)
+
+
 _SESSION_KEY = "vc_pending_changes"
 
 
@@ -114,6 +157,7 @@ def note_change(session: Session, action: str, investigation_id: str | None) -> 
 
 def _after_commit(session: Session) -> None:
     pending = session.info.pop(_SESSION_KEY, None)
+    invalidate_stats_cache()  # before publishing: see the note above STATS_CACHE_KEY
     if pending:
         publish_change(pending["actions"], pending["investigations"])
 

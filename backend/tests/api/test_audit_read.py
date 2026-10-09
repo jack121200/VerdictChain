@@ -129,6 +129,8 @@ def test_verify_reports_a_valid_chain_and_is_not_audited(db_session):
         "first_break_seq": None,
         "reason": "ok",
         "head_hash": head_hash,
+        "mode": "full",  # no checkpoint existed yet, so the whole chain was walked
+        "verified_from_seq": 1,
     }
     assert len(client.get("/audit-trail?limit=500", headers=headers).json()["entries"]) == total_before
 

@@ -1,15 +1,21 @@
 """Headline metrics (plan sections 2 and 3.4): every KPI is a Metric envelope with its n and definition.
 
 Empty database: every rate and average is null with a reason, and every count is a real 0 (plan R2).
-The whole audit chain is verified on each call. Citations are re-checked against raw_logs on each call.
+Citations are re-checked against raw_logs and the audit chain is verified when the response is computed
+(the chain incrementally from its last verified checkpoint, see backend/api/audit_chain.py). A computed
+response is cached in Redis for STATS_CACHE_TTL_SECONDS and dropped by every committed transaction
+(backend/db/change_events.py), so a finished debate is never hidden behind it. A cache failure only means
+the response is computed.
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.api.audit_chain import ChainCheck, verify_audit_chain
 from backend.api.auth import get_current_user
 from backend.api.metrics import Metric, make_metric
 from backend.api.routes.evidence import load_investigation_citations
@@ -22,7 +28,7 @@ from backend.api.schemas.stats import (
     StatsOut,
     WatchdogStatsOut,
 )
-from backend.db.audit import find_first_break
+from backend.db.change_events import load_stats_cache, stats_cache_generation, store_stats_cache
 from backend.db.models import (
     AnalystFeedback,
     AuditTrail,
@@ -35,9 +41,12 @@ from backend.db.session import SessionLocal
 from backend.evaluation.ground_truth_map import ATTACK_CLASSES, INSIDER_CLASSES, VERDICT_CLASSES
 from backend.watchdog.credibility import get_crs
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 SOURCE = "/stats"
+STATS_CACHE_TTL_SECONDS = 5
 INVESTIGATOR_IDS = ("network_traffic", "access_log", "endpoint_behavior")
 ACTIVE_WINDOW = timedelta(minutes=30)
 THREAT_WINDOW = timedelta(hours=24)
@@ -183,17 +192,39 @@ def _mean_crs() -> Metric[float]:
     )
 
 
+def _chain_coverage(check: ChainCheck) -> str:
+    """What this computation verified, stated as it ran (plan R1): the Proof popover shows this text."""
+    if check.mode == "full":
+        scope = (
+            "the whole chain was walked: every entry hash and link was recomputed"
+            if check.entries_checked
+            else "the chain is empty, so there was nothing to walk"
+        )
+    else:
+        scope = (
+            "the chain was verified incrementally: the last verified checkpoint "
+            f"(seq {check.verified_from_seq}) was re-checked and {check.entries_checked} entries, that "
+            "one included, were recomputed, so entries before that seq were not re-walked here; "
+            "POST /audit-trail/verify?full=true re-walks all of them"
+        )
+    outcome = (
+        "no break found" if check.valid else f"break found at seq {check.first_break_seq} ({check.reason})"
+    )
+    return f"When computed, {scope}; {outcome}."
+
+
 def _chain_block(session: Session) -> ChainStatsOut:
-    entries = list(session.execute(select(AuditTrail).order_by(AuditTrail.seq)).scalars().all())
+    check = verify_audit_chain(session)
+    total = session.execute(select(func.count()).select_from(AuditTrail)).scalar_one()
     return ChainStatsOut(
-        valid=find_first_break(entries) is None,
-        entries=_count(len(entries), "audit_trail rows; the whole chain is verified on each call"),
+        valid=check.valid,
+        entries=_count(total, f"audit_trail rows. {_chain_coverage(check)}"),
         head_seq=make_metric(
-            entries[-1].seq if entries else None,
-            len(entries),
+            check.head_seq,
+            total,
             SOURCE,
             "seq of the newest audit entry (chain head)",
-            reason=None if entries else "no audit entries yet",
+            reason=None if total else "no audit entries yet",
         ),
     )
 
@@ -294,8 +325,7 @@ def _latency_block(session: Session) -> LatencyStatsOut:
     )
 
 
-@router.get("", response_model=StatsOut)
-def get_stats(username: str = Depends(get_current_user)) -> StatsOut:
+def _compute_stats() -> StatsOut:
     session = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
@@ -316,3 +346,40 @@ def get_stats(username: str = Depends(get_current_user)) -> StatsOut:
         )
     finally:
         session.close()
+
+
+def _cached_stats() -> StatsOut | None:
+    try:
+        payload = load_stats_cache()
+        return StatsOut.model_validate_json(payload) if payload else None
+    except Exception as exc:  # noqa: BLE001 - the cache is an optimisation; compute instead
+        logger.warning("stats cache unreadable (%s); computing", type(exc).__name__)
+        return None
+
+
+def _generation() -> str | None:
+    try:
+        return stats_cache_generation()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("stats cache unavailable (%s); not caching this response", type(exc).__name__)
+        return None
+
+
+def _store_stats(generation: str | None, stats: StatsOut) -> None:
+    if generation is None:
+        return
+    try:
+        store_stats_cache(generation, stats.model_dump_json(), STATS_CACHE_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not cache the stats response (%s)", type(exc).__name__)
+
+
+@router.get("", response_model=StatsOut)
+def get_stats(username: str = Depends(get_current_user)) -> StatsOut:
+    cached = _cached_stats()
+    if cached is not None:
+        return cached
+    generation = _generation()  # read before computing: a commit during the computation voids the store
+    stats = _compute_stats()
+    _store_stats(generation, stats)
+    return stats

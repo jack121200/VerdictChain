@@ -30,7 +30,7 @@ from backend.db.session import SessionLocal
 from backend.debate.state import assemble_debate_inputs, build_peripheral_digest, is_near_duplicate
 from backend.debate.verdict import aggregate_verdict
 from backend.self_healing.actions import respond_to_verdict
-from backend.watchdog.credibility import get_crs
+from backend.watchdog.credibility import AUTONOMOUS_ACTION_MIN_CRS, get_crs
 from backend.watchdog.service import score_agent_round
 
 DEBATE_ROUNDS = 3
@@ -469,7 +469,7 @@ def run_debate(
         verdict,
         contributing_crs,
         confidence_threshold=settings.verdict_confidence_threshold,
-        credibility_threshold=settings.isolation_threshold,
+        credibility_threshold=AUTONOMOUS_ACTION_MIN_CRS,
     )
     status = verdict["status"]
     if actions_taken:

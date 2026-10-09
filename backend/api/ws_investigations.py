@@ -1,5 +1,5 @@
-"""WebSocket routes for live debate updates (plan section 3.5). The legacy scenario-keyed channel stays
-until the cleanup step. The investigation-keyed channel takes a single-use ticket from POST /auth/ws-ticket.
+"""WebSocket routes for live debate updates (plan section 3.5). Both channels take a single-use ticket from
+POST /auth/ws-ticket. (The legacy unauthenticated /ws/scenarios/{label} channel was removed: BE7.)
 """
 
 import uuid
@@ -10,7 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from backend.api.auth import get_current_user
 from backend.api.event_stream import event_channel
 from backend.api.schemas.realtime import WsTicketOut
-from backend.api.websocket import investigation_channel, investigation_feed
+from backend.api.websocket import investigation_channel
 from backend.api.ws_tickets import TICKET_TTL_SECONDS, consume_ticket, issue_ticket
 
 WS_CLOSE_UNAUTHORIZED = 4401
@@ -58,11 +58,3 @@ async def events_socket(websocket: WebSocket, ticket: str | None = None) -> None
         await websocket.close(code=WS_CLOSE_UNAUTHORIZED)
         return
     await event_channel(websocket)
-
-
-@router.websocket("/ws/scenarios/{scenario_label}")
-async def scenario_feed(websocket: WebSocket, scenario_label: str) -> None:
-    """Legacy: subscribe BEFORE calling POST /investigations/simulate with the same scenario_label.
-    Kept until the cleanup step. The investigation-keyed route above replaces it.
-    """
-    await investigation_feed(websocket, f"scenario:{scenario_label}")

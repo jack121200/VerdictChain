@@ -169,7 +169,10 @@ mitigations, both required:
 
 - Fires only when BOTH are true: verdict confidence ≥ the verdict threshold (runtime
   setting `verdict_confidence_threshold`, default 0.80) AND every contributing agent's CrS
-  ≥ the isolation threshold (default 0.30). The engine passes both live settings in.
+  ≥ 0.50 (`AUTONOMOUS_ACTION_MIN_CRS` = the starting CrS: a fresh agent's credibility). The engine
+  passes the live verdict threshold in. The gate used to be the isolation threshold (0.30), but an
+  agent below that is isolated and never contributes, so it could never refuse anything (changed
+  2026-10-09). An agent between 0.30 and 0.50 still debates and votes; a human contains manually.
 - A verdict with status `ambiguous` never triggers containment. When at least one action
   is taken, the investigation status becomes `contained`.
 - Action set is threat-type-aware:

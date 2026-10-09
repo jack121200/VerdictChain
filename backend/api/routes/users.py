@@ -7,7 +7,7 @@ updated lead count, so the last secops_lead can never be removed.
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
 from backend.api.auth import CurrentAnalyst, require_capability
@@ -31,10 +31,20 @@ def _user_out(analyst: Analyst) -> UserOut:
 
 
 @router.get("", response_model=list[UserOut])
-def list_users(_: CurrentAnalyst = Depends(require_capability("manage_users"))) -> list[UserOut]:
+def list_users(
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    _: CurrentAnalyst = Depends(require_capability("manage_users")),
+) -> list[UserOut]:
     session = SessionLocal()
     try:
-        rows = session.execute(select(Analyst).order_by(Analyst.created_at, Analyst.username)).scalars().all()
+        rows = (
+            session.execute(
+                select(Analyst).order_by(Analyst.created_at, Analyst.username).limit(limit).offset(offset)
+            )
+            .scalars()
+            .all()
+        )
         return [_user_out(row) for row in rows]
     finally:
         session.close()

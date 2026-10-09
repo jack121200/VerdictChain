@@ -8,6 +8,7 @@ and runs the debate in a background thread. Either way the debate slot is releas
 
 import asyncio
 import logging
+import re
 import threading
 import uuid
 from dataclasses import dataclass
@@ -20,17 +21,21 @@ from sqlalchemy import select
 from backend.api.auth import CurrentAnalyst, require_capability
 from backend.api.rate_limit import (
     GLOBAL_CAP_IDENTIFIER,
+    IDEMPOTENCY_PENDING,
     DebateSlot,
+    claim_idempotency,
     client_ip,
     enforce_daily_cap,
     enforce_rate_limit,
+    finish_idempotency,
     record_daily_run,
+    release_idempotency,
     slot_holder,
 )
 from backend.api.schemas.realtime import SimulateAcceptedOut, SimulateScenarioRequest
 from backend.api.websocket import make_debate_broadcaster
 from backend.config import settings
-from backend.db.models import AgentQuarantine
+from backend.db.models import AgentQuarantine, Investigation
 from backend.db.session import SessionLocal
 from backend.debate.engine import (
     INVESTIGATORS,
@@ -48,6 +53,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/investigations", tags=["investigations"])
 
 INVESTIGATION_STATUS_ON_START = "investigating"
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+REPLAY_HEADER = "Idempotent-Replay"
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]{8,100}$")
 
 
 @dataclass
@@ -78,7 +86,37 @@ async def simulate_scenario(
 ) -> Any:
     enforce_rate_limit("simulate", client_ip(request), limit=5, window_seconds=60)
 
-    prepared = await run_in_threadpool(_prepare, payload, actor.username)
+    # A retry or a double click that carries the same Idempotency-Key gets the first request's investigation
+    # back (202 + Idempotent-Replay) instead of starting a second debate.
+    idempotency_key = _idempotency_key(request)
+    if idempotency_key:
+        stored = await run_in_threadpool(claim_idempotency, actor.username, idempotency_key)
+        if stored == IDEMPOTENCY_PENDING:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="A request with this Idempotency-Key is still being processed. Retry in a moment.",
+            )
+        if stored is not None:
+            replay = await run_in_threadpool(_accepted_for, stored)
+            if replay is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail="This Idempotency-Key refers to an investigation that no longer exists.",
+                )
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers[REPLAY_HEADER] = "true"
+            return replay
+
+    try:
+        prepared = await run_in_threadpool(_prepare, payload, actor.username)
+    except BaseException:
+        if idempotency_key:  # refused: the key stays usable for a corrected retry
+            await run_in_threadpool(release_idempotency, actor.username, idempotency_key)
+        raise
+    if idempotency_key:
+        await run_in_threadpool(
+            finish_idempotency, actor.username, idempotency_key, str(prepared.investigation_id)
+        )
     loop = asyncio.get_running_loop()
 
     if payload.wait:
@@ -107,6 +145,38 @@ async def simulate_scenario(
         effective_noise_pct=prepared.effective_noise_pct,
         primary_agent=prepared.primary_agent,
     )
+
+
+def _idempotency_key(request: Request) -> str | None:
+    raw = request.headers.get(IDEMPOTENCY_HEADER)
+    if raw is None:
+        return None
+    if not _IDEMPOTENCY_KEY_RE.fullmatch(raw):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{IDEMPOTENCY_HEADER} must be 8-100 characters: letters, digits, '_', '.', ':' or '-'.",
+        )
+    return raw
+
+
+def _accepted_for(investigation_id: str) -> SimulateAcceptedOut | None:
+    """The 202 body for an investigation that already exists (an idempotent replay), or None."""
+    try:
+        parsed = uuid.UUID(investigation_id)
+    except ValueError:
+        return None
+    with SessionLocal() as session:
+        inv = session.get(Investigation, parsed)
+        if inv is None:
+            return None
+        return SimulateAcceptedOut(
+            investigation_id=str(inv.investigation_id),
+            status=inv.status,
+            ws_path=f"/ws/investigations/{inv.investigation_id}",
+            noise_pct=inv.noise_pct or 0,
+            effective_noise_pct=inv.effective_noise_pct or 0.0,
+            primary_agent=inv.primary_agent or "",
+        )
 
 
 def _prepare(payload: SimulateScenarioRequest, username: str) -> _Prepared:

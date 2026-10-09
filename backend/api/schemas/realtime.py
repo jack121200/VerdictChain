@@ -37,6 +37,20 @@ class SimulateAcceptedOut(BaseModel):
     primary_agent: str
 
 
+class InvestigationProgressOut(BaseModel):
+    """Where a debate is. phase: running (it holds the debate slot), finished, error, or unknown (the
+    investigation is still 'investigating' but no debate holds the slot: it was cut off, for example by an API
+    restart, and the next start marks it error)."""
+
+    investigation_id: str
+    phase: str
+    status: str
+    rounds_total: int
+    rounds_complete: int
+    round: int | None
+    elapsed_seconds: float
+
+
 class WsTicketOut(BaseModel):
     ticket: str
     expires_in: int

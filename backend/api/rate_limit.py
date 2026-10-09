@@ -84,6 +84,32 @@ class DebateSlot:
         _client().eval(_CAD_SCRIPT, 1, DEBATE_SLOT_KEY, self._value)
 
 
+IDEMPOTENCY_TTL_SECONDS = 900
+IDEMPOTENCY_PENDING = "pending"
+
+
+def _idempotency_redis_key(username: str, key: str) -> str:
+    return f"verdictchain:idem:{username}:{key}"
+
+
+def claim_idempotency(username: str, key: str) -> str | None:
+    """None when this request now owns the key. Otherwise what is stored: IDEMPOTENCY_PENDING while the first
+    request is still being accepted, then the id of the investigation it started."""
+    redis_key = _idempotency_redis_key(username, key)
+    if _client().set(redis_key, IDEMPOTENCY_PENDING, nx=True, ex=IDEMPOTENCY_TTL_SECONDS):
+        return None
+    return _client().get(redis_key) or IDEMPOTENCY_PENDING
+
+
+def finish_idempotency(username: str, key: str, investigation_id: str) -> None:
+    _client().set(_idempotency_redis_key(username, key), investigation_id, ex=IDEMPOTENCY_TTL_SECONDS)
+
+
+def release_idempotency(username: str, key: str) -> None:
+    """Called when the request was refused, so the same key can be used for a corrected retry."""
+    _client().delete(_idempotency_redis_key(username, key))
+
+
 def _cap_key(scope: str, identifier: str) -> str:
     return f"verdictchain:cap:{scope}:{identifier}"
 

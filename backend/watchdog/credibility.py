@@ -27,6 +27,10 @@ from backend.config import settings
 STARTING_CRS = 0.5
 ETA = 0.20
 ISOLATION_THRESHOLD = 0.30
+# An agent below this CrS keeps debating but cannot trigger AUTONOMOUS containment: it needs at least the
+# credibility of a fresh agent. (The gate used to be the isolation threshold, which an agent that still
+# contributes can never be under, so it never refused anything.)
+AUTONOMOUS_ACTION_MIN_CRS = STARTING_CRS
 
 _redis_client: redis.Redis | None = None
 

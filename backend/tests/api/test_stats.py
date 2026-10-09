@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from backend.api.main import app
 from backend.tests.fixtures.read_seed import (
@@ -227,3 +228,64 @@ def test_latency_is_investigation_started_to_verdict_reached(db_session):
 
 def test_stats_requires_authentication(db_session):
     assert client.get("/stats").status_code == 401
+
+
+def _tamper_audit_row(db_session, seq: int) -> None:
+    db_session.execute(
+        text("UPDATE audit_trail SET detail = CAST(:detail AS jsonb) WHERE seq = :seq"),
+        {"detail": '{"tampered": true}', "seq": seq},
+    )
+    db_session.commit()
+
+
+def test_chain_is_verified_incrementally_after_the_first_pass_and_says_so(db_session):
+    for n in range(4):
+        audit(db_session, "watchdog", "credibility_update", {"n": n})
+    db_session.commit()
+
+    first = _stats()["chain"]
+    audit(db_session, "watchdog", "credibility_update", {"n": 4})
+    db_session.commit()
+    second = _stats()["chain"]
+
+    assert first["valid"] is True and "whole chain was walked" in first["entries"]["definition"]
+    assert first["entries"]["value"] == 4
+    assert second["valid"] is True and second["entries"]["value"] == 5 and second["head_seq"]["value"] == 5
+    assert "incrementally" in second["entries"]["definition"]
+    assert (
+        "(seq 4)" in second["entries"]["definition"]
+    )  # it started at the checkpoint written by the first pass
+    assert "2 entries, that one included" in second["entries"]["definition"]
+
+
+def test_a_row_changed_after_the_checkpoint_turns_the_chain_invalid(db_session):
+    for n in range(3):
+        audit(db_session, "watchdog", "credibility_update", {"n": n})
+    db_session.commit()
+    assert _stats()["chain"]["valid"] is True  # writes the checkpoint at seq 3
+    audit(db_session, "watchdog", "credibility_update", {"n": 3})
+    db_session.commit()
+    _tamper_audit_row(db_session, 4)
+
+    chain = _stats()["chain"]
+
+    assert chain["valid"] is False
+    assert "break found at seq 4 (hash_mismatch)" in chain["entries"]["definition"]
+
+
+def test_an_old_row_changed_is_not_seen_by_stats_but_is_by_a_full_verify(db_session):
+    for n in range(4):
+        audit(db_session, "watchdog", "credibility_update", {"n": n})
+    db_session.commit()
+    assert _stats()["chain"]["valid"] is True  # checkpoint at seq 4
+    _tamper_audit_row(db_session, 1)
+    headers = bearer_for("forensic_analyst")
+
+    chain = _stats()["chain"]
+    verified = client.post("/audit-trail/verify?full=true", headers=headers).json()
+
+    assert (
+        chain["valid"] is True
+    )  # honest: the definition says entries before the checkpoint are not re-walked
+    assert "were not re-walked here" in chain["entries"]["definition"]
+    assert verified["chain_valid"] is False and verified["first_break_seq"] == 1

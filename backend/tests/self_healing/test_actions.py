@@ -47,7 +47,8 @@ def test_should_respond_uses_injected_thresholds():
     assert (
         should_respond(_verdict(confidence=0.7), {"network_traffic": 0.6}, confidence_threshold=0.6) is True
     )
-    assert should_respond(_verdict(confidence=0.9), {"network_traffic": 0.2}) is False  # default 0.30
+    assert should_respond(_verdict(confidence=0.9), {"network_traffic": 0.4}) is False  # default floor 0.50
+    assert should_respond(_verdict(confidence=0.9), {"network_traffic": 0.5}) is True  # exactly the floor
     assert (
         should_respond(_verdict(confidence=0.9), {"network_traffic": 0.2}, credibility_threshold=0.1) is True
     )

@@ -1,7 +1,8 @@
 """Audit trail read and on-demand chain verification (SKILL-security.md Section 5, plan section 3.4).
 
-The chain is verified over every entry on each call, so `chain.valid` covers the whole log, not just the
-returned page. POST /audit-trail/verify is rate limited per analyst and is not itself audited.
+GET /audit-trail verifies the chain over every entry on each call, so `chain.valid` covers the whole log, not
+just the returned page. POST /audit-trail/verify is incremental by default (see backend/api/audit_chain.py)
+and says which mode ran. It is rate limited per analyst and is not itself audited.
 """
 
 import uuid
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.api.audit_chain import verify_audit_chain
 from backend.api.auth import get_current_user
 from backend.api.rate_limit import enforce_rate_limit
 from backend.api.schemas.read import AuditChainOut, AuditEntryOut, AuditTrailOut, AuditVerifyOut
@@ -82,29 +84,24 @@ def list_audit_trail(
 
 
 @router.post("/verify", response_model=AuditVerifyOut)
-def verify_audit_trail(username: str = Depends(get_current_user)) -> AuditVerifyOut:
+def verify_audit_trail(
+    full: bool = Query(
+        False,
+        description="true re-walks every entry. The default re-checks the last verified checkpoint and walks "
+        "only the entries after it, so a change to an older row is found only with full=true.",
+    ),
+    username: str = Depends(get_current_user),
+) -> AuditVerifyOut:
     enforce_rate_limit("audit_verify", username, limit=VERIFY_LIMIT_PER_MINUTE, window_seconds=60)
 
-    session = SessionLocal()
-    try:
-        entries = _all_entries(session)
-        head_hash = entries[-1].entry_hash if entries else None
-        broken = find_first_break(entries)
-        if broken is None:
-            return AuditVerifyOut(
-                chain_valid=True,
-                entries_checked=len(entries),
-                first_break_seq=None,
-                reason="ok",
-                head_hash=head_hash,
-            )
-        index, reason = broken
-        return AuditVerifyOut(
-            chain_valid=False,
-            entries_checked=index + 1,
-            first_break_seq=entries[index].seq,
-            reason=reason,
-            head_hash=head_hash,
-        )
-    finally:
-        session.close()
+    with SessionLocal() as session:
+        check = verify_audit_chain(session, full=full)
+    return AuditVerifyOut(
+        chain_valid=check.valid,
+        entries_checked=check.entries_checked,
+        first_break_seq=check.first_break_seq,
+        reason=check.reason,
+        head_hash=check.head_hash,
+        mode=check.mode,
+        verified_from_seq=check.verified_from_seq,
+    )

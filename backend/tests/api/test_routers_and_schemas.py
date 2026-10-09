@@ -2,7 +2,9 @@
 keep their paths, and the schema package still exports every original name.
 """
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from backend.api.main import app
 
@@ -35,9 +37,22 @@ def test_existing_route_families_are_mounted():
     assert ("GET", "/health") in http
 
 
-def test_legacy_scenario_websocket_is_still_mounted_and_accepts_a_connection():
-    with TestClient(app).websocket_connect("/ws/scenarios/DDoS"):
-        pass  # the handshake succeeds; leaving the block closes the feed
+def test_the_legacy_unauthenticated_scenario_websocket_is_gone():
+    """BE7: /ws/scenarios/{label} took no ticket. An unknown WebSocket path is refused at the handshake."""
+    with pytest.raises(WebSocketDisconnect):
+        with TestClient(app).websocket_connect("/ws/scenarios/DDoS"):
+            pass
+
+
+def test_the_ticketed_websocket_routes_are_still_mounted():
+    for path in (
+        "/ws/events?ticket=bad",
+        "/ws/investigations/11111111-1111-1111-1111-111111111111?ticket=bad",
+    ):
+        with TestClient(app).websocket_connect(path) as socket:
+            with pytest.raises(WebSocketDisconnect) as closed:
+                socket.receive_json()
+        assert closed.value.code == 4401  # accepted, then closed for the bad ticket: the route exists
 
 
 def test_simulate_moved_to_its_own_module_with_the_same_path():

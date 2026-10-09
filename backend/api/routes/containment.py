@@ -29,6 +29,7 @@ from backend.db.session import SessionLocal
 from backend.debate.engine import MIN_ACTIVE_AGENTS
 from backend.debate.verdict import aggregate_verdict
 from backend.self_healing import sandbox
+from backend.self_healing.actions import most_common_value
 
 router = APIRouter(prefix="/investigations", tags=["containment"])
 
@@ -274,7 +275,7 @@ def _most_common(session: Session, evidence: list[dict], column) -> str | None:
     if not ids:
         return None
     values = [v for v in session.execute(select(column).where(RawLog.row_id.in_(ids))).scalars().all() if v]
-    return Counter(values).most_common(1)[0][0] if values else None
+    return most_common_value(values)
 
 
 def _quarantined(session: Session, agent_ids: list[str]) -> list[str]:

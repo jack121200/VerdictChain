@@ -16,7 +16,9 @@ router = APIRouter(prefix="/response-actions", tags=["response-actions"])
 
 @router.get("", response_model=list[ResponseActionOut])
 def list_response_actions(
-    limit: int = Query(100, ge=1, le=200), username: str = Depends(get_current_user)
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    username: str = Depends(get_current_user),
 ) -> list[ResponseActionOut]:
     session = SessionLocal()
     try:
@@ -25,6 +27,7 @@ def list_response_actions(
                 select(ResponseAction)
                 .order_by(ResponseAction.created_at.desc(), ResponseAction.id)
                 .limit(limit)
+                .offset(offset)
             )
             .scalars()
             .all()

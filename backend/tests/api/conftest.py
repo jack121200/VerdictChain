@@ -16,3 +16,14 @@ def _clear_rate_limits():
     for key in client.scan_iter("verdictchain:ratelimit:*"):
         client.delete(key)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_audit_checkpoint_and_caches():
+    """db_session TRUNCATEs audit_trail and restarts seq, so a checkpoint or cached /stats response left in
+    Redis by an earlier test would describe rows that no longer exist."""
+    client = _client()
+    for pattern in ("verdictchain:cache:*", "verdictchain:audit:*"):
+        for key in client.scan_iter(pattern):
+            client.delete(key)
+    yield

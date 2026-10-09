@@ -55,4 +55,19 @@ describe('Modal', () => {
     fireEvent.keyDown(document, { key: 'Tab' });
     expect(document.activeElement).toBe(close);
   });
+
+  it('has a palette variant with no title bar and no close button, still named and closable with Escape', () => {
+    const onClose = vi.fn();
+    render(
+      <Modal open variant="palette" title="Command palette" onClose={onClose}>
+        <input aria-label="Search" />
+      </Modal>,
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Command palette' });
+    expect(screen.queryByRole('button', { name: 'Close dialog' })).toBeNull();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(screen.getByLabelText('Search'));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

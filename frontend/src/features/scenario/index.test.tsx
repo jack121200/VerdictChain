@@ -68,6 +68,29 @@ describe('ScenarioModal', () => {
     await waitFor(() => expect(window.location.hash).toContain('inv-xyz-1'));
   });
 
+  it('sends one Idempotency-Key per opening, so a double click cannot start two debates', async () => {
+    render(<ScenarioModal open onClose={() => undefined} canInject />);
+    await screen.findByText('Botnet');
+    const authorize = screen.getByRole('button', { name: 'Authorize injection' });
+    await waitFor(() => expect((authorize as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(authorize);
+    });
+    await waitFor(() => expect(h.simulateInvestigation).toHaveBeenCalledTimes(1));
+    const options = h.simulateInvestigation.mock.calls[0][1];
+    expect(options.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('has no button inside a button (the row-count Proof sits on top of the radio)', async () => {
+    render(<ScenarioModal open onClose={() => undefined} canInject />);
+    await screen.findByText('Botnet');
+    expect(document.body.querySelectorAll('button button')).toHaveLength(0);
+    expect(screen.getAllByRole('radio').map((radio) => radio.getAttribute('aria-label'))).toEqual([
+      'Botnet',
+      'insider_scenario_1',
+    ]);
+  });
+
   it('disables authorise without the inject_scenario capability', async () => {
     render(<ScenarioModal open onClose={() => undefined} canInject={false} />);
     await screen.findByText('Botnet');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DebateRound, InvestigationDetail, LiveFrame, RoundAgentTurn } from '../../api/types';
-import { applyFrame, emptyDebate, fromDetail, laneFor, roundSteps, stanceLabel, stanceTone } from './derive';
+import { applyFrame, emptyDebate, fromDetail, laneAbsence, laneFor, mostCitedValue, roundSteps, stanceLabel, stanceTone } from './derive';
 
 const turn = (agentId: RoundAgentTurn['agent_id'], over: Partial<RoundAgentTurn> = {}): RoundAgentTurn => ({
   agent_id: agentId,
@@ -36,10 +36,125 @@ describe('applyFrame', () => {
     expect(state.rounds[0].agents).toHaveLength(2);
   });
 
-  it('sets the verdict and status from a verdict frame', () => {
-    const next = applyFrame(emptyDebate(), { type: 'verdict', investigation_id: 'i', verdict: 'botnet_c2', status: 'verdict_reached', actions_taken: [] });
+  // The agent entry exactly as the engine sends it: credibility is the score dict of the round, not a number.
+  const engineAgent = (agentId: RoundAgentTurn['agent_id'], crsBefore: number, crsAfter: number) => ({
+    agent_id: agentId,
+    theory: 'SUPPORT: the same flood',
+    confidence: 0.8,
+    stance: 'SUPPORT',
+    provider: 'stub-groq',
+    cited_evidence: [],
+    credibility: { agent_id: agentId, crs_before: crsBefore, crs_after: crsAfter, verification_match_rate: 1, isolated: false },
+  });
+
+  it('turns the score dict of a round_completed frame into a number and a credibility row', () => {
+    const frame = {
+      type: 'round_completed',
+      investigation_id: 'inv-1',
+      round: 1,
+      agents: [engineAgent('network_traffic', 0.5, 0.6), engineAgent('access_log', 0.5, 0.4)],
+    } as unknown as LiveFrame;
+    const next = applyFrame(emptyDebate(), frame);
+
+    expect(next.rounds[0].agents.map((agent) => agent.credibility)).toEqual([0.6, 0.4]); // numbers, never objects
+    expect(next.rounds[0].agents[0].stance).toBe('SUPPORT');
+    expect(next.credibility.map((row) => [row.agent_id, row.round, row.crs_after, row.investigation_id])).toEqual([
+      ['network_traffic', 1, 0.6, 'inv-1'],
+      ['access_log', 1, 0.4, 'inv-1'],
+    ]);
+  });
+
+  // The snapshot exactly as backend/api/websocket.py builds it: no stance, no turn credibility, no action id.
+  const snapshot = {
+    type: 'snapshot',
+    investigation_id: 'inv-1',
+    status: 'investigating',
+    rounds: [
+      {
+        round: 1,
+        agents: [
+          { agent_id: 'network_traffic', theory: 'flood', confidence: 0.8, provider: 'stub-groq', cited_evidence: [] },
+          { agent_id: 'access_log', theory: 'exfil', confidence: 0.7, provider: 'stub-gemini', cited_evidence: [] },
+        ],
+      },
+    ],
+    credibility: [
+      { agent_id: 'network_traffic', round: 1, crs_before: 0.5, crs_after: 0.6, verification_match_rate: 1, isolated: false },
+      { agent_id: 'access_log', round: 1, crs_before: 0.5, crs_after: 0.4, verification_match_rate: 0, isolated: false },
+    ],
+    actions: [
+      { action_type: 'trigger_audit', target: 'a', reason: 'r', is_simulated: true },
+      { action_type: 'trigger_audit', target: 'a', reason: 'r', is_simulated: true },
+    ],
+    verdict: null,
+  } as unknown as LiveFrame;
+
+  it('a snapshot fills a state that has nothing yet, with the CrS from its own credibility rows', () => {
+    const next = applyFrame(emptyDebate(), snapshot);
+    expect(next.rounds[0].agents.map((agent) => [agent.agent_id, agent.credibility, agent.stance])).toEqual([
+      ['network_traffic', 0.6, null], // the snapshot carries no stance: it stays "not stated", never parsed from text
+      ['access_log', 0.4, null],
+    ]);
+    expect(next.credibility).toHaveLength(2);
+  });
+
+  it('a snapshot never replaces turns the page already holds from the REST detail', () => {
+    const loaded = {
+      ...emptyDebate(),
+      rounds: [round(1, [turn('network_traffic', { stance: 'CHALLENGE', credibility: 0.61 })])],
+    };
+    const next = applyFrame(loaded, snapshot);
+    const kept = next.rounds[0].agents.find((agent) => agent.agent_id === 'network_traffic');
+    expect(kept?.stance).toBe('CHALLENGE');
+    expect(kept?.credibility).toBe(0.61);
+    expect(next.rounds[0].agents).toHaveLength(2); // the missing agent was added
+  });
+
+  it('snapshot actions get unique keys (rows without an id used to trigger the React key warning)', () => {
+    const next = applyFrame(emptyDebate(), snapshot);
+    const ids = next.actions.map((action) => action.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(next.actions.every((action) => action.investigation_id === 'inv-1' && action.is_simulated)).toBe(true);
+  });
+
+  // The frame exactly as backend/debate/engine.py sends it: verdict is the engine's dict, not a class string.
+  const realVerdictFrame = (verdict: unknown, status = 'verdict_reached') =>
+    ({
+      type: 'verdict',
+      investigation_id: 'i',
+      verdict,
+      status,
+      actions_taken: [{ action_type: 'block_ip_range', target: '10.0.0.0/24', reason: 'sandbox' }],
+    }) as unknown as LiveFrame;
+
+  const ENGINE_VERDICT = {
+    verdict_class: 'botnet_c2',
+    verdict_confidence: 0.82,
+    status: 'verdict_reached',
+    supporting_evidence: [{ row_id: 'r1', field: 'dst_port', value: '8443' }],
+    contributing_agents: ['network_traffic', 'access_log'],
+  };
+
+  it('reads the class and confidence from the verdict object of a real verdict frame', () => {
+    const next = applyFrame(emptyDebate(), realVerdictFrame(ENGINE_VERDICT, 'contained'));
     expect(next.verdictClass).toBe('botnet_c2');
-    expect(next.status).toBe('verdict_reached');
+    expect(next.verdictConfidence).toBe(0.82);
+    expect(next.status).toBe('contained');
+    expect(typeof next.verdictClass).toBe('string');
+  });
+
+  it('never stores an object or a bare string as the verdict class', () => {
+    const start = { ...emptyDebate(), verdictClass: 'ddos' as const, verdictConfidence: 0.7 };
+    for (const odd of ['botnet_c2', { verdict_class: { nested: true } }, { verdict_class: 'not_a_class' }, null, 42]) {
+      const next = applyFrame(start, realVerdictFrame(odd));
+      expect(next.verdictClass).toBe('ddos');
+      expect(next.verdictConfidence).toBe(0.7);
+    }
+  });
+
+  it('keeps the actions already shown, because the frame rows have no id or simulation flag', () => {
+    const next = applyFrame(emptyDebate(), realVerdictFrame(ENGINE_VERDICT));
+    expect(next.actions).toEqual([]);
   });
 });
 
@@ -107,5 +222,46 @@ describe('fromDetail', () => {
     const state = fromDetail(detail);
     expect(state.rounds.map((r) => r.round)).toEqual([1, 2]);
     expect(state.status).toBe('investigating');
+  });
+});
+
+describe('mostCitedValue (debate)', () => {
+  const cited = (value: string, status = 'VERIFIED') => ({ field: 'user_id', value, status });
+
+  it('breaks a 3-3 tie with the lexicographically smallest value, in either arrival order', () => {
+    const nine = [cited('u-9'), cited('u-9'), cited('u-9')];
+    const two = [cited('u-2'), cited('u-2'), cited('u-2')];
+    expect(mostCitedValue([...nine, ...two], 'user_id')).toBe('u-2');
+    expect(mostCitedValue([...two, ...nine], 'user_id')).toBe('u-2');
+  });
+
+  it('counts only VERIFIED values', () => {
+    expect(mostCitedValue([cited('fake', 'DISCREPANCY'), cited('fake', 'DISCREPANCY'), cited('real')], 'user_id')).toBe('real');
+    expect(mostCitedValue([cited('fake', 'INVALID_ROW')], 'user_id')).toBeNull();
+  });
+});
+
+describe('laneAbsence', () => {
+  const spoke = laneFor([round(1, [turn('network_traffic')])], 'network_traffic');
+  const silent = laneFor([round(1, [turn('network_traffic')])], 'access_log');
+
+  it('is null for an agent that took part, even if it is quarantined now', () => {
+    expect(laneAbsence(spoke, false, 'verdict_reached')).toBeNull();
+    expect(laneAbsence(spoke, true, 'verdict_reached')).toBeNull();
+  });
+
+  it('says quarantined for a silent agent the fleet reports isolated, running or finished', () => {
+    expect(laneAbsence(silent, true, 'verdict_reached')).toBe('quarantined');
+    expect(laneAbsence(silent, true, 'investigating')).toBe('quarantined');
+  });
+
+  it('states only the fact for a silent, non-quarantined agent in a finished debate', () => {
+    expect(laneAbsence(silent, false, 'contained')).toBe('no_turns');
+    expect(laneAbsence(silent, false, 'ambiguous')).toBe('no_turns');
+  });
+
+  it('keeps the "not spoken yet" wording while the debate runs or the status is unknown', () => {
+    expect(laneAbsence(silent, false, 'investigating')).toBeNull();
+    expect(laneAbsence(silent, false, null)).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FleetEntry, InvestigatorId, Me } from '../../api/types';
 
@@ -29,6 +29,7 @@ vi.mock('../../api/client', () => ({
   describeError: (error: unknown) => (error instanceof Error ? error.message : 'error'),
 }));
 
+import { ScenarioModalContext } from '../../shell/scenario-modal';
 import DashboardPage from './index';
 
 const metric = (value: number | null) => ({
@@ -125,6 +126,11 @@ afterEach(() => {
 });
 
 describe('DashboardPage', () => {
+  it('has a page heading for assistive technology', async () => {
+    render(<DashboardPage />);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Forensics dashboard' })).toBeTruthy();
+  });
+
   it('renders real KPIs, pods, scenarios and the verdict ledger', async () => {
     render(<DashboardPage />);
     expect(await screen.findByText('Investigating now')).toBeTruthy();
@@ -134,6 +140,26 @@ describe('DashboardPage', () => {
     expect((await screen.findAllByText('Network-Traffic')).length).toBeGreaterThan(0);
     // Scenario matrix is populated from GET /scenarios.
     expect(await screen.findByRole('option', { name: /Botnet/ })).toBeTruthy();
+  });
+
+  it('loads every ledger row its verdict audit hash with a dedicated verdict_reached query', async () => {
+    const older = { ...INVESTIGATION, id: 'bbbbbbbb-old-case' };
+    const newer = { ...INVESTIGATION, id: 'aaaaaaaa-new-case' };
+    h.listInvestigations.mockResolvedValue({ items: [newer, older], total: metric(2), limit: 8, offset: 0 });
+    const verdict = (seq: number, investigationId: string, hash: string) => ({
+      seq, prev_hash: 'p', entry_hash: hash, hash_input: 'x', actor: 'system', action: 'verdict_reached', detail: null, investigation_id: investigationId, created_at: '2026-10-05T00:00:05Z',
+    });
+    h.listAuditTrail.mockImplementation(async (params?: { action?: string }) =>
+      params?.action === 'verdict_reached'
+        ? { entries: [verdict(9, newer.id, 'hash-of-new-case-0123456789'), verdict(2, older.id, 'hash-of-old-case-0123456789')], chain: { valid: true, head_seq: 9, total: 9 } }
+        : // The event-stream page is short: it holds no verdict entry for the older case.
+          { entries: [{ ...verdict(8, 'someone-else', 'unrelated'), action: 'round_completed' }], chain: { valid: true, head_seq: 9, total: 9 } },
+    );
+    render(<DashboardPage />);
+
+    expect(await screen.findByRole('button', { name: 'Copy verdict audit hash for aaaaaaaa' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Copy verdict audit hash for bbbbbbbb' })).toBeTruthy();
+    expect(h.listAuditTrail).toHaveBeenCalledWith({ action: 'verdict_reached', limit: 50 });
   });
 
   it('enables the inject button with the capability and disables it without', async () => {
@@ -146,5 +172,55 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
     const blocked = await screen.findByRole('button', { name: /inject simulation stream/i });
     await waitFor(() => expect((blocked as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it('opens the shared scenario modal with the chosen scenario from the inject button', async () => {
+    const open = vi.fn();
+    render(
+      <ScenarioModalContext.Provider value={{ canInject: true, open }}>
+        <DashboardPage />
+      </ScenarioModalContext.Provider>,
+    );
+    const inject = await screen.findByRole('button', { name: /inject simulation stream/i });
+    await waitFor(() => expect((inject as HTMLButtonElement).disabled).toBe(false));
+    await screen.findByRole('option', { name: /Botnet/ });
+    await waitFor(() => expect((screen.getByLabelText('Attack dataset scenario') as HTMLSelectElement).value).toBe('Botnet'));
+    fireEvent.click(inject);
+    expect(open).toHaveBeenCalledWith('Botnet');
+  });
+
+  it('offers to run the first scenario when the ledger is empty', async () => {
+    h.listInvestigations.mockResolvedValue({ items: [], total: metric(0), limit: 8, offset: 0 });
+    const open = vi.fn();
+    render(
+      <ScenarioModalContext.Provider value={{ canInject: true, open }}>
+        <DashboardPage />
+      </ScenarioModalContext.Provider>,
+    );
+    expect(await screen.findByText('No investigations yet')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Run first scenario' }));
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows audit stream times as a clock and gives each shortened investigation id a copy button', async () => {
+    const { container } = render(<DashboardPage />);
+    await screen.findAllByText('inv-dash');
+    expect(container.querySelector('time[datetime="2026-10-05T00:00:05Z"]')?.textContent).toBe('00:00:05 UTC');
+    expect(screen.getAllByRole('button', { name: 'Copy investigation id' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: /^Copy investigation id inv-dash/ }).length).toBeGreaterThan(0);
+  });
+
+  it('takes the sample size and the round count from the API, not from typed numbers', async () => {
+    render(<DashboardPage />);
+    expect(await screen.findByText('Mean CrS · n = 1')).toBeTruthy();
+    expect(await screen.findByText('3 rounds of cross-examination')).toBeTruthy();
+  });
+
+  it('shows a dismissible how-to-read hint', async () => {
+    render(<DashboardPage />);
+    expect(screen.getByText('How to read this page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss how-to-read hint' }));
+    expect(screen.queryByText('How to read this page')).toBeNull();
+    expect(window.localStorage.getItem('vc-hint-dismissed:dashboard')).toBe('1');
   });
 });

@@ -6,6 +6,7 @@ import { useAsync } from '../../app/use-async';
 import { shortId } from '../../lib/format';
 import { cn } from '../../lib/cn';
 import { Button } from '../../ui/Button';
+import { FOCUS_RING } from '../../ui/classes';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
 import { Metric } from '../../ui/Metric';
@@ -71,17 +72,24 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
     );
   }, [scenarios]);
 
+  // A fresh key each time the modal opens, so reopening it starts a new investigation.
+  const idempotencyKey = useMemo(() => crypto.randomUUID(), [open]);
+
   async function authorize() {
     if (selected === null) return;
     setBusy(true);
     setError(null);
     try {
-      const accepted = await simulateInvestigation({
-        scenario_label: selected,
-        max_rows_per_agent: maxRows,
-        noise_pct: noise,
-        wait: false,
-      });
+      const accepted = await simulateInvestigation(
+        {
+          scenario_label: selected,
+          max_rows_per_agent: maxRows,
+          noise_pct: noise,
+          wait: false,
+        },
+        // One key per opening of the modal: a double click sends the same key twice and the server starts one debate.
+        { idempotencyKey },
+      );
       pushToast(
         `Investigation ${shortId(accepted.investigation_id)} started · primary ${accepted.primary_agent} · effective noise ${accepted.effective_noise_pct}%`,
         { tone: 'secondary', durationMs: 6000 },
@@ -168,19 +176,26 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
                     {group.items.map((scenario) => {
                       const active = selected === scenario.label;
                       return (
-                        <button
+                        // The radio button comes first and covers the card; the Proof button inside the row count is
+                        // positioned later in the DOM, so it paints above it and stays clickable. (A card that was
+                        // itself a <button> would nest the Proof button inside a button, which is invalid HTML.)
+                        <div
                           key={scenario.label}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          onClick={() => setSelected(scenario.label)}
                           className={cn(
-                            'flex w-full flex-col gap-1 rounded-lg border px-3 py-2 text-left transition-colors',
+                            'relative flex w-full flex-col gap-1 rounded-lg border px-3 py-2 text-left transition-colors',
                             active
                               ? 'border-primary bg-primary/10'
                               : 'border-outline-variant/40 bg-surface-container-low hover:border-primary/40',
                           )}
                         >
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            aria-label={scenario.label}
+                            onClick={() => setSelected(scenario.label)}
+                            className={cn('absolute inset-0 cursor-pointer rounded-lg', FOCUS_RING)}
+                          />
                           <span className="flex items-center justify-between gap-2">
                             <span className="font-mono text-evidence text-on-surface">{scenario.label}</span>
                             <span className="inline-flex items-center gap-1 text-caption text-on-surface-variant">
@@ -189,7 +204,7 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
                             </span>
                           </span>
                           <span className="text-caption text-on-surface-variant">{scenario.description}</span>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

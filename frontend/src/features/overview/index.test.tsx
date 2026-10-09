@@ -149,9 +149,25 @@ describe('OverviewPage', () => {
     expect(await screen.findByText('row-7')).toBeTruthy();
   });
 
+  it('does not crash on a scenario label that no ingested row carries (primary_agent null)', async () => {
+    vi.mocked(listScenarios).mockResolvedValue([
+      { ...SCENARIO, label: 'FTP-Patator', primary_agent: null, row_count: metric(0) },
+    ]);
+    render(<OverviewPage />);
+    expect(await screen.findByText('FTP-Patator')).toBeTruthy();
+    expect(await screen.findByText(/no rows ingested for this label/i)).toBeTruthy();
+  });
+
   it('shows an em dash and the reason for a null metric, never 0', async () => {
     vi.mocked(getEvaluation).mockResolvedValue({ accuracy: metric(null, 'not evaluated yet') } as unknown as EvaluationResponse);
     render(<OverviewPage />);
     expect(await screen.findByText('not evaluated yet')).toBeTruthy();
+  });
+
+  it('shows a raw-log time as a clock from the row, and the rounds as done out of total', async () => {
+    const { container } = render(<OverviewPage />);
+    await screen.findByText('FLOW_START');
+    expect(container.querySelector('time[datetime="2026-10-08T12:00:00Z"]')?.textContent).toBe('12:00:00 UTC');
+    expect(await screen.findByText(/rounds: \d+\/3/)).toBeTruthy();
   });
 });

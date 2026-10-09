@@ -139,6 +139,48 @@ describe('controls', () => {
   });
 });
 
+describe('CopyHash', () => {
+  const uuid = '9f4d2c1a-0b3e-4c55-8a10-5e6f7a8b9c0d';
+
+  it('shows a caller-chosen short form and still copies the full value', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<CopyHash value={uuid} display="9f4d2c1a" label="investigation id" textClassName="text-primary" />);
+    const shown = screen.getByText('9f4d2c1a');
+    expect(shown.getAttribute('title')).toBe(uuid);
+    expect(shown.className).toContain('text-primary');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy investigation id' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(uuid));
+  });
+
+  it('keeps first-10 and last-6 as the default short form for a long value', () => {
+    render(<CopyHash value={uuid} label="id" />);
+    expect(screen.getByText('9f4d2c1a-0…8b9c0d')).toBeTruthy();
+  });
+
+  it('does not say Copied when the clipboard refuses', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<CopyHash value="abc" label="id" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy id' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(screen.queryByText('Copied')).toBeNull();
+  });
+
+  it('does not trigger a click handler on the surrounding element', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true });
+    const onRowClick = vi.fn();
+    render(
+      <div onClick={onRowClick}>
+        <CopyHash value="abc" label="id" />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy id' }));
+    await waitFor(() => expect(screen.getByText('Copied')).toBeTruthy());
+    expect(onRowClick).not.toHaveBeenCalled();
+  });
+});
+
 describe('measures', () => {
   it('shows a progress bar with no fill and "no data" when the value is null', () => {
     render(<ProgressBar value={null} label="Credibility, network_traffic" />);

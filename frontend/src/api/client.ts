@@ -20,6 +20,7 @@ import type {
   InvestigationDetail,
   InvestigationListParams,
   InvestigationPage,
+  InvestigationProgress,
   InvestigatorId,
   ContainmentResponse,
   Me,
@@ -157,6 +158,8 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT';
   body?: unknown;
+  /** Extra request headers (for example Idempotency-Key). */
+  headers?: Record<string, string>;
   /** Public calls (health, login, register) send no token and never trigger the 401 handler. */
   public?: boolean;
 }
@@ -196,7 +199,7 @@ function messageFor(response: Response, detail: unknown): string {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: 'application/json', ...options.headers };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   const token = options.public ? null : getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -312,9 +315,24 @@ export function submitFeedback(id: string, verdictWasCorrect: boolean): Promise<
   });
 }
 
-/** Starts a simulated scenario. The console always sends wait=false and follows the socket. */
-export function simulateInvestigation(body: SimulateRequest): Promise<SimulateAccepted> {
-  return request<SimulateAccepted>('/investigations/simulate', { method: 'POST', body });
+/**
+ * Starts a simulated scenario. The console always sends wait=false and follows the socket. With an
+ * idempotencyKey a retry or a double click gets the first investigation back instead of a second debate.
+ */
+export function simulateInvestigation(
+  body: SimulateRequest,
+  options: { idempotencyKey?: string } = {},
+): Promise<SimulateAccepted> {
+  return request<SimulateAccepted>('/investigations/simulate', {
+    method: 'POST',
+    body,
+    headers: options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : undefined,
+  });
+}
+
+/** Where a debate is. Cheap to poll. */
+export function getInvestigationProgress(id: string): Promise<InvestigationProgress> {
+  return request<InvestigationProgress>(`/investigations/${encodeURIComponent(id)}/progress`);
 }
 
 export function emergencyContainment(id: string): Promise<ContainmentResponse> {

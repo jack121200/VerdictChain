@@ -4,15 +4,25 @@ import type { AuditEntry, AuditTrailResponse, AuditVerifyResult, ResponseAction 
 import { useAsync } from '../../app/use-async';
 import { cn } from '../../lib/cn';
 import { sha256Hex } from '../../lib/derive/hash';
-import { formatCount, formatTimestamp, shortId } from '../../lib/format';
+import { formatCount, formatCountNoun, formatSeq, shortId } from '../../lib/format';
+import { FOCUS_RING } from '../../ui/classes';
+import { CopyButton, CopyHash } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
+import { HintStrip } from '../../ui/HintStrip';
 import { Icon } from '../../ui/Icon';
 import { Proof } from '../../ui/Proof';
 import { Table, type TableColumn } from '../../ui/Table';
 import { Tabs } from '../../ui/Tabs';
+import { Timestamp } from '../../ui/Timestamp';
 import { pushToast } from '../../ui/toast-store';
 
 type AuditTab = 'ledger' | 'containment';
+
+const HINT = [
+  'Each audit entry stores the SHA-256 hash of its own contents and the hash of the entry before it, so changing any past entry breaks every hash after it: the chain is tamper-evident, not tamper-proof.',
+  'Select an entry to see the exact text that was hashed; your browser recomputes its SHA-256 and compares it with the stored hash, and Verify runs the same check for the whole chain on the server.',
+  'Entries come from GET /audit-trail, newest first; the Containment tab lists the sandbox actions from GET /response-actions.',
+] as const;
 
 /** Presentation label for an audit action code: a pure function of the API field. */
 function humanizeAction(action: string): string {
@@ -114,12 +124,12 @@ function EntryInspector({ entry }: { entry: AuditEntry }) {
       <div className="flex items-start justify-between gap-3 border-b border-outline-variant/40 pb-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-bold text-primary">seq #{entry.seq}</span>
+            <span className="font-mono text-xs font-bold text-primary">seq {formatSeq(entry.seq)}</span>
             <span className="rounded bg-secondary/20 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-secondary">Verified proof</span>
           </div>
           <h2 className="mt-1 font-headline text-lg font-bold text-on-surface">{humanizeAction(entry.action)}</h2>
           <p className="mt-0.5 font-mono text-[11px] text-on-surface-variant">
-            {entry.actor} · {formatTimestamp(entry.created_at)}
+            {entry.actor} · <Timestamp iso={entry.created_at} mode="absolute" />
           </p>
         </div>
         <Icon name="verified_user" size={20} className="shrink-0 text-secondary" />
@@ -150,11 +160,17 @@ function EntryInspector({ entry }: { entry: AuditEntry }) {
         <BoxLabel>Hash chain link</BoxLabel>
         <div className="flex flex-col gap-0.5">
           <span className="text-[10px] text-on-surface-variant">Previous entry hash:</span>
-          <code className="truncate text-[11px] text-outline">{entry.prev_hash ?? 'none (genesis)'}</code>
+          <span className="flex items-start gap-1.5">
+            <code className="min-w-0 break-all text-[11px] text-outline">{entry.prev_hash ?? 'none (genesis)'}</code>
+            {entry.prev_hash && <CopyButton value={entry.prev_hash} label="previous entry hash" />}
+          </span>
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[10px] text-on-surface-variant">Current entry hash:</span>
-          <code className="truncate text-[11px] text-primary">{entry.entry_hash}</code>
+          <span className="flex items-start gap-1.5">
+            <code className="min-w-0 break-all text-[11px] text-primary">{entry.entry_hash}</code>
+            <CopyButton value={entry.entry_hash} label="current entry hash" />
+          </span>
         </div>
       </div>
 
@@ -191,7 +207,7 @@ const CONTAINMENT_COLUMNS: readonly TableColumn<ResponseAction>[] = [
         </span>
       ),
   },
-  { key: 'when', header: 'Recorded', cell: (row) => formatTimestamp(row.created_at), mono: true },
+  { key: 'when', header: 'Recorded', cell: (row) => <Timestamp iso={row.created_at} />, mono: true },
 ];
 
 function ContainmentTab() {
@@ -241,7 +257,7 @@ function exportCustodyBundle(data: AuditTrailResponse): void {
     anchor.download = `verdictchain-audit-${data.chain.head_seq ?? 'head'}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    pushToast(`Exported ${data.entries.length} audit entries with head hash.`, { tone: 'secondary' });
+    pushToast(`Exported ${formatCountNoun(data.entries.length, 'audit entry', 'audit entries')} with head hash.`, { tone: 'secondary' });
   } catch (cause) {
     pushToast(describeError(cause), { tone: 'error' });
   }
@@ -295,7 +311,7 @@ export default function AuditPage() {
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-3">
           <span className="inline-flex items-center gap-1">
             <button
               type="button"
@@ -334,10 +350,12 @@ export default function AuditPage() {
         </div>
       </div>
 
+      <HintStrip pageId="audit" sentences={HINT} className="mt-4" />
+
       {/* Ledger status badges */}
       <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <HudTile label="Chain head" subTone="text-secondary" sub="Gapless identity sequence">
-          <span className="font-headline text-2xl font-bold text-primary">{chain?.head_seq != null ? `#${formatCount(chain.head_seq)}` : '—'}</span>
+          <span className="font-headline text-2xl font-bold text-primary">{chain?.head_seq != null ? formatSeq(chain.head_seq) : '—'}</span>
           <Proof
             source="GET /audit-trail chain.head_seq"
             n={chain?.total ?? 0}
@@ -378,9 +396,7 @@ export default function AuditPage() {
         </HudTile>
         <HudTile label="Head hash" subTone="text-primary" sub="SHA-256 of the latest entry">
           {entries[0] ? (
-            <code className="block max-w-full truncate font-mono text-sm text-primary" title={entries[0].entry_hash}>
-              {entries[0].entry_hash}
-            </code>
+            <CopyHash value={entries[0].entry_hash} label="head entry hash" size="inherit" className="text-sm" textClassName="text-primary" />
           ) : (
             <span className="font-headline text-2xl font-bold text-on-surface">—</span>
           )}
@@ -420,11 +436,8 @@ export default function AuditPage() {
             {entries.map((entry) => {
               const isSelected = selected?.seq === entry.seq;
               return (
-                <button
+                <div
                   key={entry.seq}
-                  type="button"
-                  onClick={() => setSelectedSeq(entry.seq)}
-                  aria-pressed={isSelected}
                   className={cn(
                     'relative w-full rounded-xl border p-4 text-left transition-all',
                     isSelected
@@ -432,10 +445,21 @@ export default function AuditPage() {
                       : 'border-outline-variant/40 bg-surface-container-low/70 hover:border-outline-variant hover:bg-surface-card/60',
                   )}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  {/*
+                    The select button comes first and covers the card; the copy buttons are positioned and later in
+                    the DOM, so they paint above it and stay clickable (no button inside a button).
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSeq(entry.seq)}
+                    aria-pressed={isSelected}
+                    aria-label={`Select audit entry ${formatSeq(entry.seq)}`}
+                    className={cn('absolute inset-0 cursor-pointer rounded-xl', FOCUS_RING)}
+                  />
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-primary">seq #{entry.seq}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-primary">seq {formatSeq(entry.seq)}</span>
                         <span
                           className={cn(
                             'rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase',
@@ -444,24 +468,47 @@ export default function AuditPage() {
                         >
                           {chain?.valid ? 'Chain OK' : 'Chain broken'}
                         </span>
-                        {entry.investigation_id ? <span className="font-mono text-[10px] text-outline">{shortId(entry.investigation_id)}</span> : null}
+                        {entry.investigation_id ? (
+                          <CopyHash
+                            value={entry.investigation_id}
+                            display={shortId(entry.investigation_id)}
+                            label="investigation id"
+                            size="inherit"
+                            className="text-[10px]"
+                            textClassName="text-outline"
+                          />
+                        ) : null}
                       </div>
-                      <h3 className="mt-1 font-headline text-base font-semibold text-on-surface">{humanizeAction(entry.action)}</h3>
-                      <div className="mt-1 truncate font-mono text-[11px] text-on-surface-variant">
-                        Hash: <code className="text-primary">{entry.entry_hash}</code>
+                      <h3 className="mt-1 break-words font-headline text-base font-semibold text-on-surface">{humanizeAction(entry.action)}</h3>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-on-surface-variant">
+                        Hash:
+                        <CopyHash value={entry.entry_hash} label="entry hash" size="inherit" textClassName="text-primary" />
                       </div>
                     </div>
-                    <span className="shrink-0 font-mono text-[10px] text-outline">{entry.created_at.substring(11, 19)} UTC</span>
+                    <Timestamp iso={entry.created_at} className="shrink-0 font-mono text-[10px] text-outline" />
                   </div>
 
-                  <div className="mt-3 flex items-center justify-between border-t border-outline-variant/30 pt-2.5 font-mono text-[10px] text-on-surface-variant">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-outline-variant/30 pt-2.5 font-mono text-[10px] text-on-surface-variant">
                     <div className="flex items-center gap-1.5">
                       <Icon name="verified_user" size={12} className="text-secondary" />
-                      <span>actor {entry.actor}</span>
+                      <span className="break-all">actor {entry.actor}</span>
                     </div>
-                    <span className="text-primary">prev {entry.prev_hash ? shortId(entry.prev_hash, 12) : 'genesis'}</span>
+                    <span className="inline-flex flex-wrap items-center gap-1.5 text-primary">
+                      prev{' '}
+                      {entry.prev_hash ? (
+                        <CopyHash
+                          value={entry.prev_hash}
+                          display={shortId(entry.prev_hash, 12)}
+                          label="previous entry hash"
+                          size="inherit"
+                          textClassName="text-primary"
+                        />
+                      ) : (
+                        'genesis'
+                      )}
+                    </span>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

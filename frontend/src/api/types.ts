@@ -500,6 +500,20 @@ export interface SimulateAccepted {
   primary_agent: InvestigatorId;
 }
 
+/** Where a debate is (GET /investigations/{id}/progress). unknown = still investigating but no debate holds the slot. */
+export type ProgressPhase = 'running' | 'finished' | 'error' | 'unknown';
+
+export interface InvestigationProgress {
+  investigation_id: string;
+  phase: ProgressPhase;
+  status: InvestigationStatus;
+  rounds_total: number;
+  rounds_complete: number;
+  /** The round in progress; null unless phase is running. */
+  round: number | null;
+  elapsed_seconds: number;
+}
+
 /** One sandboxed action as the containment endpoints report it. */
 export interface ContainmentActionRow {
   action_type: string;
@@ -574,7 +588,8 @@ export interface StatsResponse {
 export interface ScenarioSummary {
   label: ScenarioLabel;
   dataset: DatasetName;
-  primary_agent: InvestigatorId;
+  /** null when no ingested row carries this label, so no agent would own the scenario yet. */
+  primary_agent: InvestigatorId | null;
   row_count: Metric<number>;
   description: string;
 }
@@ -758,22 +773,54 @@ export interface FaultInjectionResponse {
 
 // ---- realtime -----------------------------------------------------------------
 
+/** What the score of a round looks like inside a round_completed frame (watchdog/service.py score_agent_round). */
+export interface LiveScoreWire {
+  agent_id?: string;
+  crs_before: number;
+  crs_after: number;
+  verification_match_rate?: number;
+  isolated?: boolean;
+}
+
+/** One agent's turn as a live frame carries it. The snapshot omits stance and credibility. */
+export interface LiveTurnWire {
+  agent_id: InvestigatorId;
+  theory: string;
+  confidence: number;
+  stance?: Stance | null;
+  provider?: string | null;
+  cited_evidence: CitedEvidence[];
+  /** round_completed: the score dict of the round. A bare number is accepted too. Snapshot: absent. */
+  credibility?: LiveScoreWire | number | null;
+}
+
+/** One response action as a live frame carries it. The snapshot sends no id and no investigation_id. */
+export interface LiveActionWire {
+  id?: string;
+  investigation_id?: string;
+  action_type: string;
+  target: string;
+  reason: string | null;
+  is_simulated: boolean;
+  created_at?: string;
+}
+
 /** WS /ws/investigations/{id} frames. Deduplicated by (type, round, agent_id). */
 export type LiveFrame =
   | {
       type: 'snapshot';
       investigation_id: string;
       status: InvestigationStatus;
-      rounds: DebateRound[];
-      credibility: CredibilityRow[];
-      actions: ResponseAction[];
+      rounds: Array<{ round: number; agents: LiveTurnWire[] }>;
+      credibility: Array<Omit<CredibilityRow, 'investigation_id' | 'created_at'> & Partial<CredibilityRow>>;
+      actions: LiveActionWire[];
       verdict: { verdict_class: VerdictClass | null; verdict_confidence: number | null } | null;
     }
   | {
       type: 'round_completed';
       investigation_id: string;
       round: number;
-      agents: RoundAgentTurn[];
+      agents: LiveTurnWire[];
     }
   | {
       type: 'agent_isolated';
@@ -784,9 +831,16 @@ export type LiveFrame =
   | {
       type: 'verdict';
       investigation_id: string;
-      verdict: VerdictClass | null;
+      /** The engine's verdict dict (backend/debate/engine.py run_debate), not a bare class name. */
+      verdict: {
+        verdict_class: VerdictClass | null;
+        verdict_confidence: number | null;
+        status?: string;
+        contributing_agents?: string[];
+      } | null;
       status: InvestigationStatus;
-      actions_taken: ResponseAction[];
+      /** Only action_type, target and reason: the full rows arrive with the reload the page runs on this frame. */
+      actions_taken: Array<{ action_type: string; target: string; reason: string }>;
     }
   | {
       type: 'error';

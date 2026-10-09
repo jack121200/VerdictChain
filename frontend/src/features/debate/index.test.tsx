@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Citation,
@@ -200,6 +200,36 @@ describe('DebatePage', () => {
     expect(matches.length).toBeGreaterThan(0);
   });
 
+  it('survives the real verdict frame (verdict is the engine dict) when a debate finishes while the page is open', async () => {
+    h.getInvestigation.mockResolvedValueOnce(detail({ status: 'investigating', verdict_class: null, verdict_confidence: null }));
+    // The reload that follows a verdict frame stays pending, so what is on screen comes from the frame itself.
+    h.getInvestigation.mockReturnValue(new Promise(() => undefined));
+    render(<DebatePage id="inv-1" />);
+
+    await waitFor(() => expect(h.connectInvestigationSocket).toHaveBeenCalledTimes(1));
+    const handlers = h.connectInvestigationSocket.mock.calls[0][2] as InvestigationSocketHandlers;
+    const frame = {
+      type: 'verdict',
+      investigation_id: 'inv-1',
+      verdict: {
+        verdict_class: 'botnet_c2',
+        verdict_confidence: 0.82,
+        status: 'verdict_reached',
+        supporting_evidence: [{ row_id: 'r1', field: 'dst_port', value: '8443' }],
+        contributing_agents: ['network_traffic', 'access_log'],
+      },
+      status: 'contained',
+      actions_taken: [{ action_type: 'block_ip_range', target: '10.0.0.0/24', reason: 'sandbox response' }],
+    } as unknown as LiveFrame;
+    await act(async () => {
+      handlers.onFrame(frame);
+    });
+
+    expect((await screen.findAllByText('Botnet C2')).length).toBeGreaterThan(0);
+    expect(screen.getByText('botnet_c2')).toBeTruthy();
+    expect(screen.queryByText('[object Object]')).toBeNull();
+  });
+
   it('does not open a socket in replay (a finished case)', async () => {
     h.getInvestigation.mockResolvedValue(
       detail({ rounds: [{ round: 1, agents: [turn('network_traffic', { theory: 'finished theory' })] }] satisfies DebateRound[] }),
@@ -250,6 +280,112 @@ describe('DebatePage', () => {
     render(<DebatePage id="inv-1" />);
 
     expect(await screen.findByText(/recompute mismatch/i)).toBeTruthy();
+  });
+
+  it('shows an isolated agent vote as not counted and keeps it out of the recomputed confidence', async () => {
+    const votes: Vote[] = [
+      { agent_id: 'network_traffic', verdict_class: 'botnet_c2', confidence: 0.8, matched_keywords: ['c2'] },
+      { agent_id: 'access_log', verdict_class: 'botnet_c2', confidence: 0.2, matched_keywords: ['beacon'], counted: false },
+    ];
+    h.getInvestigation.mockResolvedValue(detail({ verdict_confidence: 0.8, votes }));
+    render(<DebatePage id="inv-1" />);
+
+    expect(await screen.findByText(/not counted · isolated/i)).toBeTruthy();
+    // 0.8 only: the isolated agent's 0.2 would have pulled the mean down to 0.5 and shown a mismatch.
+    expect(await screen.findByText(/recompute matches server/i)).toBeTruthy();
+  });
+
+  it('says a quarantined agent did not take part, with no confidence or credibility-arrow noise', async () => {
+    h.getAgentFleet.mockResolvedValue([
+      FLEET[0],
+      FLEET[1],
+      { ...fleetEntry('endpoint_behavior', 'Endpoint-Behavior'), isolated: true },
+    ]);
+    h.getInvestigation.mockResolvedValue(
+      detail({ rounds: [{ round: 1, agents: [turn('network_traffic'), turn('access_log')] }] satisfies DebateRound[] }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    expect(await screen.findByText('Quarantined: did not take part in this debate')).toBeTruthy();
+    expect(screen.queryByText('No theory recorded for this agent yet.')).toBeNull();
+    // Only the two agents that spoke keep their confidence row and CrS arrow.
+    expect(screen.getAllByText('Confidence trajectory')).toHaveLength(2);
+    expect(screen.getAllByText(/CrS .* →/)).toHaveLength(2);
+  });
+
+  it('shows how the data slice of each agent was chosen, in plain words', async () => {
+    h.getInvestigation.mockResolvedValue(
+      detail({
+        rounds: [{ round: 1, agents: [turn('network_traffic'), turn('access_log'), turn('endpoint_behavior')] }] satisfies DebateRound[],
+        input_basis: {
+          network_traffic: { basis: 'scenario_rows', row_count: 5 },
+          access_log: { basis: 'recent_sample', row_count: 1 },
+          endpoint_behavior: { basis: 'same_user_window', row_count: 2 },
+        },
+      }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    expect(await screen.findByText('scenario rows')).toBeTruthy();
+    expect(screen.getByText('recent sample')).toBeTruthy();
+    expect(screen.getByText('same user · time window')).toBeTruthy();
+    expect(screen.getByText(/· 1 row$/)).toBeTruthy(); // singular for a single row
+  });
+
+  it('shows no data-slice line for an investigation that predates the record', async () => {
+    h.getInvestigation.mockResolvedValue(
+      detail({ rounds: [{ round: 1, agents: [turn('network_traffic')] }] satisfies DebateRound[] }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    await screen.findAllByText('Confidence trajectory');
+    expect(screen.queryByText(/Data slice:/)).toBeNull();
+  });
+
+  it('keeps "No theory recorded yet" for a running debate whose agent has not spoken', async () => {
+    h.getInvestigation.mockResolvedValue(
+      detail({
+        status: 'investigating',
+        verdict_class: null,
+        verdict_confidence: null,
+        rounds: [{ round: 1, agents: [turn('network_traffic')] }] satisfies DebateRound[],
+      }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    expect((await screen.findAllByText('No theory recorded for this agent yet.')).length).toBe(2);
+    expect(screen.queryByText(/did not take part/)).toBeNull();
+  });
+
+  it('states only the fact when a finished debate has no turns for an agent that is not quarantined now', async () => {
+    h.getInvestigation.mockResolvedValue(
+      detail({ rounds: [{ round: 1, agents: [turn('network_traffic'), turn('access_log')] }] satisfies DebateRound[] }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    expect(await screen.findByText(/Did not take part in this debate: no transcript turns/)).toBeTruthy();
+    expect(screen.queryByText(/Quarantined: did not take part/)).toBeNull();
+  });
+
+  it('shows a dismissible how-to-read hint and a copy button on the shortened case id', async () => {
+    h.getInvestigation.mockResolvedValue(detail());
+    render(<DebatePage id="inv-12345678-xyz" />);
+    expect(screen.getByText('How to read this page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss how-to-read hint' }));
+    expect(screen.queryByText('How to read this page')).toBeNull();
+    expect(window.localStorage.getItem('vc-hint-dismissed:debate-room')).toBe('1');
+    expect(await screen.findByText('inv-1234')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy investigation id' })).toBeTruthy();
+  });
+
+  it('shows the earliest verified cited time as written, in absolute form', async () => {
+    h.getInvestigation.mockResolvedValue(detail());
+    h.getInvestigationCitations.mockResolvedValue({
+      summary: emptyCitations.summary,
+      citations: [{ ...(_sampleCitation as Citation), field: 'timestamp', value: '2010-09-23 08:14:00', status: 'VERIFIED' }],
+    });
+    const { container } = render(<DebatePage id="inv-1" />);
+    await waitFor(() => expect(container.querySelector('time[datetime="2010-09-23 08:14:00"]')?.textContent).toBe('2010-09-23 08:14:00'));
   });
 
   it('enables the sign-off button only with the sign_evidence_bundle capability', async () => {

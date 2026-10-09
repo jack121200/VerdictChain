@@ -13,16 +13,18 @@ import type {
 } from '../../api/types';
 import { buildRoute } from '../../app/router';
 import { cn } from '../../lib/cn';
-import { formatCount, formatPercent, shortId } from '../../lib/format';
+import { formatCount, formatCountNoun, formatOutOf, formatPercent, shortId } from '../../lib/format';
 import { Button } from '../../ui/Button';
 import type { Tone } from '../../ui/classes';
-import { CopyHash } from '../../ui/CopyHash';
+import { CopyButton, CopyHash } from '../../ui/CopyHash';
+import { RunScenarioAction } from '../../shell/RunScenarioAction';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
 import { Proof, type ProofInput } from '../../ui/Proof';
 import { Ring } from '../../ui/Ring';
 import { Skeleton } from '../../ui/Skeleton';
 import { Sparkline } from '../../ui/Sparkline';
+import { Timestamp } from '../../ui/Timestamp';
 import { citationStatusMeta, verdictClassTone } from './derive';
 
 /** Chart tone per investigator (matches the agent chip colours, SKILL section 5). */
@@ -151,7 +153,8 @@ export function TacticalBanner({
             </span>
             <span className="font-headline text-base font-semibold tracking-tight text-on-surface sm:text-lg">
               {threat.dataset ?? 'Investigation'} ·{' '}
-              <strong className="font-mono text-primary">{shortId(threat.id)}</strong>
+              <strong className="font-mono text-primary">{shortId(threat.id)}</strong>{' '}
+              <CopyButton value={threat.id} label="incident investigation id" />
             </span>
             <span className="hidden text-outline-variant sm:inline">•</span>
             <span className="inline-flex items-center gap-1">
@@ -176,7 +179,7 @@ export function TacticalBanner({
                 n={1}
                 asOf={null}
                 label="Incident subject and host"
-                definition="The most-cited user_id and host_id across this investigation's citations. '—' when no citation names that field. No identifiers are typed in."
+                definition="The most-cited user_id and host_id across this investigation's VERIFIED citations (values an agent only claimed are ignored). A tie is broken by the lexicographically smallest value. '—' when no verified citation names that field. No identifiers are typed in."
               />
             </div>
           </div>
@@ -224,12 +227,12 @@ export function TacticalBanner({
           metric={stats?.insider_count}
           sub={
             <span className="inline-flex items-center gap-1 text-on-surface-variant">
-              agent-reported conf.
+              all verdicts · agent-reported conf.
               <Stat
                 metric={stats?.mean_agent_confidence}
                 className="font-semibold text-tertiary"
                 format={PERCENT1}
-                label="Mean agent-reported confidence (insider)"
+                label="Mean agent-reported confidence (all verdicts)"
               />
             </span>
           }
@@ -240,7 +243,7 @@ export function TacticalBanner({
           tone="secondary"
           metric={stats?.mean_crs}
           format={PERCENT1}
-          sub={<span className="text-on-surface-variant">Mean CrS · n = 3</span>}
+          sub={<span className="text-on-surface-variant">Mean CrS · n = {stats ? formatCount(stats.mean_crs.n) : '—'}</span>}
         />
         <TelemetryCard
           label="Containment actions"
@@ -500,9 +503,11 @@ export interface PodTriadProps {
   fleet: FleetEntry[] | undefined;
   detail: InvestigationDetail | undefined;
   meanCrs: MetricEnvelope<number> | undefined;
+  /** Debate rounds from GET /settings, or undefined until it has loaded. */
+  debateRounds?: number;
 }
 
-export function PodTriad({ fleet, detail, meanCrs }: PodTriadProps) {
+export function PodTriad({ fleet, detail, meanCrs, debateRounds }: PodTriadProps) {
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between px-1">
@@ -510,7 +515,9 @@ export function PodTriad({ fleet, detail, meanCrs }: PodTriadProps) {
           <span className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
           <span className="font-headline text-base font-semibold uppercase tracking-wider text-on-surface">Investigator pod triad</span>
           <span className="text-outline-variant">•</span>
-          <span className="font-mono text-xs text-on-surface-variant">3 rounds of dialectical scrutiny</span>
+          <span className="font-mono text-xs text-on-surface-variant">
+            {debateRounds === undefined ? 'debate rounds —' : `${formatCountNoun(debateRounds, 'round')} of cross-examination`}
+          </span>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded border border-secondary/30 bg-surface-card px-2.5 py-0.5 font-mono text-xs font-semibold text-secondary">
           Mean credibility <Stat metric={meanCrs} className="font-semibold text-secondary" format={PERCENT1} label="Mean fleet credibility" />
@@ -559,7 +566,7 @@ export function VerdictLedger({ rows, loading, hashFor, debateRounds, headSeq, c
           <span className="inline-flex items-center gap-1.5 rounded border border-secondary/30 bg-secondary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-secondary">
             Deterministic aggregation
             <Proof
-              source="GET /investigations · GET /audit-trail (verdict_reached)"
+              source="GET /investigations · GET /audit-trail?action=verdict_reached"
               n={rows.length}
               asOf={chainLoadedAt}
               label="Verdict ledger"
@@ -572,7 +579,11 @@ export function VerdictLedger({ rows, loading, hashFor, debateRounds, headSeq, c
           loading ? (
             <Skeleton className="h-24 w-full" />
           ) : (
-            <EmptyState title="No investigations yet" description="Inject a scenario to start the first debate." />
+            <EmptyState
+              title="No investigations yet"
+              description="Run a scenario to start the first debate; its verdict and audit hash appear here."
+              action={<RunScenarioAction />}
+            />
           )
         ) : (
           <div className="overflow-x-auto">
@@ -593,14 +604,16 @@ export function VerdictLedger({ rows, loading, hashFor, debateRounds, headSeq, c
                   return (
                     <tr key={row.id} className="transition-colors hover:bg-surface-card">
                       <td className="px-3 py-2.5">
-                        <a href={buildRoute({ name: 'debate', id: row.id })} className="font-semibold text-primary hover:underline">
-                          {shortId(row.id)}
-                        </a>
+                        <span className="inline-flex items-center gap-1.5">
+                          <a href={buildRoute({ name: 'debate', id: row.id })} className="font-semibold text-primary hover:underline">
+                            {shortId(row.id)}
+                          </a>
+                          <CopyButton value={row.id} label={`investigation id ${shortId(row.id)}`} />
+                        </span>
                       </td>
                       <td className="px-3 py-2.5 text-on-surface">{row.dataset ?? '—'}</td>
                       <td className="px-3 py-2.5 font-semibold text-secondary">
-                        {row.rounds_complete}
-                        {debateRounds !== undefined ? `/${debateRounds}` : ''}
+                        {debateRounds !== undefined ? formatOutOf(row.rounds_complete, debateRounds) : formatCount(row.rounds_complete)}
                       </td>
                       <td className="px-3 py-2.5">
                         <span className={cn('inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase', verdictPillClass(row.verdict_class))}>
@@ -640,8 +653,11 @@ export function VerdictLedger({ rows, loading, hashFor, debateRounds, headSeq, c
 
 export interface TerminalLine {
   key: string;
-  time: string;
-  body: string;
+  /** When the audit entry was recorded, as the API sent it. */
+  at: string;
+  action: string;
+  actor: string;
+  investigationId: string | null;
   tone: Tone | 'neutral';
 }
 
@@ -683,7 +699,24 @@ export function TerminalStream({ lines, onClear, loadedAt }: { lines: readonly T
           ) : (
             lines.map((line) => (
               <div key={line.key} className="leading-relaxed">
-                <span className="text-primary">[{line.time}]</span> <span className={TERMINAL_TEXT[line.tone]}>{line.body}</span>
+                <span className="text-primary">
+                  [<Timestamp iso={line.at} mode="clock" />]
+                </span>{' '}
+                <span className={TERMINAL_TEXT[line.tone]}>
+                  {line.action.toUpperCase()} · actor {line.actor}
+                  {line.investigationId && (
+                    <>
+                      {' · inv '}
+                      <CopyHash
+                        value={line.investigationId}
+                        display={shortId(line.investigationId)}
+                        label="investigation id"
+                        size="inherit"
+                        textClassName="text-inherit"
+                      />
+                    </>
+                  )}
+                </span>
               </div>
             ))
           )}

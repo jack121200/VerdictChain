@@ -21,11 +21,14 @@ import type {
 import { useAsync } from '../../app/use-async';
 import { AGENT_VISUALS } from '../../lib/agents';
 import { cn } from '../../lib/cn';
-import { formatNumber, formatPercent, formatTimestamp, shortId } from '../../lib/format';
+import { cssPercent, formatCount, formatCountNoun, formatMaybeCount, formatNumber, formatPercent, formatSignedPercent, shortId } from '../../lib/format';
+import { CopyHash } from '../../ui/CopyHash';
+import { HintStrip } from '../../ui/HintStrip';
 import { Icon } from '../../ui/Icon';
 import { Metric } from '../../ui/Metric';
 import { Proof } from '../../ui/Proof';
 import { Skeleton } from '../../ui/Skeleton';
+import { Timestamp } from '../../ui/Timestamp';
 import { TrajectoryChart, type TrajectorySeries } from '../../ui/TrajectoryChart';
 import { pushToast } from '../../ui/toast-store';
 import { VERDICT_LABEL } from '../investigations/labels';
@@ -69,10 +72,11 @@ const STATUS_ICON: Record<CitationStatus, 'check' | 'warning' | 'close'> = {
   INVALID_ROW: 'close',
 };
 
-function signed(value: number, decimals = 1): string {
-  const pct = (value * 100).toFixed(decimals);
-  return value >= 0 ? `+${pct}%` : `${pct}%`;
-}
+const HINT = [
+  'Each investigator’s credibility score (CrS) is moved only by the Watchdog’s re-check of its cited rows against raw_logs, not by what the other agents say.',
+  'Scores come from GET /agents/fleet and the trajectory from each agent’s credibility_log; the dashed line is the isolation threshold from GET /settings, and an agent that falls below it after a round is quarantined.',
+  'The ledger lists the citations the Watchdog re-checked, with the cited value next to the value the row really holds; only roles that hold edit_settings can change the live thresholds below.',
+] as const;
 
 /** Trust & Credibility: Watchdog scoring, trajectory, citation ledger and the real settings configurator (plan 2.7). */
 export default function TrustPage() {
@@ -121,6 +125,8 @@ export default function TrustPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 text-on-surface lg:px-6">
+      <HintStrip pageId="trust" sentences={HINT} />
+
       <TrustHeader
         meanCrs={stats.data?.mean_crs}
         overall={overall}
@@ -214,8 +220,8 @@ export default function TrustPage() {
               {change ? (
                 <>
                   {nameOf(change.agent)} moved{' '}
-                  <span className={change.delta >= 0 ? 'text-secondary' : 'text-error'}>{signed(change.delta)}</span> after
-                  round {change.round}; Watchdog match rate {formatPercent(change.matchRate)} ({formatTimestamp(change.at)}).
+                  <span className={change.delta >= 0 ? 'text-secondary' : 'text-error'}>{formatSignedPercent(change.delta)}</span> after
+                  round {change.round}; Watchdog match rate {formatPercent(change.matchRate)} (<Timestamp iso={change.at} />).
                 </>
               ) : (
                 'No scored rounds yet. Credibility adjustments appear here after an investigator is scored in a debate.'
@@ -331,7 +337,7 @@ function TrustHeader({
             sub={
               <span className="inline-flex items-center gap-1 normal-case">
                 <span className={overall.value === null ? 'text-on-surface-variant' : overall.value >= 0 ? 'text-secondary' : 'text-error'}>
-                  {overall.value === null ? 'no cycle yet' : `${signed(overall.value)} this cycle`}
+                  {overall.value === null ? 'no cycle yet' : `${formatSignedPercent(overall.value)} this cycle`}
                 </span>
                 <Proof
                   source="browser: GET /agents/{id}/credibility-history (crs_after − crs_before)"
@@ -358,9 +364,9 @@ function TrustHeader({
             sub={<span>{isolated === 0 ? 'none isolated' : 'isolated now'}</span>}
           >
             <span className="font-headline text-3xl font-bold tracking-tighter text-secondary">
-              {fleetLoaded ? isolated : '—'}
+              {fleetLoaded ? formatCount(isolated) : '—'}
             </span>
-            <span className="text-sm font-bold text-secondary">/{fleetLoaded ? fleetCount : '—'}</span>
+            <span className="text-sm font-bold text-secondary">/{fleetLoaded ? formatCount(fleetCount) : '—'}</span>
             <Proof
               source="GET /agents/fleet.isolated"
               n={fleetCount}
@@ -371,7 +377,7 @@ function TrustHeader({
           </StatusTile>
 
           <StatusTile tone="tertiary" label="Flagged warnings" sub={<span>recent discrepancy</span>}>
-            <span className="font-headline text-3xl font-bold tracking-tighter text-tertiary">{flaggedCount}</span>
+            <span className="font-headline text-3xl font-bold tracking-tighter text-tertiary">{formatCount(flaggedCount)}</span>
             <span className="text-sm font-bold text-tertiary">{flaggedCount === 1 ? 'agent' : 'agents'}</span>
             <Proof
               source="browser: GET /agents/{id}/credibility-history verification_match_rate"
@@ -433,20 +439,20 @@ function AgentScorecard({
         <div className="flex items-baseline gap-1 font-mono sm:text-right">
           <Metric size="body" className={TONE_TEXT[tone]} label={`Credibility, ${agent.display_name}`} metric={agent.crs} format={(value) => formatPercent(value, 1)} />
           {delta !== null && (
-            <span className={cn('ml-1 text-[10px] font-semibold', delta >= 0 ? 'text-secondary' : 'text-error')}>{signed(delta)}</span>
+            <span className={cn('ml-1 text-[10px] font-semibold', delta >= 0 ? 'text-secondary' : 'text-error')}>{formatSignedPercent(delta)}</span>
           )}
         </div>
       </div>
 
       <div className="mt-3 space-y-1.5">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-high">
-          <div className={cn('h-full rounded-full', TONE_BAR[tone])} style={{ width: `${crs === null ? 0 : Math.round(crs * 100)}%` }} />
+          <div className={cn('h-full rounded-full', TONE_BAR[tone])} style={{ width: cssPercent(crs ?? 0) }} />
         </div>
         <div className="grid grid-cols-3 gap-2 pt-1 font-mono text-xs">
           <div>
             <span className="block text-[10px] uppercase text-on-surface-variant">Verified citations</span>
             <span className="font-semibold text-on-surface">
-              {agent.citations_verified.value ?? '—'} / {agent.citations_total.value ?? '—'}
+              {formatMaybeCount(agent.citations_verified.value)} / {formatMaybeCount(agent.citations_total.value)}
             </span>
           </div>
           <div>
@@ -550,7 +556,6 @@ function IsolationProtocol({
   asOf: string | null;
   settingsLoaded: boolean;
 }) {
-  const thresholdPct = gauge ? Math.round(gauge.threshold * 100) : 0;
   return (
     <div className="flex flex-col justify-between space-y-4 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5 shadow-md lg:col-span-4">
       <div className="space-y-1">
@@ -561,18 +566,18 @@ function IsolationProtocol({
           </span>
         </div>
         <p className="font-body text-xs text-on-surface-variant">
-          An investigator whose CrS falls below the isolation threshold after a round is quarantined and excluded from the
-          rest of the debate and from the verdict.
+          An investigator whose CrS falls below the isolation threshold after a round is quarantined: excluded from the
+          rest of that debate, from its verdict and from later debates until an analyst restores it.
         </p>
       </div>
 
       <div className="space-y-2 py-2">
         <div className="flex items-center justify-between font-mono text-[10px] font-semibold uppercase">
-          <span className="text-error">Quarantine &lt; {settingsLoaded ? `${thresholdPct}%` : '—'}</span>
-          <span className="text-secondary">Active ≥ {settingsLoaded ? `${thresholdPct}%` : '—'}</span>
+          <span className="text-error">Quarantine &lt; {settingsLoaded && gauge ? formatPercent(gauge.threshold, 0) : '—'}</span>
+          <span className="text-secondary">Active ≥ {settingsLoaded && gauge ? formatPercent(gauge.threshold, 0) : '—'}</span>
         </div>
         <div className="relative flex h-4 w-full overflow-hidden rounded-full border border-outline-variant/40 bg-surface-container-high">
-          <div className="h-full bg-error-container/50" style={{ width: `${thresholdPct}%` }}>
+          <div className="h-full bg-error-container/50" style={{ width: cssPercent(gauge?.threshold ?? 0) }}>
             <span className="flex h-full items-center justify-center font-mono text-[9px] font-bold tracking-widest text-on-error-container">
               QUARANTINE
             </span>
@@ -581,7 +586,7 @@ function IsolationProtocol({
           {gauge?.minCrs != null && (
             <span
               className="absolute top-0 h-full w-0.5 bg-on-surface"
-              style={{ left: `${Math.min(100, Math.max(0, Math.round(gauge.minCrs * 100)))}%` }}
+              style={{ left: cssPercent(gauge.minCrs) }}
               aria-hidden="true"
             />
           )}
@@ -597,7 +602,7 @@ function IsolationProtocol({
           <p className="flex items-center gap-1 font-body text-xs text-on-surface-variant">
             Safety margin:{' '}
             <span className={gauge?.margin == null ? 'text-on-surface-variant' : gauge.margin >= 0 ? 'font-semibold text-secondary' : 'font-semibold text-error'}>
-              {gauge?.margin == null ? '—' : signed(gauge.margin)}
+              {gauge?.margin == null ? '—' : formatSignedPercent(gauge.margin)}
             </span>{' '}
             vs quarantine threshold
             <Proof
@@ -653,9 +658,9 @@ function CitationLedger({ nameOf }: { nameOf: (agentId: InvestigatorId) => strin
   }, [params, reload]);
 
   const items = page.data?.items ?? [];
-  const total = page.data?.total;
   const canPrev = offset > 0;
-  const canNext = total?.value != null && offset + items.length < total.value;
+  // The citations endpoint reports no total, so a full page is the only sign that more may follow.
+  const canNext = items.length >= CITE_PAGE_SIZE;
 
   return (
     <section className="space-y-4 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5 shadow-md">
@@ -717,7 +722,9 @@ function CitationLedger({ nameOf }: { nameOf: (agentId: InvestigatorId) => strin
                       : 'hover:bg-surface-card',
                 )}
               >
-                <td className="px-3 py-2.5 font-semibold text-primary">{shortId(row.row_id)}</td>
+                <td className="px-3 py-2.5 font-semibold">
+                  <CopyHash value={row.row_id} display={shortId(row.row_id)} label="cited row id" size="inherit" textClassName="text-primary" />
+                </td>
                 <td className="px-3 py-2.5">
                   <span className="flex items-center gap-2 text-on-surface">
                     <span className={cn('h-1.5 w-1.5 rounded-full', TONE_BAR[AGENT_TONE[row.agent_id]])} aria-hidden="true" />
@@ -729,7 +736,9 @@ function CitationLedger({ nameOf }: { nameOf: (agentId: InvestigatorId) => strin
                     {row.field}={row.value ?? '∅'}
                   </span>
                   <span className="block text-[10px] uppercase text-outline">
-                    inv {shortId(row.investigation_id)} · r{row.round}
+                    inv{' '}
+                    <CopyHash value={row.investigation_id} display={shortId(row.investigation_id)} label="investigation id" size="inherit" textClassName="text-outline" /> · r
+                    {formatCount(row.round)}
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-[11px]">
@@ -773,9 +782,14 @@ function CitationLedger({ nameOf }: { nameOf: (agentId: InvestigatorId) => strin
 
       <div className="flex flex-col justify-between gap-2 border-t border-outline-variant/30 pt-2 font-mono text-[10px] text-on-surface-variant sm:flex-row sm:items-center">
         <span className="inline-flex items-center gap-2">
-          Displaying {items.length} of
-          <Metric size="body" label="Total citations matching the filter" metric={total} />
-          checked citations
+          Displaying {formatCountNoun(items.length, 'checked citation')}
+          <Proof
+            source="GET /citations"
+            n={items.length}
+            asOf={page.loadedAt}
+            label="Citations shown"
+            definition={`Rows returned for the current status filter and page (limit ${formatCount(CITE_PAGE_SIZE)}, offset ${formatCount(offset)}). The citations endpoint reports no total count, so none is shown; Next is offered when a full page came back.`}
+          />
           {page.error && <span className="text-error">· {page.error}</span>}
         </span>
         <div className="flex items-center gap-1.5">
@@ -787,7 +801,9 @@ function CitationLedger({ nameOf }: { nameOf: (agentId: InvestigatorId) => strin
           >
             Previous
           </button>
-          <span className="px-2 font-bold text-primary">offset {offset}</span>
+          <span className="px-2 font-bold text-primary">
+            rows {formatCount(offset + 1)}–{formatCount(offset + items.length)}
+          </span>
           <button
             type="button"
             disabled={!canNext}
@@ -918,7 +934,6 @@ function PolicyConfigurator({
               step={0.01}
               accent="primary"
               display={(value) => formatNumber(value, 2)}
-              ticks={['0.01', '0.15', '0.50']}
               disabled={draft === null}
               onChange={(value) => setDraft((prev) => (prev ? { ...prev, eta: value } : prev))}
               proof="GET /settings.eta · PUT /settings"
@@ -926,14 +941,13 @@ function PolicyConfigurator({
             />
             <PolicySlider
               label="Isolation threshold"
-              description="CrS below this value after a round quarantines the investigator for the rest of the debate."
+              description="CrS below this value after a round quarantines the investigator until an analyst restores it."
               value={draft?.isolation_threshold ?? 0}
               min={0.05}
               max={0.45}
               step={0.01}
               accent="secondary"
               display={(value) => formatPercent(value, 0)}
-              ticks={['5%', '25%', '45%']}
               disabled={draft === null}
               onChange={(value) => setDraft((prev) => (prev ? { ...prev, isolation_threshold: value } : prev))}
               proof="GET /settings.isolation_threshold · PUT /settings"
@@ -948,7 +962,6 @@ function PolicyConfigurator({
               step={0.01}
               accent="primary"
               display={(value) => formatPercent(value, 0)}
-              ticks={['50%', '80%', '99%']}
               disabled={draft === null}
               onChange={(value) => setDraft((prev) => (prev ? { ...prev, verdict_confidence_threshold: value } : prev))}
               proof="GET /settings.verdict_confidence_threshold · PUT /settings"
@@ -961,7 +974,7 @@ function PolicyConfigurator({
               <Icon name="verified_user" size={16} className="text-primary" />
               <span>
                 Last changed by {settingsUpdatedBy ?? 'system'}
-                {settingsUpdatedAt ? ` · ${formatTimestamp(settingsUpdatedAt)}` : ' · not yet changed'}
+                {settingsUpdatedAt ? <> · <Timestamp iso={settingsUpdatedAt} /></> : ' · not yet changed'}
               </span>
             </div>
             <div className="flex items-center gap-3">
@@ -1008,7 +1021,6 @@ function PolicySlider({
   step,
   accent,
   display,
-  ticks,
   disabled,
   onChange,
   proof,
@@ -1022,7 +1034,6 @@ function PolicySlider({
   step: number;
   accent: 'primary' | 'secondary';
   display: (value: number) => string;
-  ticks: [string, string, string];
   disabled: boolean;
   onChange: (value: number) => void;
   proof: string;
@@ -1054,9 +1065,10 @@ function PolicySlider({
           )}
         />
         <div className="flex justify-between font-mono text-[9px] text-on-surface-variant">
-          <span>{ticks[0]}</span>
-          <span>{ticks[1]}</span>
-          <span>{ticks[2]}</span>
+          {/* The ends and the middle of the track, formatted like the value, so a tick is what the slider reads there. */}
+          <span>{display(min)}</span>
+          <span>{display((min + max) / 2)}</span>
+          <span>{display(max)}</span>
         </div>
       </div>
     </div>

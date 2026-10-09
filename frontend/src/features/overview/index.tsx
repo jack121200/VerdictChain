@@ -12,17 +12,18 @@ import {
   listRecentRawLogs,
   listScenarios,
 } from '../../api/client';
-import type { CitationStatus, Metric as MetricEnvelope, RawLogRow } from '../../api/types';
+import type { CitationStatus, Metric as MetricEnvelope } from '../../api/types';
 import { useAsync } from '../../app/use-async';
 import { buildRoute } from '../../app/router';
 import { cn } from '../../lib/cn';
-import { formatCount, formatDuration, formatNumber, formatPercent } from '../../lib/format';
+import { cssPercent, formatCount, formatCountNoun, formatDuration, formatNumber, formatOutOf, formatPercent } from '../../lib/format';
 import { AgentChip } from '../../ui/AgentChip';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
 import type { IconName } from '../../ui/icon-names';
 import { Metric } from '../../ui/Metric';
 import { Proof } from '../../ui/Proof';
+import { Timestamp } from '../../ui/Timestamp';
 import { deriveMeanLatencyMs } from './derive';
 
 const percent = (value: number): string => formatPercent(value, 1);
@@ -142,11 +143,6 @@ function CitationPin({ investigationId }: { investigationId: string }) {
       )}
     </div>
   );
-}
-
-function rawLogTime(row: RawLogRow): string {
-  if (row.timestamp && row.timestamp.length >= 19) return row.timestamp.substring(11, 23);
-  return row.timestamp ?? row.row_id;
 }
 
 export default function OverviewPage() {
@@ -310,7 +306,9 @@ export default function OverviewPage() {
                                 critical ? 'border-error/30 bg-error-container/40 text-on-error-container' : 'border-outline-variant/20 bg-surface-container/70 text-on-surface',
                               )}
                             >
-                              <span className="text-tertiary">[{rawLogTime(row)}]</span>{' '}
+                              <span className="text-tertiary">
+                                [<Timestamp iso={row.timestamp} mode="clock" />]
+                              </span>{' '}
                               <span className={cn('font-semibold', critical ? 'text-error' : 'text-secondary')}>{row.event_type ?? row.source}</span>
                               {row.user_id ? <span className="text-on-surface-variant"> user={row.user_id}</span> : null}
                               {row.host_id ? <span className="text-on-surface-variant"> host={row.host_id}</span> : null}
@@ -337,11 +335,11 @@ export default function OverviewPage() {
                       </span>
                     </div>
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-container-highest">
-                      <div className="h-full bg-linear-to-r from-primary to-secondary" style={{ width: `${(latestConfidence ?? 0) * 100}%` }} />
+                      <div className="h-full bg-linear-to-r from-primary to-secondary" style={{ width: cssPercent(latestConfidence ?? 0) }} />
                     </div>
                     <div className="flex justify-between font-mono text-[9px] text-on-surface-variant">
                       <span>{latestItem ? `class: ${latestItem.verdict_class ?? 'pending'}` : 'no investigations'}</span>
-                      <span>{latestItem ? `rounds: ${latestItem.rounds_complete}/${settings.data?.debate_rounds ?? '—'}` : '—'}</span>
+                      <span>{latestItem ? `rounds: ${formatOutOf(latestItem.rounds_complete, settings.data?.debate_rounds)}` : '—'}</span>
                     </div>
                   </div>
                 </div>
@@ -467,7 +465,7 @@ export default function OverviewPage() {
             <div className="absolute inset-0 bg-linear-to-t from-background via-transparent to-transparent" />
             <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between font-mono text-[10px] text-on-surface">
               <span className="rounded border border-outline-variant/40 bg-surface/90 px-2 py-1 text-secondary backdrop-blur-sm">
-                {scenarios.data ? `${scenarios.data.length} scenario labels` : 'scenarios loading'}
+                {scenarios.data ? formatCountNoun(scenarios.data.length, 'scenario label') : 'scenarios loading'}
               </span>
               <span className="rounded border border-outline-variant/40 bg-surface/90 px-2 py-1 text-primary backdrop-blur-sm">
                 Agents never see the label (blind test)
@@ -497,7 +495,11 @@ export default function OverviewPage() {
                   </div>
                   <p className="font-body text-xs text-on-surface-variant">{scenario.description}</p>
                   <div className="mt-auto flex items-center justify-between border-t border-outline-variant/40 pt-2">
-                    <AgentChip agentId={scenario.primary_agent} name={scenario.primary_agent} />
+                    {scenario.primary_agent ? (
+                      <AgentChip agentId={scenario.primary_agent} name={scenario.primary_agent} />
+                    ) : (
+                      <span className="font-mono text-[10px] text-on-surface-variant">no rows ingested for this label</span>
+                    )}
                     <Metric metric={scenario.row_count} size="body" label={`${scenario.label} rows`} />
                   </div>
                 </div>

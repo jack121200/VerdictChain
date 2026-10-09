@@ -17,8 +17,9 @@ import { useAsync } from '../../app/use-async';
 import { buildRoute, type SimpleRouteName } from '../../app/router';
 import { cn } from '../../lib/cn';
 import { ROLE_LABEL } from '../../lib/labels';
-import { formatDuration, formatNumber, formatTimestamp, shortId } from '../../lib/format';
+import { formatCountNoun, formatDuration, formatNumber, shortId } from '../../lib/format';
 import { Button } from '../../ui/Button';
+import { CopyHash } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
 import type { IconName } from '../../ui/icon-names';
@@ -26,6 +27,7 @@ import { Metric } from '../../ui/Metric';
 import { Proof } from '../../ui/Proof';
 import { Select } from '../../ui/Select';
 import { Table, type TableColumn } from '../../ui/Table';
+import { Timestamp } from '../../ui/Timestamp';
 import { Toggle } from '../../ui/Toggle';
 import { pushToast } from '../../ui/toast-store';
 
@@ -182,7 +184,7 @@ function UserManagement() {
 
   const columns: readonly TableColumn<(typeof rows)[number]>[] = [
     { key: 'username', header: 'Analyst', cell: (row) => row.username },
-    { key: 'id', header: 'ID', cell: (row) => shortId(row.analyst_id), mono: true },
+    { key: 'id', header: 'ID', cell: (row) => <CopyHash value={row.analyst_id} display={shortId(row.analyst_id)} label={`analyst id of ${row.username}`} size="inherit" />, mono: true },
     {
       key: 'role',
       header: 'Role',
@@ -229,11 +231,11 @@ function EmergencyContainment() {
     try {
       if (kind === 'run') {
         const result = await emergencyContainment(target);
-        setNote(`Containment ran: ${result.actions.length} sandboxed action(s). Status ${result.status}.`);
+        setNote(`Containment ran: ${formatCountNoun(result.actions.length, 'sandboxed action')}. Status ${result.status}.`);
         pushToast('Sandboxed containment recorded.', { tone: 'secondary' });
       } else {
         const result = await releaseContainment(target);
-        setNote(`Released: ${result.released.length} action(s) reverted. Status ${result.status}.`);
+        setNote(`Released: ${formatCountNoun(result.released.length, 'action')} reverted. Status ${result.status}.`);
         pushToast('Containment released.', { tone: 'secondary' });
       }
     } catch (cause) {
@@ -374,8 +376,13 @@ export default function AccessPage() {
               ) : null}
             </div>
             <p className="mt-0.5 font-mono text-xs text-on-surface-variant">
-              id <code className="text-on-surface">{me.data ? shortId(me.data.analyst_id) : '—'}</code> • session expires{' '}
-              <code className="text-on-surface">{me.data ? formatTimestamp(me.data.token_expires_at) : '—'}</code>
+              id{' '}
+              {me.data ? (
+                <CopyHash value={me.data.analyst_id} display={shortId(me.data.analyst_id)} label="analyst id" size="inherit" />
+              ) : (
+                <code className="text-on-surface">—</code>
+              )}{' '}
+              • session expires <Timestamp iso={me.data?.token_expires_at} future className="text-on-surface" />
             </p>
           </div>
         </div>
@@ -440,6 +447,20 @@ export default function AccessPage() {
                 </div>
                 <Field label="Sandbox violations">
                   <Metric metric={status.data?.sandbox.is_simulated_violations} size="body" label="Sandbox violations" />
+                </Field>
+                <Field label="Continuous ingestion">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="text-on-surface">
+                      {status.data === undefined ? '—' : status.data.continuous_mode ? 'on' : 'off · manual injection only'}
+                    </span>
+                    <Proof
+                      source="GET /system/status (continuous_mode)"
+                      n={1}
+                      asOf={status.loadedAt}
+                      label="Continuous ingestion"
+                      definition="Whether logs are streamed into the debate on their own. It is off: a debate starts only when an analyst injects a scenario, and the Watchdog scores each round of that debate."
+                    />
+                  </span>
                 </Field>
                 <Field label="Migration head">
                   <span className="text-on-surface">{status.data?.migration_head ?? '—'}</span>

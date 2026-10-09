@@ -17,6 +17,8 @@ import type {
   InvestigationSummary,
   InvestigationSummaryWire,
   Metric,
+  LiveActionWire,
+  LiveTurnWire,
   ResponseAction,
   RoundAgentTurn,
   Vote,
@@ -83,6 +85,74 @@ export function groupRounds(debate: DebateRoundWire[], credibility: CredibilityW
 }
 
 /** The server sends each agent's latest vote. confidence is that agent's confidence in the same round. */
+/** The CrS after a round, from the score dict a round_completed frame carries (or a bare number). */
+function crsAfterOf(raw: LiveTurnWire['credibility']): number | null {
+  if (typeof raw === 'number') return raw;
+  if (raw && typeof raw === 'object' && typeof raw.crs_after === 'number') return raw.crs_after;
+  return null;
+}
+
+/**
+ * A live-frame turn in the model shape. `fallbackCrs` fills the credibility of a snapshot turn from the
+ * snapshot's own credibility rows; a stance the frame does not carry stays null (the browser never parses theory text).
+ */
+export function toLiveTurn(raw: LiveTurnWire, fallbackCrs: number | null = null): RoundAgentTurn {
+  return {
+    agent_id: raw.agent_id,
+    theory: raw.theory,
+    confidence: raw.confidence,
+    stance: raw.stance ?? null,
+    provider: raw.provider ?? null,
+    cited_evidence: raw.cited_evidence,
+    credibility: crsAfterOf(raw.credibility) ?? fallbackCrs,
+  };
+}
+
+/** The credibility row a round_completed frame implies for one agent, or null when it carried no score dict. */
+export function creditRowFromFrame(
+  investigationId: string,
+  round: number,
+  raw: LiveTurnWire,
+): CredibilityRow | null {
+  const score = raw.credibility;
+  if (!score || typeof score !== 'object') return null;
+  return {
+    investigation_id: investigationId,
+    agent_id: raw.agent_id,
+    round,
+    crs_before: score.crs_before,
+    crs_after: score.crs_after,
+    verification_match_rate: score.verification_match_rate ?? 0,
+    isolated: score.isolated ?? false,
+    created_at: '',
+  };
+}
+
+/** Snapshot credibility rows in the model shape. The rows are keyed by agent and round, so no id is needed. */
+export function toLiveCredibility(
+  rows: Array<Omit<CredibilityRow, 'investigation_id' | 'created_at'> & Partial<CredibilityRow>>,
+  investigationId: string,
+): CredibilityRow[] {
+  return rows.map((row) => ({
+    ...row,
+    investigation_id: row.investigation_id ?? investigationId,
+    created_at: row.created_at ?? '',
+  }));
+}
+
+/** Actions in the model shape. A row without an id (the snapshot) gets a stable key from its position. */
+export function toLiveActions(raw: LiveActionWire[], investigationId: string): ResponseAction[] {
+  return raw.map((action, index) => ({
+    id: action.id ?? `${investigationId}:${index}`,
+    investigation_id: action.investigation_id ?? investigationId,
+    action_type: action.action_type,
+    target: action.target,
+    reason: action.reason,
+    is_simulated: action.is_simulated,
+    created_at: action.created_at ?? '',
+  }));
+}
+
 export function toVotes(votes: AgentVoteWire[], debate: DebateRoundWire[]): Vote[] {
   return votes.map((vote) => {
     const turn = debate.find((row) => row.agent_id === vote.agent_id && row.round === vote.round);

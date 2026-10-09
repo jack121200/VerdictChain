@@ -28,10 +28,12 @@ import { AGENT_VISUALS } from '../../lib/agents';
 import { cn } from '../../lib/cn';
 import { meanSupporterConfidence, quorumFromVotes, verifyVerdictConfidence } from '../../lib/derive/verdict';
 import { verifyEvidenceBundleHash } from '../../lib/derive/hash';
-import { formatPercent, formatTimestamp, shortId } from '../../lib/format';
+import { formatCount, formatCountNoun, formatPercent, formatSignedPercent, shortId } from '../../lib/format';
 import type { PageProps } from '../index';
 import { DebateList } from './List';
 import { Button } from '../../ui/Button';
+import { HintStrip } from '../../ui/HintStrip';
+import { Timestamp } from '../../ui/Timestamp';
 import type { Tone } from '../../ui/classes';
 import { CopyHash } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
@@ -46,7 +48,9 @@ import {
   citationMeta,
   earliestCitedTimestamp,
   emptyDebate,
+  INPUT_BASIS_LABEL,
   fromDetail,
+  laneAbsence,
   laneFor,
   mostCitedValue,
   providersUsed,
@@ -95,6 +99,12 @@ const TONE_PILL: Record<Tone | 'neutral', string> = {
 };
 
 const PERCENT1 = (value: number) => formatPercent(value, 1);
+
+const ROOM_HINT = [
+  'Read it top to bottom: the case banner and round progress, the Watchdog’s check of every cited row, one lane per investigator with its theory and credibility, the transcript, and the aggregator’s vote.',
+  'Theories, confidence and stance come from the agents (confidence is self-reported, not accuracy); VERIFIED, DISCREPANCY and INVALID_ROW are the Watchdog’s own result from re-reading raw_logs.',
+  'The verdict confidence is recomputed in your browser from the votes and compared with the server’s value; a finished case is replayed from stored rows, with no call to a model provider.',
+] as const;
 const DEFAULT_TOTAL_ROUNDS = 3;
 
 type RoundFilter = 'all' | number;
@@ -264,6 +274,8 @@ function DebateRoom({ id }: { id: string }) {
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-6">
       <div className="flex w-full flex-col gap-4 text-on-surface">
+        <HintStrip pageId="debate-room" sentences={ROOM_HINT} />
+
         {/* 1. Case banner */}
         <section className="relative overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-low p-4 shadow-xl backdrop-blur-md sm:p-5">
           <div aria-hidden="true" className="absolute inset-x-0 top-0 h-0.5 bg-linear-to-r from-primary via-secondary to-tertiary" />
@@ -300,12 +312,13 @@ function DebateRoom({ id }: { id: string }) {
               </div>
 
               <h1 className="font-headline text-2xl font-bold tracking-tight text-on-surface sm:text-3xl">
-                {debate.verdictClass ? VERDICT_LABEL[debate.verdictClass] : 'Multi-agent adjudication'} · {domainName} · {citedTotal} cited rows
+                {debate.verdictClass ? VERDICT_LABEL[debate.verdictClass] : 'Multi-agent adjudication'} · {domainName} · {formatCountNoun(citedTotal, 'cited row', 'cited rows')}
               </h1>
 
               <p className="flex flex-wrap items-center gap-2 font-body text-xs text-on-surface-variant sm:text-sm">
                 <span className="inline-flex items-center gap-1">
-                  case <span className="font-mono text-primary">{shortId(investigationId)}</span>
+                  case{' '}
+                  <CopyHash value={investigationId} display={shortId(investigationId)} label="investigation id" size="inherit" textClassName="text-primary" className="font-mono" />
                 </span>
                 <span className="text-outline-variant">•</span>
                 <span className="inline-flex items-center gap-1">
@@ -318,14 +331,18 @@ function DebateRoom({ id }: { id: string }) {
                 <span className="text-outline-variant">•</span>
                 <span className="inline-flex items-center gap-1">
                   trigger <span className="font-mono text-on-surface">{meta?.trigger_type ?? '—'}</span>
-                  {triggerTime && <span className="font-mono text-on-surface-variant">· {formatTimestamp(triggerTime)}</span>}
+                  {triggerTime && (
+                    <span className="font-mono text-on-surface-variant">
+                      · <Timestamp iso={triggerTime} mode="absolute" />
+                    </span>
+                  )}
                 </span>
                 <Proof
                   source="GET /investigations/{id} · GET /investigations/{id}/citations"
                   n={citedTotal}
                   asOf={loadedAt}
                   label="Case attribution"
-                  definition="Title = verdict class label · primary-agent domain · cited-row count. Subject and host are the most-cited user_id and host_id; trigger is the stored trigger_type and the earliest cited timestamp. No case number is invented."
+                  definition="Title = verdict class label · primary-agent domain · cited-row count. Subject and host are the most-cited user_id and host_id across VERIFIED citations (a tie is broken by the lexicographically smallest value); trigger is the stored trigger_type and the earliest verified cited timestamp. No case number is invented."
                 />
               </p>
             </div>
@@ -513,6 +530,9 @@ function AgentPod({ entry, debate, loadedAt }: { entry: FleetEntry; debate: Live
   const crsAfter = credRow.length > 0 ? credRow[credRow.length - 1].crs_after : entry.crs.value;
   const stance = lane.latest?.stance ?? null;
   const confidences = lane.turns.map((turn) => turn.turn.confidence);
+  const absence = laneAbsence(lane, entry.isolated, debate.status);
+  const basis = debate.inputBasis[entry.agent_id];
+  const basisWords = basis ? INPUT_BASIS_LABEL[basis.basis] : undefined;
 
   return (
     <div className={cn('relative flex flex-col rounded-xl border border-outline-variant/40 bg-surface-container-low p-4 shadow-lg transition-all', TONE_HOVER[tone])}>
@@ -537,54 +557,88 @@ function AgentPod({ entry, debate, loadedAt }: { entry: FleetEntry; debate: Live
         )}
       </div>
 
-      {/* Confidence trajectory */}
-      <div className="mb-3 flex items-center justify-between rounded-lg border border-outline-variant/20 bg-background p-2 font-mono text-xs">
-        <span className="text-[10px] text-on-surface-variant">Confidence trajectory</span>
-        <span className="flex items-center gap-2">
-          <span className="text-[11px] text-on-surface-variant line-through">{lane.firstConfidence === null ? '—' : PERCENT1(lane.firstConfidence)}</span>
-          <span className={cn('font-bold', TONE_TEXT[tone])}>{lane.latestConfidence === null ? '—' : PERCENT1(lane.latestConfidence)}</span>
-          <Proof
-            source="GET /investigations/{id} (rounds[].agents[].confidence)"
-            n={confidences.length}
-            asOf={loadedAt}
-            label="Confidence trajectory"
-            definition="First-round to latest-round self-reported confidence for this agent. Self-reported, not calibrated accuracy (R4)."
-          />
-        </span>
-      </div>
-
-      {confidences.length > 0 && (
-        <div className="mb-3">
-          <Sparkline values={confidences} min={0} max={1} tone={tone} width={260} height={32} className="w-full" label="Confidence by round" />
+      {absence !== null ? (
+        <div
+          role="note"
+          className={cn(
+            'mb-1 flex items-start gap-2 rounded-lg border p-3 font-body text-xs leading-relaxed',
+            absence === 'quarantined' ? TONE_PILL.error : TONE_PILL.neutral,
+          )}
+        >
+          <Icon name={absence === 'quarantined' ? 'warning' : 'info'} size={16} className="mt-0.5 shrink-0" />
+          <span>
+            {absence === 'quarantined'
+              ? 'Quarantined: did not take part in this debate'
+              : 'Did not take part in this debate: no transcript turns were recorded for this agent.'}
+          </span>
         </div>
+      ) : (
+        <>
+          {basis && basisWords && (
+            <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[10px] text-on-surface-variant">
+              <span>
+                Data slice: <strong className="text-on-surface">{basisWords.label}</strong> · {basis.row_count} row
+                {basis.row_count === 1 ? '' : 's'}
+              </span>
+              <Proof
+                source="GET /investigations/{id} (input_basis)"
+                n={basis.row_count}
+                asOf={loadedAt}
+                label={`Data slice, ${entry.display_name}`}
+                definition={basisWords.detail}
+              />
+            </div>
+          )}
+          {/* Confidence trajectory */}
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-outline-variant/20 bg-background p-2 font-mono text-xs">
+            <span className="text-[10px] text-on-surface-variant">Confidence trajectory</span>
+            <span className="flex items-center gap-2">
+              <span className="text-[11px] text-on-surface-variant line-through">{lane.firstConfidence === null ? '—' : PERCENT1(lane.firstConfidence)}</span>
+              <span className={cn('font-bold', TONE_TEXT[tone])}>{lane.latestConfidence === null ? '—' : PERCENT1(lane.latestConfidence)}</span>
+              <Proof
+                source="GET /investigations/{id} (rounds[].agents[].confidence)"
+                n={confidences.length}
+                asOf={loadedAt}
+                label="Confidence trajectory"
+                definition="First-round to latest-round self-reported confidence for this agent. Self-reported, not calibrated accuracy (R4)."
+              />
+            </span>
+          </div>
+
+          {confidences.length > 0 && (
+            <div className="mb-3">
+              <Sparkline values={confidences} min={0} max={1} tone={tone} width={260} height={32} className="w-full" label="Confidence by round" />
+            </div>
+          )}
+
+          {/* Theory + stance */}
+          <div className="mb-3 flex flex-col gap-1">
+            <span className={cn('font-mono text-[10px] font-bold uppercase tracking-wider', TONE_TEXT[tone])}>{stanceLabel(stance)}</span>
+            <p className="rounded-lg border border-outline-variant/30 bg-surface-container p-2.5 font-body text-xs leading-relaxed text-on-surface">
+              {lane.latest ? lane.latest.theory : 'No theory recorded for this agent yet.'}
+            </p>
+          </div>
+
+          {/* Credibility + citations */}
+          <div className="mt-auto flex items-center justify-between border-t border-outline-variant/30 pt-2 font-mono text-[10px] text-on-surface-variant">
+            <span className="inline-flex items-center gap-1.5">
+              <Ring value={crsAfter} tone={tone} size={28} strokeWidth={3} label={`Credibility, ${entry.display_name}`} />
+              CrS {crsBefore === null ? '—' : PERCENT1(crsBefore)} →{' '}
+              <span className={TONE_TEXT[tone]}>{crsAfter === null ? '—' : PERCENT1(crsAfter)}</span>
+              <Proof
+                source="GET /investigations/{id} (credibility) · GET /agents/fleet (crs)"
+                n={credRow.length}
+                asOf={loadedAt}
+                label="Credibility change"
+                definition="crs_before of this agent's first scored round to crs_after of its latest scored round in this case. The ring shows the live fleet CrS."
+              />
+            </span>
+            <span>
+              {formatCountNoun(lane.citedCount, 'cited row', 'cited rows')}
+            </span>
+          </div>
+        </>
       )}
-
-      {/* Theory + stance */}
-      <div className="mb-3 flex flex-col gap-1">
-        <span className={cn('font-mono text-[10px] font-bold uppercase tracking-wider', TONE_TEXT[tone])}>{stanceLabel(stance)}</span>
-        <p className="rounded-lg border border-outline-variant/30 bg-surface-container p-2.5 font-body text-xs leading-relaxed text-on-surface">
-          {lane.latest ? lane.latest.theory : 'No theory recorded for this agent yet.'}
-        </p>
-      </div>
-
-      {/* Credibility + citations */}
-      <div className="mt-auto flex items-center justify-between border-t border-outline-variant/30 pt-2 font-mono text-[10px] text-on-surface-variant">
-        <span className="inline-flex items-center gap-1.5">
-          <Ring value={crsAfter} tone={tone} size={28} strokeWidth={3} label={`Credibility, ${entry.display_name}`} />
-          CrS {crsBefore === null ? '—' : PERCENT1(crsBefore)} →{' '}
-          <span className={TONE_TEXT[tone]}>{crsAfter === null ? '—' : PERCENT1(crsAfter)}</span>
-          <Proof
-            source="GET /investigations/{id} (credibility) · GET /agents/fleet (crs)"
-            n={credRow.length}
-            asOf={loadedAt}
-            label="Credibility change"
-            definition="crs_before of this agent's first scored round to crs_after of its latest scored round in this case. The ring shows the live fleet CrS."
-          />
-        </span>
-        <span>
-          {lane.citedCount} cited {lane.citedCount === 1 ? 'row' : 'rows'}
-        </span>
-      </div>
     </div>
   );
 }
@@ -667,7 +721,7 @@ function Transcript({ rounds, filter, onFilter, totalRounds, agentName, running,
                 <div className="flex items-center gap-1.5 border-t border-outline-variant/20 pt-1 font-mono text-[10px] text-on-surface-variant">
                   <Icon name="verified_user" size={12} className="text-secondary" />
                   <span>
-                    {agent.cited_evidence.length} cited {agent.cited_evidence.length === 1 ? 'row' : 'rows'}
+                    {formatCountNoun(agent.cited_evidence.length, 'cited row', 'cited rows')}
                     {agent.cited_evidence.length > 0 && <>: {agent.cited_evidence.map((cite) => `#${cite.row_id}`).join(', ')}</>}
                     {agent.provider && <span className="text-outline"> · {agent.provider}</span>}
                   </span>
@@ -771,10 +825,7 @@ function Aggregator({
             <span className="mt-1 inline-flex items-center gap-1.5 font-mono text-[10px] text-on-surface-variant">
               threshold {consensusThreshold === null ? '—' : PERCENT1(consensusThreshold)}
               {delta !== null && (
-                <strong className={delta >= 0 ? 'text-secondary' : 'text-error'}>
-                  ({delta >= 0 ? '+' : ''}
-                  {PERCENT1(delta)})
-                </strong>
+                <strong className={delta >= 0 ? 'text-secondary' : 'text-error'}>({formatSignedPercent(delta, 1)})</strong>
               )}
               <Proof
                 source="browser recompute of GET /investigations/{id} votes + verdict_confidence"
@@ -783,7 +834,7 @@ function Aggregator({
                 label="Calculated confidence"
                 definition="Mean of the supporting agents' self-reported confidence (browser recompute). It must equal the server verdict_confidence; a mismatch shows a red integrity badge. Agent-reported, not accuracy."
                 inputs={[
-                  { label: 'supporters (n)', value: String(supporters.n) },
+                  { label: 'supporters (n)', value: formatCount(supporters.n) },
                   { label: 'server value', value: debate.verdictConfidence === null ? '—' : PERCENT1(debate.verdictConfidence) },
                   { label: 'browser recompute', value: confidenceCheck },
                 ]}
@@ -817,19 +868,34 @@ function Aggregator({
               n={debate.votes.length}
               asOf={loadedAt}
               label="Per-agent votes"
-              definition="Each agent's server-classified verdict class, its self-reported confidence and the keywords matched by classify_theory. There are no vote weights in the system."
+              definition="Each agent's server-classified verdict class, its self-reported confidence and the keywords matched by classify_theory. An agent the Watchdog isolated during the investigation is shown but not counted (counted: false). There are no vote weights in the system."
             />
           </div>
           {debate.votes.length === 0 ? (
             <span className="text-on-surface-variant">No votes recorded yet.</span>
           ) : (
             debate.votes.map((vote: Vote) => (
-              <div key={vote.agent_id} className="flex items-center justify-between gap-2 border-t border-outline-variant/20 pt-1.5 first:border-t-0 first:pt-0">
+              <div
+                key={vote.agent_id}
+                className={cn(
+                  'flex items-center justify-between gap-2 border-t border-outline-variant/20 pt-1.5 first:border-t-0 first:pt-0',
+                  vote.counted === false && 'opacity-60',
+                )}
+              >
                 <span className="inline-flex items-center gap-1 text-on-surface">
                   <span className="font-bold">{AGENT_VISUALS[vote.agent_id].glyph}</span>
                   {agentName(vote.agent_id)}
+                  {vote.counted === false && (
+                    <span
+                      title="The Watchdog isolated this agent during the investigation, so the verdict leaves its vote out."
+                      className="ml-1 inline-flex items-center gap-0.5 rounded border border-error/40 px-1 text-[9px] font-bold uppercase text-error"
+                    >
+                      <Icon name="warning" size={10} />
+                      not counted · isolated
+                    </span>
+                  )}
                 </span>
-                <span className="text-on-surface-variant">
+                <span className={cn('text-on-surface-variant', vote.counted === false && 'line-through')}>
                   {vote.verdict_class ?? 'no class'}
                   {vote.confidence !== null && <span className="text-on-surface"> · {PERCENT1(vote.confidence)}</span>}
                 </span>
@@ -849,7 +915,7 @@ function Aggregator({
           </p>
           <p className="font-mono text-[11px] text-on-surface-variant">
             class <span className="text-on-surface">{debate.verdictClass ?? '—'}</span> · status{' '}
-            <span className="text-on-surface">{debate.status ?? '—'}</span> · {supporters.n} supporter{supporters.n === 1 ? '' : 's'} · {citedTotal} cited rows
+            <span className="text-on-surface">{debate.status ?? '—'}</span> · {formatCountNoun(supporters.n, 'supporter')} · {formatCountNoun(citedTotal, 'cited row', 'cited rows')}
           </p>
         </div>
 

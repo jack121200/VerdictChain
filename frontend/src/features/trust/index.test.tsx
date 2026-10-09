@@ -132,4 +132,56 @@ describe('TrustPage', () => {
       expect(client.listCitations).toHaveBeenCalledWith(expect.objectContaining({ status: 'DISCREPANCY', offset: 0 })),
     );
   });
+
+  it('derives the slider ticks from the range of each slider', async () => {
+    setup({ capabilities: ['edit_settings'] });
+    render(<TrustPage />);
+    await screen.findByLabelText('Learning rate η');
+    // Isolation threshold ranges 5% to 45%, so its ticks are 5%, 25% and 45%.
+    const isolation = screen.getByLabelText('Isolation threshold').parentElement as HTMLElement;
+    expect(isolation.textContent).toContain('5%');
+    expect(isolation.textContent).toContain('25%');
+    expect(isolation.textContent).toContain('45%');
+    // Verdict floor ranges 50% to 99%: the middle tick is the real middle (about 75%), not a typed 80%.
+    const floor = screen.getByLabelText('Verdict confidence floor').parentElement as HTMLElement;
+    expect(floor.textContent).toContain('50%');
+    expect(floor.textContent).toContain('75%');
+    expect(floor.textContent).toContain('99%');
+  });
+
+  it('puts copy buttons on the shortened row and investigation ids in the citation ledger', async () => {
+    setup();
+    render(<TrustPage />);
+    await screen.findByText('row98765');
+    expect(screen.getByRole('button', { name: 'Copy cited row id' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy investigation id' })).toBeTruthy();
+    expect(screen.getByText('row98765').getAttribute('title')).toBe('row98765-abc');
+  });
+
+  it('offers the next ledger page only when a full page came back, because the endpoint reports no total', async () => {
+    setup();
+    const full = Array.from({ length: 20 }, (_, index) => ({ ...citation, row_id: `row-${String(index).padStart(2, '0')}-zzzzzzzz` }));
+    client.listCitations.mockResolvedValue({ items: full, total: metric(null, 'the citations endpoint pages without a total count'), limit: 20, offset: 0 });
+    render(<TrustPage />);
+    await screen.findByText('row-00-zz'.slice(0, 8));
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText('rows 1–20')).toBeTruthy();
+  });
+
+  it('shows when the thresholds last changed as a relative time with the exact time in the tooltip', async () => {
+    setup({ capabilities: ['edit_settings'] });
+    client.getSettings.mockResolvedValue({ ...settings, updated_at: '2026-10-05T10:00:00Z', updated_by: 'lead' });
+    const { container } = render(<TrustPage />);
+    await screen.findByText(/Last changed by lead/);
+    expect(container.querySelector('time[datetime="2026-10-05T10:00:00Z"]')?.getAttribute('title')).toBe('2026-10-05 10:00:00 UTC');
+  });
+
+  it('shows a dismissible how-to-read hint', async () => {
+    setup();
+    render(<TrustPage />);
+    expect(screen.getByText('How to read this page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss how-to-read hint' }));
+    expect(screen.queryByText('How to read this page')).toBeNull();
+    expect(window.localStorage.getItem('vc-hint-dismissed:trust')).toBe('1');
+  });
 });

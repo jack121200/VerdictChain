@@ -3,6 +3,8 @@
  * of API fields; the Proof popover shows the formula and these inputs. Nothing is invented.
  */
 import type { AuditEntry, Citation } from '../../api/types';
+import { isVerifiedClaim } from '../../lib/derive/citations';
+import { topByCount, type Tally } from '../../lib/tally';
 
 /** Field names, lower-cased, that identify the subject user in a cited row. */
 const USER_FIELDS: ReadonlySet<string> = new Set(['user_id', 'user', 'username', 'actor']);
@@ -19,10 +21,7 @@ export const SELF_HEALING_ACTIONS: ReadonlySet<string> = new Set([
   'trigger_audit',
 ]);
 
-export interface Tally {
-  value: string;
-  count: number;
-}
+export type { Tally };
 
 export interface Attribution {
   /** Most-cited user field value across the citations, or null when none was cited. */
@@ -35,26 +34,22 @@ export interface Attribution {
   citationCount: number;
 }
 
-/** Picks the most frequent value for the fields in `names`; ties keep the first seen. */
+/** Picks the most frequent VERIFIED value for the fields in `names`; a tie goes to the lexicographically smallest value. */
 function topValue(citations: readonly Citation[], names: ReadonlySet<string>): Tally | null {
   const counts = new Map<string, number>();
   for (const citation of citations) {
-    if (citation.value === null) continue;
+    if (citation.value === null || !isVerifiedClaim(citation)) continue;
     if (!names.has(citation.field.toLowerCase())) continue;
     counts.set(citation.value, (counts.get(citation.value) ?? 0) + 1);
   }
-  let best: Tally | null = null;
-  for (const [value, count] of counts) {
-    if (best === null || count > best.count) best = { value, count };
-  }
-  return best;
+  return topByCount(counts);
 }
 
 /** Derives the attributed subject, host and trigger time from an investigation's cited rows. */
 export function attributionFromCitations(citations: readonly Citation[]): Attribution {
   let earliest: { iso: string; ms: number } | null = null;
   for (const citation of citations) {
-    if (citation.value === null) continue;
+    if (citation.value === null || !isVerifiedClaim(citation)) continue;
     if (!TIME_FIELDS.has(citation.field.toLowerCase())) continue;
     const ms = Date.parse(citation.value);
     if (Number.isNaN(ms)) continue;

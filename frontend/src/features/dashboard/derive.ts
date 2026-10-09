@@ -1,5 +1,7 @@
 import type { Citation, InvestigationStatus, VerdictClass } from '../../api/types';
 import type { CitationStatus } from '../../api/types';
+import { isVerifiedClaim } from '../../lib/derive/citations';
+import { topByCount } from '../../lib/tally';
 import type { Tone } from '../../ui/classes';
 import type { IconName } from '../../ui/icon-names';
 
@@ -64,21 +66,16 @@ export function verdictClassTone(verdictClass: VerdictClass | null): Tone | 'neu
   return 'tertiary'; // ambiguous
 }
 
-/** The most-cited value of a field across citations, for example the subject user_id. */
+/**
+ * The most-cited value of a field across VERIFIED citations, for example the subject user_id.
+ * A tie is broken by the lexicographically smallest value.
+ */
 export function mostCitedValue(citations: readonly Citation[], field: string): string | null {
   const counts = new Map<string, number>();
   for (const citation of citations) {
-    if (citation.field === field && citation.value !== null) {
+    if (citation.field === field && citation.value !== null && isVerifiedClaim(citation)) {
       counts.set(citation.value, (counts.get(citation.value) ?? 0) + 1);
     }
   }
-  let best: string | null = null;
-  let bestCount = 0;
-  for (const [value, count] of counts) {
-    if (count > bestCount) {
-      best = value;
-      bestCount = count;
-    }
-  }
-  return best;
+  return topByCount(counts)?.value ?? null;
 }

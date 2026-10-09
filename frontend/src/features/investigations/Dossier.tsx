@@ -15,6 +15,7 @@ import type {
 } from '../../api/types';
 import { buildRoute } from '../../app/router';
 import { cn } from '../../lib/cn';
+import { isVerifiedClaim } from '../../lib/derive/citations';
 import { meanSupporterConfidence, verifyVerdictConfidence } from '../../lib/derive/verdict';
 import { formatDuration, formatPercent, shortId } from '../../lib/format';
 import { Button } from '../../ui/Button';
@@ -111,7 +112,8 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
   const attribution = citations.data ? attributionFromCitations(citations.data.citations) : null;
   const latency = audit.data ? containmentLatency(audit.data.entries) : null;
   const chainValid = audit.data?.chain.valid ?? null;
-  const topCitation: Citation | null = citations.data?.citations[0] ?? null;
+  // The image caption quotes a row the Watchdog verified, never a value an agent merely claimed.
+  const topCitation: Citation | null = citations.data?.citations.find(isVerifiedClaim) ?? null;
 
   const tone = verdictTone(verdictClass);
 
@@ -274,7 +276,7 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
                 source={`GET /investigations/${shortId(id)}/citations · /evidence-bundle`}
                 n={attribution?.citationCount ?? 0}
                 asOf={loadedAt}
-                definition="SHA-256 is the canonical evidence-bundle digest. Attributed subject = most-cited user_id across the case's citations. Trigger, dataset and status are stored investigation fields."
+                definition="SHA-256 is the canonical evidence-bundle digest. Attributed subject = most-cited user_id across the case's VERIFIED citations; a tie is broken by the lexicographically smallest value. Trigger, dataset and status are stored investigation fields."
                 inputs={[
                   { label: 'subject count', value: attribution?.subject ? String(attribution.subject.count) : '0' },
                   { label: 'host count', value: attribution?.host ? String(attribution.host.count) : '0' },

@@ -10,6 +10,7 @@ import {
 import { startLiveEvents } from '../api/live-events';
 import type { AuditTrailResponse, Me, Settings, StatsResponse, SystemStatus } from '../api/types';
 import { useAsync, type AsyncResult } from '../app/use-async';
+import { ScenarioModalProvider } from './scenario-modal';
 
 /** Browser-measured round trip of GET /health (plan 2.1: the design's typed latency becomes a measured value). */
 export interface HealthSample {
@@ -50,8 +51,13 @@ export function ShellDataProvider({ children }: { children: ReactNode }) {
   const settings = useAsync(getSettings, REFRESH_MS, ['settings']);
   const chain = useAsync(() => listAuditTrail({ limit: 1 }), REFRESH_MS, ['audit']);
 
+  // The one scenario modal belongs to the shell, so any page can open it. Unknown until /auth/me has loaded.
+  const canInject = me.data ? me.data.capabilities.includes('inject_scenario') : null;
+
   return (
-    <ShellDataContext.Provider value={{ me, status, health, stats, settings, chain }}>{children}</ShellDataContext.Provider>
+    <ShellDataContext.Provider value={{ me, status, health, stats, settings, chain }}>
+      <ScenarioModalProvider canInject={canInject}>{children}</ScenarioModalProvider>
+    </ShellDataContext.Provider>
   );
 }
 

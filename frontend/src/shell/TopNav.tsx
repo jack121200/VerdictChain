@@ -1,11 +1,13 @@
-import { type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ROLE_LABEL } from '../lib/labels';
 import { formatCount, formatDuration, shortId } from '../lib/format';
 import { Button } from '../ui/Button';
+import { CopyHash } from '../ui/CopyHash';
 import { Icon } from '../ui/Icon';
 import type { IconName } from '../ui/icon-names';
 import { Metric } from '../ui/Metric';
 import { Proof, type ProofProps } from '../ui/Proof';
+import { CommandPalette } from './CommandPalette';
 import { useShellData } from './shell-data';
 
 export interface TopNavProps {
@@ -84,7 +86,8 @@ function DebateChip() {
   if (slot.status === 'running' && slot.investigation_id !== null) {
     return (
       <Chip tone="primary" icon="sync_alt" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: 'The debate slot is held by one running investigation.' }}>
-        Debate running · {shortId(slot.investigation_id)}
+        Debate running ·{' '}
+        <CopyHash value={slot.investigation_id} display={shortId(slot.investigation_id)} label="running investigation id" size="inherit" textClassName="text-primary" />
       </Chip>
     );
   }
@@ -130,10 +133,29 @@ function UserBadge() {
     <span className="flex flex-col text-right leading-tight">
       <span className="text-body font-semibold text-on-surface">{me.data.username}</span>
       <span className="font-mono text-evidence text-on-surface-variant">
-        {ROLE_LABEL[me.data.role]} · {shortId(me.data.analyst_id)}
+        {ROLE_LABEL[me.data.role]} ·{' '}
+        <CopyHash value={me.data.analyst_id} display={shortId(me.data.analyst_id)} label="analyst id" size="inherit" textClassName="text-on-surface-variant" />
       </span>
     </span>
   );
+}
+
+/** "⌘K" on Apple platforms, "Ctrl K" elsewhere. Read from the browser, so the hint matches the real shortcut. */
+function shortcutLabel(): string {
+  return /Mac|iPhone|iPad/.test(window.navigator.userAgent) ? '⌘K' : 'Ctrl K';
+}
+
+/** Ctrl or Cmd + K toggles the palette, unless another dialog is open (two stacked dialogs would fight for focus). */
+function usePaletteShortcut(toggle: (open: (current: boolean) => boolean) => void): void {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      toggle((current) => (current ? false : document.querySelector('[aria-modal="true"]') === null));
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [toggle]);
 }
 
 /**
@@ -141,6 +163,9 @@ function UserBadge() {
  * the open-threats count, the analyst badge and sign-out. Every value is loaded, never typed.
  */
 export function TopNav({ onMenuToggle, onSignOut }: TopNavProps) {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  usePaletteShortcut(setPaletteOpen);
+
   return (
     <header className="sticky top-0 z-30 border-b border-outline-variant/40 bg-surface-container-lowest/90 shadow-panel backdrop-blur-xl">
       <div className="flex h-16 items-center justify-between gap-4 px-4 lg:h-20 lg:px-6">
@@ -169,6 +194,19 @@ export function TopNav({ onMenuToggle, onSignOut }: TopNavProps) {
             <UserBadge />
           </div>
           <span className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" icon="search" onClick={() => setPaletteOpen(true)} aria-label={`Search (${shortcutLabel()})`} aria-keyshortcuts="Control+K Meta+K">
+              <span className="hidden sm:inline">Search</span>
+              <kbd className="hidden rounded border border-outline-variant/40 px-1 font-mono text-label md:inline">{shortcutLabel()}</kbd>
+            </Button>
+            <Proof
+              source="browser: command palette · GET /investigations?q="
+              n={1}
+              asOf={null}
+              definition="Jump to any page, open the scenario dialog, or search investigations. Typing asks the server (GET /investigations?q=, matching the start of the case id, the verdict class and the trigger type); nothing is stored."
+              label="Search"
+            />
+          </span>
+          <span className="flex items-center gap-1">
             <Button variant="ghost" size="sm" icon="logout" onClick={onSignOut} aria-label="Sign out">
               <span className="hidden sm:inline">Sign out</span>
             </Button>
@@ -182,6 +220,7 @@ export function TopNav({ onMenuToggle, onSignOut }: TopNavProps) {
           </span>
         </div>
       </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </header>
   );
 }

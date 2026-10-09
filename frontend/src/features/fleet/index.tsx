@@ -17,10 +17,11 @@ import { buildRoute } from '../../app/router';
 
 import { AGENT_VISUALS, type AgentTone, type AgentVisualId } from '../../lib/agents';
 import { cn } from '../../lib/cn';
-import { formatCount, formatNumber, formatPercent } from '../../lib/format';
+import { cssPercent, formatCount, formatMaybeCount, formatNumber, formatPercent } from '../../lib/format';
 import { Button } from '../../ui/Button';
 import { FOCUS_RING } from '../../ui/classes';
 import { EmptyState } from '../../ui/EmptyState';
+import { HintStrip } from '../../ui/HintStrip';
 import { Icon } from '../../ui/Icon';
 import { Metric } from '../../ui/Metric';
 import { Proof } from '../../ui/Proof';
@@ -33,6 +34,12 @@ type ServiceKey = 'watchdog' | 'self_healing';
 type SelectionKey = InvestigatorId | ServiceKey;
 
 const percent = (value: number): string => formatPercent(value, 1);
+
+const HINT = [
+  'Select an agent card to inspect it on the right: its model and provider chain, the signals from its prompt, its credibility history and, for roles that hold the capability, the quarantine and fault-injection controls.',
+  'Credibility, citation counts and rates come from the Watchdog’s checks (GET /agents/fleet and GET /stats), not from what an agent says about itself.',
+  'The Watchdog and Self-Healing are services, not investigators, so they show counters instead of a credibility score.',
+] as const;
 
 /** A production CrS the dry run read from Redis, as a Metric so it carries its source and definition. */
 function productionCrs(value: number): MetricEnvelope<number> {
@@ -199,7 +206,7 @@ function AgentCard({ agent, selected, onSelect }: { agent: FleetEntry; selected:
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-background">
           <div
             className={cn('h-full rounded-full', agent.crs.value === null ? '' : 'bg-linear-to-r from-primary-container to-secondary')}
-            style={{ width: `${(agent.crs.value ?? 0) * 100}%` }}
+            style={{ width: cssPercent(agent.crs.value ?? 0) }}
           />
         </div>
         <div className="flex items-center justify-between font-mono text-[10px] text-on-surface-variant">
@@ -207,7 +214,7 @@ function AgentCard({ agent, selected, onSelect }: { agent: FleetEntry; selected:
             Last vote: <strong className="text-on-surface">{agent.last_vote ?? 'none'}</strong>
           </span>
           <span>
-            Citations: <strong className="text-on-surface">{agent.citations_verified.value ?? '—'}/{agent.citations_total.value ?? '—'}</strong>
+            Citations: <strong className="text-on-surface">{formatMaybeCount(agent.citations_verified.value)}/{formatMaybeCount(agent.citations_total.value)}</strong>
           </span>
         </div>
       </div>
@@ -516,7 +523,7 @@ function InvestigatorInspector({
         </Field>
         <Field label="Citations verified / total:">
           <span className="text-on-surface">
-            {agent.citations_verified.value ?? '—'} / {agent.citations_total.value ?? '—'}
+            {formatMaybeCount(agent.citations_verified.value)} / {formatMaybeCount(agent.citations_total.value)}
           </span>
         </Field>
         <Field label="Invalid-citation rate:">
@@ -672,6 +679,8 @@ export default function FleetPage() {
         </div>
       </div>
 
+      <HintStrip pageId="fleet" sentences={HINT} className="mt-4" />
+
       {/* Global fleet telemetry KPIs */}
       <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <HudTile
@@ -680,8 +689,8 @@ export default function FleetPage() {
           sub="Investigators + 2 services"
         >
           <span className="inline-flex items-baseline gap-2">
-            <span className="font-headline text-2xl font-bold text-primary">{activeAgents === null ? '—' : activeAgents}</span>
-            <span className="font-mono text-xs text-on-surface-variant">/ {totalAgents ?? '—'} Total</span>
+            <span className="font-headline text-2xl font-bold text-primary">{formatMaybeCount(activeAgents)}</span>
+            <span className="font-mono text-xs text-on-surface-variant">/ {formatMaybeCount(totalAgents)} Total</span>
             <Proof
               source="browser: GET /agents/fleet.isolated"
               n={investigators.length}
@@ -695,7 +704,11 @@ export default function FleetPage() {
             />
           </span>
         </HudTile>
-        <HudTile label="Mean fleet credibility" subTone="text-secondary" sub="Watchdog-scored (n = 3)">
+        <HudTile
+          label="Mean fleet credibility"
+          subTone="text-secondary"
+          sub={`Watchdog-scored (n = ${stats.data ? formatCount(stats.data.mean_crs.n) : '—'})`}
+        >
           <Figure metric={stats.data?.mean_crs} tone="text-secondary" format={percent} label="Mean fleet credibility" className="font-headline text-2xl font-bold" />
         </HudTile>
         <HudTile label="Citation accuracy" sub="Verified / total citations">

@@ -110,6 +110,9 @@ ts.forEachChild(source, function visit(node) {
 const F = ts.TypeFlags;
 /** Placeholder the OpenAPI sampler uses for a plain string. Never a real API value. */
 const SAMPLE_STRING = '__sample__';
+/** A free-form object in the OpenAPI schema (dict[str, Any]) says nothing about its keys, so no client type can be
+ * judged against it. The live API is what proves those; the sampler hands this marker to validate() to skip them. */
+const FREE_FORM = Object.freeze({ freeForm: true });
 
 function kindOf(value) {
   if (value === null) return 'null';
@@ -118,7 +121,7 @@ function kindOf(value) {
 }
 
 function validate(value, type, where, errors, depth = 0) {
-  if (depth > 9) return;
+  if (depth > 9 || value === FREE_FORM) return;
   if (type.isUnion()) {
     const attempts = type.types.map((member) => {
       const found = [];
@@ -263,6 +266,7 @@ function sample(schema, depth = 0) {
       const out = {};
       for (const [key, value] of Object.entries(schema.properties ?? {})) out[key] = sample(value, depth + 1);
       if (!schema.properties && typeof schema.additionalProperties === 'object') out.sample = sample(schema.additionalProperties, depth + 1);
+      if (!schema.properties && (schema.additionalProperties === true || schema.additionalProperties === undefined)) return FREE_FORM;
       return out;
     }
     case 'array':

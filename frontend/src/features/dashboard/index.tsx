@@ -16,10 +16,10 @@ import type {
   ScenarioLabel,
 } from '../../api/types';
 import { useAsync } from '../../app/use-async';
-import { formatTimestamp } from '../../lib/format';
+import { useScenarioModal } from '../../shell/scenario-modal';
 import type { Tone } from '../../ui/classes';
+import { HintStrip } from '../../ui/HintStrip';
 import { Proof } from '../../ui/Proof';
-import ScenarioModal from '../scenario';
 import {
   EvidenceTraces,
   PodTriad,
@@ -33,6 +33,8 @@ import { isThreatClass, mostCitedValue } from './derive';
 
 const LEDGER_LIMIT = 8;
 const AUDIT_LIMIT = 60;
+/** The ledger's audit hashes come from their own query, so a row older than the event stream still gets its hash. */
+const VERDICT_HASH_LIMIT = 50;
 
 /** Tone for an audit action in the event stream. */
 function toneForAction(action: AuditEntry['action']): Tone | 'neutral' {
@@ -43,21 +45,22 @@ function toneForAction(action: AuditEntry['action']): Tone | 'neutral' {
   return 'neutral';
 }
 
-function auditTime(iso: string): string {
-  const stamped = formatTimestamp(iso);
-  // formatTimestamp -> "YYYY-MM-DD HH:MM:SS UTC"; keep the clock + zone for the terminal.
-  const parts = stamped.split(' ');
-  return parts.length >= 3 ? `${parts[1]} ${parts[2]}` : stamped;
-}
+const HINT = [
+  'From the top: the latest investigation with a threat verdict, live counters, the three investigators with their credibility, the most recent verdicts with their audit hashes, the audit event stream and the rows the Watchdog checked.',
+  'Counters come from GET /stats, agents from GET /agents/fleet, cases from GET /investigations and events from GET /audit-trail; the page refreshes itself (server push, with polling as the fallback).',
+  'Confidence is agent-reported, not accuracy, and the info button beside any number shows its source, sample size and formula.',
+] as const;
 
 /** The live forensic console (plan 2.4): tactical banner, scenario control, pod triad, verdict ledger, audit stream, cited evidence. */
 export default function DashboardPage() {
+  const scenario = useScenarioModal();
   const stats = useAsync(getStats, 30_000, ['stats', 'investigations', 'actions']);
   const fleet = useAsync(getAgentFleet, 30_000, ['agents', 'credibility']);
   const scenarios = useAsync(listScenarios);
   const settings = useAsync(getSettings, 30_000, ['settings']);
   const me = useAsync(getMe);
   const audit = useAsync(() => listAuditTrail({ limit: AUDIT_LIMIT }), 30_000, ['audit']);
+  const verdictEntries = useAsync(() => listAuditTrail({ action: 'verdict_reached', limit: VERDICT_HASH_LIMIT }), 30_000, ['audit']);
   const ledger = useAsync(() => listInvestigations({ limit: LEDGER_LIMIT }), 30_000, ['investigations']);
 
   const items = ledger.data?.items ?? [];
@@ -87,13 +90,14 @@ export default function DashboardPage() {
 
   const verdictHashes = useMemo(() => {
     const map = new Map<string, string>();
-    for (const entry of audit.data?.entries ?? []) {
+    // Entries come newest first, so the first verdict_reached seen for a case is its latest.
+    for (const entry of verdictEntries.data?.entries ?? []) {
       if (entry.action === 'verdict_reached' && entry.investigation_id && !map.has(entry.investigation_id)) {
         map.set(entry.investigation_id, entry.entry_hash);
       }
     }
     return map;
-  }, [audit.data]);
+  }, [verdictEntries.data]);
 
   const terminalLines: TerminalLine[] = useMemo(() => {
     const entries = audit.data?.entries ?? [];
@@ -101,15 +105,16 @@ export default function DashboardPage() {
       .sort((a, b) => a.seq - b.seq)
       .map((entry) => ({
         key: String(entry.seq),
-        time: auditTime(entry.created_at),
-        body: `${entry.action.toUpperCase()} · actor ${entry.actor}${entry.investigation_id ? ` · inv ${entry.investigation_id.slice(0, 8)}` : ''}`,
+        at: entry.created_at,
+        action: entry.action,
+        actor: entry.actor,
+        investigationId: entry.investigation_id,
         tone: toneForAction(entry.action),
       }));
   }, [audit.data]);
 
   const [cleared, setCleared] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     if (scenarios.data && scenarios.data.length > 0) {
@@ -132,6 +137,9 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-6">
       <div className="flex w-full flex-col gap-5">
+        <h1 className="sr-only">Forensics dashboard</h1>
+        <HintStrip pageId="dashboard" sentences={HINT} />
+
         <TacticalBanner
           threat={threat}
           loading={ledger.data === undefined}
@@ -148,12 +156,12 @@ export default function DashboardPage() {
           selected={selected}
           onSelect={setSelected}
           canInject={canInject}
-          onInject={() => setModalOpen(true)}
-          onConfigure={() => setModalOpen(true)}
+          onInject={() => scenario?.open((selected as ScenarioLabel | null) ?? null)}
+          onConfigure={() => scenario?.open((selected as ScenarioLabel | null) ?? null)}
           blindProof={blindProof}
         />
 
-        <PodTriad fleet={fleet.data} detail={detail.data} meanCrs={stats.data?.mean_crs} />
+        <PodTriad fleet={fleet.data} detail={detail.data} meanCrs={stats.data?.mean_crs} debateRounds={settings.data?.debate_rounds} />
 
         <section className="grid grid-cols-1 gap-5 lg:grid-cols-12">
           <VerdictLedger
@@ -169,13 +177,6 @@ export default function DashboardPage() {
 
         <EvidenceTraces citations={citations.data?.citations} loading={citations.data === undefined && citations.error === null} />
       </div>
-
-      <ScenarioModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        canInject={canInject}
-        initialScenario={(selected as ScenarioLabel | null) ?? null}
-      />
     </div>
   );
 }

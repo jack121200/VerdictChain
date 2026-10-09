@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { clearToken, getToken, setUnauthorizedHandler } from '../api/client';
 import LoginPage from '../features/login';
 import LandingPage from '../features/landing';
@@ -104,7 +104,9 @@ export default function App() {
     navigate({ name: 'login' });
   }, []);
 
-  useEffect(() => {
+  // A layout effect, not a passive one: it must be in place before any child effect starts a request, so even the
+  // very first 401 (a stored token that expired while the tab was closed) sends the user to sign-in.
+  useLayoutEffect(() => {
     // A 401 from any call has already cleared the token. Drop the session and return to sign-in.
     setUnauthorizedHandler(() => {
       setAuthed(false);

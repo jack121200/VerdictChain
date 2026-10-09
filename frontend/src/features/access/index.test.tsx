@@ -96,6 +96,11 @@ describe('AccessPage', () => {
     expect(await screen.findByText('0006_quarantine')).toBeTruthy();
   });
 
+  it('says plainly that continuous ingestion is off (a debate starts only on an injection)', async () => {
+    render(<AccessPage />);
+    expect(await screen.findByText('off · manual injection only')).toBeTruthy();
+  });
+
   it('hides capability-gated controls without the capability', async () => {
     render(<AccessPage />);
     await screen.findByText('river.analyst');
@@ -110,5 +115,13 @@ describe('AccessPage', () => {
     expect(await screen.findByText('User management')).toBeTruthy();
     expect(await screen.findByText('Emergency containment')).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(/requires the edit_settings capability/i)).toBeNull());
+  });
+
+  it('gives the shortened analyst id a copy button and shows the session expiry with its exact time', async () => {
+    const { container } = render(<AccessPage />);
+    await screen.findByText('river.analyst');
+    expect(screen.getByRole('button', { name: 'Copy analyst id' })).toBeTruthy();
+    expect(screen.getByText('id-1234a').getAttribute('title')).toBe('id-1234abcd');
+    expect(container.querySelector('time[datetime="2026-10-09T00:00:00Z"]')?.getAttribute('title')).toBe('2026-10-09 00:00:00 UTC');
   });
 });

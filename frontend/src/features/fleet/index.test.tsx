@@ -116,4 +116,24 @@ describe('FleetPage', () => {
     expect(await screen.findByRole('button', { name: /Run dry run/i })).toBeTruthy();
     expect(await screen.findByRole('button', { name: /Quarantine agent/i })).toBeTruthy();
   });
+
+  it('takes the sample size under mean credibility from the API metric, not a typed number', async () => {
+    vi.mocked(getStats).mockResolvedValue(makeStats({ mean_crs: { ...metric(0.8), n: 7 } }));
+    render(<FleetPage />);
+    expect(await screen.findByText('Watchdog-scored (n = 7)')).toBeTruthy();
+  });
+
+  it('writes the verified and total citation counts through the shared formatter', async () => {
+    vi.mocked(getAgentFleet).mockResolvedValue([{ ...AGENT, citations_verified: metric(1234), citations_total: metric(null) }]);
+    render(<FleetPage />);
+    expect(await screen.findAllByText('1,234/—')).not.toHaveLength(0);
+  });
+
+  it('shows a dismissible how-to-read hint', async () => {
+    render(<FleetPage />);
+    expect(screen.getByText('How to read this page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss how-to-read hint' }));
+    expect(screen.queryByText('How to read this page')).toBeNull();
+    expect(window.localStorage.getItem('vc-hint-dismissed:fleet')).toBe('1');
+  });
 });

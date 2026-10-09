@@ -13,6 +13,7 @@ import {
   login,
   setToken,
   setUnauthorizedHandler,
+  getInvestigationProgress,
   simulateInvestigation,
   submitFeedback,
   updateSettings,
@@ -90,6 +91,27 @@ describe('request URL, method and body', () => {
     expect(url).toBe(`${API_BASE}/investigations/simulate`);
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ scenario_label: 'DDoS', noise_pct: 15, wait: false });
+  });
+
+  it('sends an Idempotency-Key only when one is given', async () => {
+    setToken('tok');
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse({}, 202))); // a fresh body for every call
+    await simulateInvestigation({ scenario_label: 'DDoS', wait: false }, { idempotencyKey: 'click-0001-abcdef' });
+    expect(firstCall(fetchMock).init.headers).toMatchObject({ 'Idempotency-Key': 'click-0001-abcdef' });
+
+    fetchMock.mockClear();
+    await simulateInvestigation({ scenario_label: 'DDoS', wait: false });
+    expect(firstCall(fetchMock).init.headers).not.toHaveProperty('Idempotency-Key');
+  });
+
+  it('reads the progress of a debate from its own endpoint', async () => {
+    setToken('tok');
+    fetchMock.mockResolvedValue(
+      jsonResponse({ investigation_id: 'x', phase: 'running', status: 'investigating', rounds_total: 3, rounds_complete: 1, round: 2, elapsed_seconds: 4 }),
+    );
+    const progress = await getInvestigationProgress('a/b');
+    expect(firstCall(fetchMock).url).toBe(`${API_BASE}/investigations/a%2Fb/progress`);
+    expect(progress.round).toBe(2);
   });
 
   it('encodes path ids so they cannot add segments', async () => {

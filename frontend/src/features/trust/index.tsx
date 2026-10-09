@@ -76,14 +76,15 @@ function signed(value: number, decimals = 1): string {
 
 /** Trust & Credibility: Watchdog scoring, trajectory, citation ledger and the real settings configurator (plan 2.7). */
 export default function TrustPage() {
-  const fleet = useAsync(getAgentFleet, 30_000);
-  const settings = useAsync(getSettings, 30_000);
-  const status = useAsync(getSystemStatus, 30_000);
-  const stats = useAsync(getStats, 30_000);
+  const fleet = useAsync(getAgentFleet, 30_000, ['agents', 'credibility']);
+  const settings = useAsync(getSettings, 30_000, ['settings']);
+  const status = useAsync(getSystemStatus, 30_000, ['investigations', 'agents', 'settings', 'actions']);
+  const stats = useAsync(getStats, 30_000, ['stats', 'investigations', 'actions']);
   const me = useAsync(getMe);
   const histories = useAsync(
     () => Promise.all(INVESTIGATOR_IDS.map((agentId) => getCredibilityHistory(agentId, { limit: 60 }))),
     30_000,
+    ['credibility', 'agents'],
   );
 
   const historyMap = useMemo<HistoryMap>(
@@ -640,7 +641,7 @@ function CitationLedger({ nameOf }: { nameOf: (agentId: InvestigatorId) => strin
     () => ({ limit: CITE_PAGE_SIZE, offset, status: filter === 'ALL' ? undefined : filter }),
     [filter, offset],
   );
-  const page = useAsync(() => listCitations(params));
+  const page = useAsync(() => listCitations(params), undefined, ['credibility', 'investigations']);
   const { reload } = page;
   const firstRun = useRef(true);
   useEffect(() => {

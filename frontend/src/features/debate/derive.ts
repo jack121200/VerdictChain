@@ -112,7 +112,7 @@ export function roundSteps(
 ): RoundStep[] {
   const present = new Map<number, number>(rounds.map((round) => [round.round, round.agents.length]));
   const maxPresent = rounds.reduce((top, round) => Math.max(top, round.round), 0);
-  const running = status === 'running' || status === null;
+  const running = status === 'investigating' || status === null;
 
   const steps: RoundStep[] = [];
   for (let round = 1; round <= totalRounds; round += 1) {

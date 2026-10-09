@@ -163,7 +163,7 @@ function CapabilityMatrix() {
 }
 
 function UserManagement() {
-  const users = useAsync(listUsers);
+  const users = useAsync(listUsers, undefined, ['users']);
   const [busyId, setBusyId] = useState<string | null>(null);
   const rows = users.data ?? [];
 
@@ -229,7 +229,7 @@ function EmergencyContainment() {
     try {
       if (kind === 'run') {
         const result = await emergencyContainment(target);
-        setNote(`Containment ran: ${result.actions_taken.length} sandboxed action(s). Status ${result.status}.`);
+        setNote(`Containment ran: ${result.actions.length} sandboxed action(s). Status ${result.status}.`);
         pushToast('Sandboxed containment recorded.', { tone: 'secondary' });
       } else {
         const result = await releaseContainment(target);
@@ -288,8 +288,8 @@ const QUICK_LINKS: ReadonlyArray<{ name: Exclude<SimpleRouteName, 'login'>; labe
 
 export default function AccessPage() {
   const me = useAsync(getMe);
-  const status = useAsync(getSystemStatus, 30_000);
-  const settings = useAsync(getSettings, 30_000);
+  const status = useAsync(getSystemStatus, 30_000, ['investigations', 'agents', 'settings', 'actions']);
+  const settings = useAsync(getSettings, 30_000, ['settings']);
   const rawCounts = useAsync(getRawLogCounts, 30_000);
   const [pauseBusy, setPauseBusy] = useState(false);
 

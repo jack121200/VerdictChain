@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import {
   getHealth,
   getMe,
@@ -7,6 +7,7 @@ import {
   getSystemStatus,
   listAuditTrail,
 } from '../api/client';
+import { startLiveEvents } from '../api/live-events';
 import type { AuditTrailResponse, Me, Settings, StatsResponse, SystemStatus } from '../api/types';
 import { useAsync, type AsyncResult } from '../app/use-async';
 
@@ -36,12 +37,18 @@ async function measureHealth(): Promise<HealthSample> {
 const ShellDataContext = createContext<ShellData | null>(null);
 
 export function ShellDataProvider({ children }: { children: ReactNode }) {
+  // One push connection for the whole signed-in session. Screens subscribe to it through useAsync(topics).
+  useEffect(() => {
+    const connection = startLiveEvents();
+    return () => connection.close();
+  }, []);
+
   const me = useAsync(getMe);
-  const status = useAsync(getSystemStatus, REFRESH_MS);
+  const status = useAsync(getSystemStatus, REFRESH_MS, ['investigations', 'agents', 'settings', 'actions']);
   const health = useAsync(measureHealth, REFRESH_MS);
-  const stats = useAsync(getStats, REFRESH_MS);
-  const settings = useAsync(getSettings, REFRESH_MS);
-  const chain = useAsync(() => listAuditTrail({ limit: 1 }), REFRESH_MS);
+  const stats = useAsync(getStats, REFRESH_MS, ['stats', 'investigations', 'actions']);
+  const settings = useAsync(getSettings, REFRESH_MS, ['settings']);
+  const chain = useAsync(() => listAuditTrail({ limit: 1 }), REFRESH_MS, ['audit']);
 
   return (
     <ShellDataContext.Provider value={{ me, status, health, stats, settings, chain }}>{children}</ShellDataContext.Provider>

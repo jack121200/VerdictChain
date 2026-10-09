@@ -47,15 +47,15 @@ export type VerdictClass =
   | 'benign'
   | 'ambiguous';
 
-/** Chosen: the set from the backend's status writes (debate/verdict.py, self_healing, plan 3.5). */
-export type InvestigationStatus = 'running' | 'verdict_reached' | 'ambiguous' | 'contained' | 'failed';
+/** Exactly the values the backend writes to investigations.status (debate engine, self-healing, containment). */
+export type InvestigationStatus = 'investigating' | 'verdict_reached' | 'ambiguous' | 'contained' | 'error';
 
 export type Stance = 'CHALLENGE' | 'SUPPORT' | 'REVISE';
 
 export type NoisePct = 0 | 15 | 30;
 
-/** Chosen: dataset names carried on investigations and scenarios. */
-export type DatasetName = 'CICIDS2017' | 'CERT_r4.2';
+/** Exactly the dataset names the API sends on investigations and scenarios. */
+export type DatasetName = 'CICIDS2017' | 'CERT r4.2';
 
 export type ScenarioLabel =
   | 'DDoS'
@@ -141,7 +141,7 @@ export interface ProviderStatus {
 }
 
 export interface DebateSlot {
-  state: 'idle' | 'running';
+  status: 'idle' | 'running' | 'unavailable';
   investigation_id: string | null;
 }
 
@@ -327,6 +327,73 @@ export interface InvestigationPage {
   offset: number;
 }
 
+// ---- wire shapes ------------------------------------------------------------------
+// Exactly what the backend sends for the endpoints whose UI model differs from the wire (a list is a bare
+// array, an investigation is keyed investigation_id, a debate is flat rows). src/api/adapters.ts turns
+// them into the models above. scripts/contract-check.mjs validates these against the live API.
+
+export interface InvestigationSummaryWire {
+  investigation_id: string;
+  trigger_type: string;
+  status: InvestigationStatus;
+  verdict_class: VerdictClass | null;
+  verdict_confidence: number | null;
+  primary_agent: InvestigatorId | null;
+  dataset: DatasetName | null;
+  noise_pct: NoisePct;
+  rounds_complete: number;
+  containment_count: number;
+  created_at: string;
+}
+
+export interface DebateRoundWire {
+  round: number;
+  agent_id: InvestigatorId;
+  theory: string;
+  confidence: number;
+  stance: Stance | null;
+  provider: string | null;
+  cited_evidence: CitedEvidence[];
+  created_at: string;
+}
+
+export interface AgentVoteWire {
+  agent_id: InvestigatorId;
+  round: number;
+  /** Server classify_theory result. "unclassified" when no keyword matched. */
+  vote_class: VerdictClass | 'unclassified';
+  matched_keywords: string[];
+}
+
+export interface CredibilityWire {
+  round: number;
+  agent_id: InvestigatorId;
+  crs_before: number;
+  crs_after: number;
+  verification_match_rate: number;
+  isolated: boolean;
+  created_at: string;
+}
+
+export interface ActionWire {
+  id: string;
+  investigation_id: string | null;
+  action_type: string;
+  target: string;
+  reason: string | null;
+  is_simulated: boolean;
+  created_at: string;
+}
+
+export interface InvestigationDetailWire extends InvestigationSummaryWire {
+  effective_noise_pct: number | null;
+  debate: DebateRoundWire[];
+  votes: AgentVoteWire[];
+  citations: CitationSummary;
+  credibility: CredibilityWire[];
+  actions: ActionWire[];
+}
+
 /** Paged global citations (GET /citations). */
 export interface CitationPage {
   items: GlobalCitation[];
@@ -339,28 +406,65 @@ export interface CitationPage {
  * The evidence bundle: verdict, transcript, credibility, actions and citation re-check,
  * canonical JSON (sorted keys, compact separators, no labels). Chosen key names.
  */
+export interface BundleTranscriptRow {
+  round: number;
+  agent_id: InvestigatorId;
+  theory: string;
+  confidence: number;
+  provider: string | null;
+  cited_evidence: CitedEvidence[];
+  created_at: string;
+}
+
+export interface BundleCredibilityRow {
+  round: number;
+  agent_id: InvestigatorId;
+  crs_before: number;
+  crs_after: number;
+  verification_match_rate: number;
+  isolated: boolean;
+  created_at: string;
+}
+
+export interface BundleActionRow {
+  action_type: string;
+  target: string;
+  reason: string | null;
+  is_simulated: boolean;
+  created_at: string;
+}
+
 export interface EvidenceBundle {
   investigation_id: string;
   verdict: { verdict_class: VerdictClass | null; verdict_confidence: number | null; status: InvestigationStatus };
-  transcript: DebateRound[];
-  credibility: CredibilityRow[];
-  actions: ResponseAction[];
-  citation_recheck: CitationSummary;
+  transcript: BundleTranscriptRow[];
+  credibility: BundleCredibilityRow[];
+  actions: BundleActionRow[];
+  citations: { total: number; verified: number; discrepancy: number; invalid_row: number; items: Citation[] };
 }
 
 /** GET /investigations/{id}/evidence-bundle */
+export interface BundleSignature {
+  signed_by: string;
+  signed_at: string;
+  bundle_sha256: string;
+  still_matches: boolean;
+}
+
 export interface EvidenceBundleResponse {
   bundle: EvidenceBundle;
   bundle_sha256: string;
+  signatures: BundleSignature[];
 }
 
 /** POST /investigations/{id}/sign. An audited acknowledgement, not a cryptographic signature. */
 export interface SignResponse {
-  investigation_id: string;
+  signed_by: string;
+  signed_at: string;
   bundle_sha256: string;
-  notice: string;
   audit_seq: number;
-  recorded_at: string;
+  entry_hash: string;
+  notice: string;
 }
 
 /** POST /investigations/simulate body. Sent with wait=false by the console. */
@@ -381,18 +485,27 @@ export interface SimulateAccepted {
   primary_agent: InvestigatorId;
 }
 
+/** One sandboxed action as the containment endpoints report it. */
+export interface ContainmentActionRow {
+  action_type: string;
+  target: string;
+  reason: string;
+  is_simulated: boolean;
+}
+
 /** POST /investigations/{id}/emergency-containment */
 export interface ContainmentResponse {
   investigation_id: string;
   status: InvestigationStatus;
-  actions_taken: ResponseAction[];
+  verdict_class: VerdictClass;
+  actions: ContainmentActionRow[];
 }
 
 /** POST /investigations/{id}/release-containment */
 export interface ReleaseResponse {
   investigation_id: string;
   status: InvestigationStatus;
-  released: ResponseAction[];
+  released: ContainmentActionRow[];
 }
 
 // ---- stats, scenarios, evaluation, fleet --------------------------------------
@@ -412,6 +525,7 @@ export interface StatsResponse {
     discrepancy: Metric<number>;
     invalid_row: Metric<number>;
     verified_rate: Metric<number>;
+    invalid_rate: Metric<number>;
   };
   self_healing: {
     actions_total: Metric<number>;
@@ -419,7 +533,7 @@ export interface StatsResponse {
     simulated_share: Metric<number>;
   };
   watchdog: {
-    checks: Metric<number>;
+    checks_total: Metric<number>;
     citations_checked: Metric<number>;
     discrepancies: Metric<number>;
     isolations: Metric<number>;
@@ -428,9 +542,17 @@ export interface StatsResponse {
     total: Metric<number>;
     confirmed: Metric<number>;
     false_positive: Metric<number>;
+    agreement_rate: Metric<number>;
   };
   /** Brier score from analyst feedback only. null until feedback exists. */
   brier: Metric<number>;
+  stale: Metric<number>;
+  contained: Metric<number>;
+  by_status: Record<string, Metric<number>>;
+  by_verdict_class: Record<string, Metric<number>>;
+  chain: { valid: boolean; entries: Metric<number>; head_seq: Metric<number> };
+  latency: { definition: string; mean_seconds: Metric<number> };
+  generated_at: string;
 }
 
 /** GET /scenarios: the 8 real labels. */
@@ -444,34 +566,56 @@ export interface ScenarioSummary {
 
 export interface PerClassMetrics {
   verdict_class: VerdictClass;
-  support: Metric<number>;
   precision: Metric<number>;
   recall: Metric<number>;
   f1: Metric<number>;
 }
 
+/** A verdict the keyword classifier could not place is "unclassified"; it is a predicted column, never an actual row. */
+export type PredictedClass = VerdictClass | 'unclassified';
+
 export interface ConfusionCell {
   actual: VerdictClass;
-  predicted: VerdictClass;
+  predicted: PredictedClass;
   count: Metric<number>;
+}
+
+export interface ConfusionMatrix {
+  rows: VerdictClass[];
+  cols: PredictedClass[];
+  cells: ConfusionCell[];
 }
 
 export interface NoiseBucket {
   noise_pct: NoisePct;
   accuracy: Metric<number>;
-  labelled: Metric<number>;
+  acceptable_accuracy: Metric<number>;
+  family_accuracy: Metric<number>;
+  abstain_rate: Metric<number>;
+}
+
+/** One ground-truth label and the verdict class it is scored against (evaluation only, never shown to agents). */
+export interface MappingEntry {
+  /** The eight injectable scenarios plus BENIGN (the dataset's own benign rows). */
+  scenario_label: ScenarioLabel | 'BENIGN';
+  expected_class: VerdictClass;
+  accepted_classes: VerdictClass[];
 }
 
 /** GET /evaluation: labelled investigations only. Accuracy comes only from here (R4). */
 export interface EvaluationResponse {
   labelled: Metric<number>;
+  scored: Metric<number>;
   accuracy: Metric<number>;
   acceptable_accuracy: Metric<number>;
   family_accuracy: Metric<number>;
   abstain_rate: Metric<number>;
   per_class: PerClassMetrics[];
-  confusion: ConfusionCell[];
+  confusion_matrix: ConfusionMatrix;
   by_noise: NoiseBucket[];
+  mapping: MappingEntry[];
+  mapping_status: string;
+  generated_at: string;
 }
 
 /** One row of GET /agents/fleet. Every numeric field is a Metric (plan R10). */
@@ -554,27 +698,47 @@ export interface AuditVerifyResult {
 
 // ---- agents (quarantine, faults) ----------------------------------------------
 
+/** POST /agents/{id}/quarantine and /restore. */
 export interface QuarantineState {
   agent_id: InvestigatorId;
   active: boolean;
-  reason: string | null;
-  set_by: string | null;
-  updated_at: string;
+  /** CrS before the operation. */
+  previous_crs: number;
+  /** CrS after it (a restore resets it to the starting value). */
+  crs_now: number;
 }
 
-/** POST /agents/{id}/fault-injection, dry run only. Writes nothing. */
+/** The citation the fault injection fabricated, run through the real check. */
+export interface FaultCitation {
+  row_id: string;
+  field: string;
+  value: string;
+  expected: string | null;
+  status: CitationStatus;
+  reason: CitationReason;
+}
+
+export interface ProjectedRound {
+  round: number;
+  projected_crs_before: number;
+  projected_crs_after: number;
+  projected_isolated: boolean;
+}
+
+/** POST /agents/{id}/fault-injection, dry run only. Writes no CrS, no credibility row, no investigation. */
 export interface FaultInjectionResponse {
   agent_id: InvestigatorId;
   kind: FaultKind;
-  dry_run: true;
-  citation_check: { status: CitationStatus; reason: CitationReason };
-  projected: {
-    eta: number;
-    isolation_threshold: number;
-    trajectory: Array<{ round: number; crs: number }>;
-  };
-  production_crs: { before: Metric<number>; after: Metric<number> };
-  production_unchanged: boolean;
+  dry_run: boolean;
+  citation: FaultCitation;
+  projected_match_rate: number;
+  eta: number;
+  isolation_threshold: number;
+  projected_trajectory: ProjectedRound[];
+  would_isolate_at_round: number | null;
+  production_crs_before: number;
+  production_crs_after: number;
+  production_crs_unchanged: boolean;
 }
 
 // ---- realtime -----------------------------------------------------------------

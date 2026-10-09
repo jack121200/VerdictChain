@@ -19,12 +19,12 @@ const metric = (value: number) => ({ value, n: 1, as_of: '2026-10-05T00:00:00Z',
 
 const SCENARIOS: ScenarioSummary[] = [
   { label: 'Botnet', dataset: 'CICIDS2017', primary_agent: 'network_traffic', row_count: metric(42), description: 'C2 beaconing flows' },
-  { label: 'insider_scenario_1', dataset: 'CERT_r4.2', primary_agent: 'access_log', row_count: metric(7), description: 'Off-hours logon anomaly' },
+  { label: 'insider_scenario_1', dataset: 'CERT r4.2', primary_agent: 'access_log', row_count: metric(7), description: 'Off-hours logon anomaly' },
 ];
 
 const accepted: SimulateAccepted = {
   investigation_id: 'inv-xyz-1',
-  status: 'running',
+  status: 'investigating',
   ws_path: '/ws/investigations/inv-xyz-1',
   noise_pct: 0,
   effective_noise_pct: 0,

@@ -44,3 +44,44 @@ describe('verdict derivations', () => {
     expect(quorumFromVotes(unmatched)).toMatchObject({ status: 'unmatched', voters: 1, label: 'no class matched' });
   });
 });
+
+describe('quorumFromVotes with the primary agent (mirrors the server tie-break)', () => {
+  const split = [
+    { agent_id: 'network_traffic', verdict_class: 'ddos', confidence: 0.88 },
+    { agent_id: 'access_log', verdict_class: 'insider_file_exfiltration', confidence: 0.86 },
+    { agent_id: 'endpoint_behavior', verdict_class: 'insider_logon_anomaly', confidence: 0.9 },
+  ];
+
+  it('a one-each split is decided by the primary agent when it cast a real vote', () => {
+    const quorum = quorumFromVotes(split, 'network_traffic');
+    expect(quorum.status).toBe('primary_decided');
+    expect(quorum.winner).toBe('ddos');
+    expect(quorum.label).toBe('no majority: primary agent decided');
+  });
+
+  it('the same split stays a tie when there is no primary agent', () => {
+    const quorum = quorumFromVotes(split, null);
+    expect(quorum.status).toBe('tie');
+    expect(quorum.winner).toBeNull();
+  });
+
+  it('a primary agent that voted no class cannot break the tie', () => {
+    const votes = [
+      { agent_id: 'network_traffic', verdict_class: null, confidence: 0.5 },
+      { agent_id: 'access_log', verdict_class: 'port_scan', confidence: 0.7 },
+      { agent_id: 'endpoint_behavior', verdict_class: 'brute_force', confidence: 0.7 },
+    ];
+    expect(quorumFromVotes(votes, 'network_traffic').status).toBe('tie');
+  });
+
+  it('a clear majority is never overridden by the primary agent', () => {
+    const votes = [
+      { agent_id: 'network_traffic', verdict_class: 'ddos', confidence: 0.9 },
+      { agent_id: 'access_log', verdict_class: 'ddos', confidence: 0.6 },
+      { agent_id: 'endpoint_behavior', verdict_class: 'insider_logon_anomaly', confidence: 0.95 },
+    ];
+    const quorum = quorumFromVotes(votes, 'endpoint_behavior');
+    expect(quorum.status).toBe('agreed');
+    expect(quorum.winner).toBe('ddos');
+  });
+});

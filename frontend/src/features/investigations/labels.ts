@@ -26,11 +26,11 @@ export const VERDICT_LABEL: Record<VerdictClass, string> = {
 };
 
 export const STATUS_LABEL: Record<InvestigationStatus, string> = {
-  running: 'Running',
+  investigating: 'Investigating',
   verdict_reached: 'Verdict reached',
   ambiguous: 'Ambiguous',
   contained: 'Contained',
-  failed: 'Failed',
+  error: 'Failed',
 };
 
 /** Colour role for a verdict class. Insider = critical, external = warning, benign = safe. */
@@ -58,9 +58,9 @@ export function statusTone(status: InvestigationStatus): PillTone {
       return 'error';
     case 'verdict_reached':
       return 'secondary';
-    case 'running':
+    case 'investigating':
       return 'primary';
-    case 'failed':
+    case 'error':
       return 'error';
     case 'ambiguous':
       return 'neutral';

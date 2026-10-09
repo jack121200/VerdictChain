@@ -7,7 +7,6 @@ import type {
   FleetEntry,
   InvestigationCitations,
   InvestigationDetail,
-  InvestigationStatus,
   InvestigatorId,
   LiveFrame,
   Me,
@@ -136,9 +135,10 @@ const bundle: EvidenceBundleResponse = {
     transcript: [],
     credibility: [],
     actions: [],
-    citation_recheck: { total: 0, verified: 0, discrepancy: 0, invalid_row: 0, match_rate: metric(null) },
+    citations: { total: 0, verified: 0, discrepancy: 0, invalid_row: 0, items: [] },
   },
   bundle_sha256: 'a'.repeat(64),
+  signatures: [],
 };
 
 function detail(over: Partial<InvestigationDetail> = {}): InvestigationDetail {
@@ -180,7 +180,7 @@ afterEach(() => {
 
 describe('DebatePage', () => {
   it('opens a live socket when the case is running and renders round_completed frames', async () => {
-    h.getInvestigation.mockResolvedValue(detail({ status: 'running' as InvestigationStatus, verdict_class: null, verdict_confidence: null }));
+    h.getInvestigation.mockResolvedValue(detail({ status: 'investigating', verdict_class: null, verdict_confidence: null }));
     render(<DebatePage id="inv-1" />);
 
     await waitFor(() => expect(h.connectInvestigationSocket).toHaveBeenCalledTimes(1));

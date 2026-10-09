@@ -52,11 +52,11 @@ const BADGE: Record<PillTone, string> = {
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: InvestigationStatus | 'ALL'; label: string }> = [
   { value: 'ALL', label: 'All statuses' },
-  { value: 'running', label: STATUS_LABEL.running },
+  { value: 'investigating', label: STATUS_LABEL.investigating },
   { value: 'verdict_reached', label: STATUS_LABEL.verdict_reached },
   { value: 'contained', label: STATUS_LABEL.contained },
   { value: 'ambiguous', label: STATUS_LABEL.ambiguous },
-  { value: 'failed', label: STATUS_LABEL.failed },
+  { value: 'error', label: STATUS_LABEL.error },
 ];
 
 const VERDICT_OPTIONS: ReadonlyArray<{ value: VerdictClass | 'ALL'; label: string }> = [
@@ -91,7 +91,7 @@ export default function InvestigationsPage({ id }: PageProps) {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const fleet = useAsync(getAgentFleet);
+  const fleet = useAsync(getAgentFleet, undefined, ['agents', 'credibility']);
 
   const params = useMemo<InvestigationListParams>(
     () => ({
@@ -105,7 +105,7 @@ export default function InvestigationsPage({ id }: PageProps) {
     [offset, debouncedQuery, statusFilter, verdictFilter, agentFilter],
   );
 
-  const list = useAsync(() => listInvestigations(params));
+  const list = useAsync(() => listInvestigations(params), undefined, ['investigations']);
   const { reload: reloadList } = list;
 
   // Refetch the list when the filters or page change (useAsync itself only loads on mount).

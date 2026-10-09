@@ -25,6 +25,9 @@ import type {
   Me,
   QuarantineState,
   RawLogCounts,
+  InvestigationSummaryWire,
+  InvestigationDetailWire,
+  GlobalCitation,
   RawLogRecentParams,
   RawLogRow,
   RbacMatrix,
@@ -43,6 +46,7 @@ import type {
   UserRow,
   WsTicket,
 } from './types';
+import { toCitationPage, toInvestigationDetail, toInvestigationPage } from './adapters';
 
 const DEFAULT_API_BASE = 'http://127.0.0.1:8000';
 const TOKEN_KEY = 'verdictchain_token';
@@ -278,12 +282,14 @@ export function updateUserRole(userId: string, role: Role): Promise<UserRow> {
 
 // ---- investigations ----------------------------------------------------------------
 
-export function listInvestigations(params: InvestigationListParams = {}): Promise<InvestigationPage> {
-  return request<InvestigationPage>(withQuery('/investigations', params));
+export async function listInvestigations(params: InvestigationListParams = {}): Promise<InvestigationPage> {
+  const rows = await request<InvestigationSummaryWire[]>(withQuery('/investigations', params));
+  return toInvestigationPage(rows, params);
 }
 
-export function getInvestigation(id: string): Promise<InvestigationDetail> {
-  return request<InvestigationDetail>(`/investigations/${encodeURIComponent(id)}`);
+export async function getInvestigation(id: string): Promise<InvestigationDetail> {
+  const wire = await request<InvestigationDetailWire>(`/investigations/${encodeURIComponent(id)}`);
+  return toInvestigationDetail(wire);
 }
 
 export function getInvestigationCitations(id: string): Promise<InvestigationCitations> {
@@ -326,8 +332,9 @@ export function releaseContainment(id: string): Promise<ReleaseResponse> {
 
 // ---- citations and raw logs ----------------------------------------------------------
 
-export function listCitations(params: CitationListParams = {}): Promise<CitationPage> {
-  return request<CitationPage>(withQuery('/citations', params));
+export async function listCitations(params: CitationListParams = {}): Promise<CitationPage> {
+  const rows = await request<GlobalCitation[]>(withQuery('/citations', params));
+  return toCitationPage(rows, params);
 }
 
 export function getRawLog(rowId: string): Promise<RawLogRow> {

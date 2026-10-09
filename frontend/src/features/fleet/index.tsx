@@ -19,6 +19,7 @@ import { AGENT_VISUALS, type AgentTone, type AgentVisualId } from '../../lib/age
 import { cn } from '../../lib/cn';
 import { formatCount, formatNumber, formatPercent } from '../../lib/format';
 import { Button } from '../../ui/Button';
+import { FOCUS_RING } from '../../ui/classes';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
 import { Metric } from '../../ui/Metric';
@@ -32,6 +33,18 @@ type ServiceKey = 'watchdog' | 'self_healing';
 type SelectionKey = InvestigatorId | ServiceKey;
 
 const percent = (value: number): string => formatPercent(value, 1);
+
+/** A production CrS the dry run read from Redis, as a Metric so it carries its source and definition. */
+function productionCrs(value: number): MetricEnvelope<number> {
+  return {
+    value,
+    n: 1,
+    as_of: new Date().toISOString(),
+    source: 'POST /agents/{id}/fault-injection',
+    definition: 'Production credibility score read from Redis by the dry run, before or after it ran.',
+    reason: null,
+  };
+}
 
 /** Square agent glyph avatar, tone from SKILL section 5 (reference avatarColor). */
 const AVATAR_CLASS: Record<AgentTone, string> = {
@@ -113,21 +126,50 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function AgentCard({ agent, selected, onSelect }: { agent: FleetEntry; selected: boolean; onSelect: () => void }) {
-  const isolated = agent.isolated;
+/**
+ * A selectable card. The select button comes first and covers the whole card; the Proof buttons inside the
+ * card are positioned later in the DOM, so they paint above it and stay clickable. (A card that was itself a
+ * <button> would nest the Proof buttons inside a button, which is invalid HTML.)
+ */
+function SelectCard({
+  label,
+  selected,
+  onSelect,
+  className,
+  children,
+}: {
+  label: string;
+  selected: boolean;
+  onSelect: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
+    <div
       className={cn(
         'relative flex flex-col justify-between rounded-xl border p-4 text-left transition-all',
         selected
           ? 'border-primary bg-surface-card shadow-glow-cyan ring-1 ring-primary/50'
           : 'border-outline-variant/40 bg-surface-container-low/70 hover:border-outline-variant hover:bg-surface-card/60',
-        isolated ? 'opacity-60' : '',
+        className,
       )}
     >
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-pressed={selected}
+        aria-label={label}
+        className={cn('absolute inset-0 cursor-pointer rounded-xl', FOCUS_RING)}
+      />
+      {children}
+    </div>
+  );
+}
+
+function AgentCard({ agent, selected, onSelect }: { agent: FleetEntry; selected: boolean; onSelect: () => void }) {
+  const isolated = agent.isolated;
+  return (
+    <SelectCard label={`Select ${agent.display_name}`} selected={selected} onSelect={onSelect} className={isolated ? 'opacity-60' : ''}>
       <div>
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-3">
@@ -169,7 +211,7 @@ function AgentCard({ agent, selected, onSelect }: { agent: FleetEntry; selected:
           </span>
         </div>
       </div>
-    </button>
+    </SelectCard>
   );
 }
 
@@ -189,17 +231,7 @@ function ServiceCard({
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={cn(
-        'relative flex flex-col justify-between rounded-xl border p-4 text-left transition-all',
-        selected
-          ? 'border-primary bg-surface-card shadow-glow-cyan ring-1 ring-primary/50'
-          : 'border-outline-variant/40 bg-surface-container-low/70 hover:border-outline-variant hover:bg-surface-card/60',
-      )}
-    >
+    <SelectCard label={`Select ${name}`} selected={selected} onSelect={onSelect}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-3">
           <Avatar agentId={agentId} />
@@ -216,12 +248,12 @@ function ServiceCard({
         </span>
       </div>
       <div className="mt-4 space-y-2 border-t border-outline-variant/30 pt-3">{children}</div>
-    </button>
+    </SelectCard>
   );
 }
 
 function CredibilityHistoryChart({ agentId, isolationThreshold }: { agentId: InvestigatorId; isolationThreshold: number | undefined }) {
-  const history = useAsync(() => getCredibilityHistory(agentId, { limit: 60 }));
+  const history = useAsync(() => getCredibilityHistory(agentId, { limit: 60 }), undefined, ['credibility'], [agentId]);
   const rows = history.data ?? [];
   const points = rows.map((row, index) => ({ x: index + 1, y: row.crs_after }));
   if (history.error && !history.data) {
@@ -269,8 +301,8 @@ function FaultInjectionPanel({ agentId }: { agentId: InvestigatorId }) {
   }
 
   const checkClass =
-    result?.citation_check.status === 'VERIFIED' ? 'text-secondary' : result?.citation_check.status === 'DISCREPANCY' ? 'text-tertiary' : 'text-error';
-  const points = result?.projected.trajectory.map((point) => ({ x: point.round, y: point.crs })) ?? [];
+    result?.citation.status === 'VERIFIED' ? 'text-secondary' : result?.citation.status === 'DISCREPANCY' ? 'text-tertiary' : 'text-error';
+  const points = result?.projected_trajectory.map((point) => ({ x: point.round, y: point.projected_crs_after })) ?? [];
 
   return (
     <div className="space-y-3 rounded-xl border border-outline-variant/40 bg-background p-3.5">
@@ -278,7 +310,7 @@ function FaultInjectionPanel({ agentId }: { agentId: InvestigatorId }) {
         trailing={
           <Proof
             source="POST /agents/{id}/fault-injection"
-            n={result?.projected.trajectory.length ?? 0}
+            n={result?.projected_trajectory.length ?? 0}
             asOf={null}
             definition="Runs the real citation check on a fabricated citation, projects the credibility trajectory with the live CrS formula, then re-reads production credibility to prove it is unchanged. Writes nothing."
             label="Fault-injection dry run"
@@ -312,7 +344,7 @@ function FaultInjectionPanel({ agentId }: { agentId: InvestigatorId }) {
         <div className="space-y-3">
           <Field label="Citation check">
             <span className={cn('font-mono text-xs font-bold uppercase', checkClass)}>
-              {result.citation_check.status} · {result.citation_check.reason}
+              {result.citation.status} · {result.citation.reason}
             </span>
           </Field>
           <TrajectoryChart
@@ -320,7 +352,7 @@ function FaultInjectionPanel({ agentId }: { agentId: InvestigatorId }) {
             series={[{ id: 'projected', label: 'Projected CrS', tone: 'tertiary', points }]}
             xDomain={[1, Math.max(1, rounds)]}
             yDomain={[0, 1]}
-            threshold={{ value: result.projected.isolation_threshold, label: 'Isolation' }}
+            threshold={{ value: result.isolation_threshold, label: 'Isolation' }}
             xLabel="Round"
             yLabel="CrS"
             proof={{
@@ -329,23 +361,23 @@ function FaultInjectionPanel({ agentId }: { agentId: InvestigatorId }) {
               asOf: null,
               definition: 'Projected CrS per round with compute_crs using the live eta and isolation threshold.',
               inputs: [
-                { label: 'eta', value: formatNumber(result.projected.eta, 3) },
-                { label: 'isolation_threshold', value: formatNumber(result.projected.isolation_threshold, 2) },
+                { label: 'eta', value: formatNumber(result.eta, 3) },
+                { label: 'isolation_threshold', value: formatNumber(result.isolation_threshold, 2) },
               ],
             }}
           />
           <div className="flex flex-col gap-2 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3">
             <div className="flex items-center justify-between">
               <span className="font-mono text-[10px] font-semibold uppercase text-outline">Production credibility</span>
-              <span className={cn('font-mono text-xs font-bold uppercase', result.production_unchanged ? 'text-secondary' : 'text-error')}>
-                {result.production_unchanged ? 'Unchanged' : 'Changed'}
+              <span className={cn('font-mono text-xs font-bold uppercase', result.production_crs_unchanged ? 'text-secondary' : 'text-error')}>
+                {result.production_crs_unchanged ? 'Unchanged' : 'Changed'}
               </span>
             </div>
             <Field label="Before">
-              <Metric metric={result.production_crs.before} size="body" format={percent} label="Production CrS before" />
+              <Metric metric={productionCrs(result.production_crs_before)} size="body" format={percent} label="Production CrS before" />
             </Field>
             <Field label="After">
-              <Metric metric={result.production_crs.after} size="body" format={percent} label="Production CrS after" />
+              <Metric metric={productionCrs(result.production_crs_after)} size="body" format={percent} label="Production CrS after" />
             </Field>
           </div>
         </div>
@@ -536,7 +568,7 @@ function WatchdogInspector({ stats }: { stats: StatsResponse | undefined }) {
       <div className="space-y-2.5 rounded-xl border border-outline-variant/40 bg-background p-3.5 font-mono text-xs">
         <BoxLabel trailing={<span className="h-2 w-2 rounded-full bg-secondary animate-pulse" aria-hidden="true" />}>Verification counters (24 h)</BoxLabel>
         <Field label="Checks run">
-          <Metric metric={stats?.watchdog?.checks} size="body" label="Watchdog checks" />
+          <Metric metric={stats?.watchdog?.checks_total} size="body" label="Watchdog checks" />
         </Field>
         <Field label="Citations checked">
           <Metric metric={stats?.watchdog?.citations_checked} size="body" label="Citations checked" />
@@ -594,10 +626,10 @@ function SelfHealingInspector({ stats, status }: { stats: StatsResponse | undefi
 }
 
 export default function FleetPage() {
-  const fleet = useAsync(getAgentFleet, 30_000);
-  const stats = useAsync(getStats, 30_000);
-  const settings = useAsync(getSettings, 30_000);
-  const status = useAsync(getSystemStatus, 30_000);
+  const fleet = useAsync(getAgentFleet, 30_000, ['agents', 'credibility']);
+  const stats = useAsync(getStats, 30_000, ['stats', 'investigations', 'actions']);
+  const settings = useAsync(getSettings, 30_000, ['settings']);
+  const status = useAsync(getSystemStatus, 30_000, ['investigations', 'agents', 'settings', 'actions']);
   const me = useAsync(getMe);
   const [selectedKey, setSelectedKey] = useState<SelectionKey | null>(null);
 

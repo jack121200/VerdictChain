@@ -63,7 +63,7 @@ describe('InvestigationsPage', () => {
   });
 
   it('shows an em dash for confidence when none is recorded (never 0)', async () => {
-    client.listInvestigations.mockResolvedValue(page([summary({ verdict_class: null, verdict_confidence: null, status: 'running' })]));
+    client.listInvestigations.mockResolvedValue(page([summary({ verdict_class: null, verdict_confidence: null, status: 'investigating' })]));
     render(<InvestigationsPage />);
     expect(await screen.findByText('inv12345')).toBeTruthy();
     const conf = screen.getByText(/conf\./);

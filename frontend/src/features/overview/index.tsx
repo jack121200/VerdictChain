@@ -109,7 +109,7 @@ const CITATION_TONE: Record<CitationStatus, { label: string; cls: string }> = {
 
 /** One real citation from the latest investigation, floating over the hero image. */
 function CitationPin({ investigationId }: { investigationId: string }) {
-  const citations = useAsync(() => getInvestigationCitations(investigationId));
+  const citations = useAsync(() => getInvestigationCitations(investigationId), undefined, ['investigations', 'credibility'], [investigationId]);
   const first = citations.data?.citations?.[0];
   const summary = citations.data?.summary;
 
@@ -150,16 +150,16 @@ function rawLogTime(row: RawLogRow): string {
 }
 
 export default function OverviewPage() {
-  const evaluation = useAsync(getEvaluation);
-  const stats = useAsync(getStats, 30_000);
-  const fleet = useAsync(getAgentFleet, 30_000);
+  const evaluation = useAsync(getEvaluation, undefined, ['investigations']);
+  const stats = useAsync(getStats, 30_000, ['stats', 'investigations', 'actions']);
+  const fleet = useAsync(getAgentFleet, 30_000, ['agents', 'credibility']);
   const scenarios = useAsync(listScenarios);
   const rawCounts = useAsync(getRawLogCounts, 30_000);
-  const settings = useAsync(getSettings, 30_000);
-  const status = useAsync(getSystemStatus, 30_000);
-  const audit = useAsync(() => listAuditTrail({ limit: 200 }), 30_000);
+  const settings = useAsync(getSettings, 30_000, ['settings']);
+  const status = useAsync(getSystemStatus, 30_000, ['investigations', 'agents', 'settings', 'actions']);
+  const audit = useAsync(() => listAuditTrail({ limit: 200 }), 30_000, ['audit']);
   const recent = useAsync(() => listRecentRawLogs({ limit: 4 }), 30_000);
-  const latest = useAsync(() => listInvestigations({ limit: 1 }), 30_000);
+  const latest = useAsync(() => listInvestigations({ limit: 1 }), 30_000, ['investigations']);
 
   const latency = useMemo(() => deriveMeanLatencyMs(audit.data?.entries ?? []), [audit.data]);
   const providers = status.data?.providers;

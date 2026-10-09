@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EvaluationResponse, FleetEntry, InvestigationPage, Metric, RawLogRow, ScenarioSummary, Settings, StatsResponse, SystemStatus } from '../../api/types';
+import type { EvaluationResponse, FleetEntry, InvestigationPage, Metric, RawLogRow, ScenarioSummary, Settings, SystemStatus } from '../../api/types';
+import { fullStats } from '../../test/fixtures';
 
 vi.mock('../../api/client', () => ({
   describeError: (error: unknown) => String(error),
@@ -41,21 +42,7 @@ const metric = (value: number | null, reason: string | null = null): Metric<numb
   reason: value === null ? (reason ?? 'no data yet') : null,
 });
 
-function makeStats(overrides: Partial<StatsResponse> = {}): StatsResponse {
-  return {
-    threats_24h: metric(0),
-    active: metric(0),
-    insider_count: metric(0),
-    mean_agent_confidence: metric(0.5),
-    mean_crs: metric(0.9),
-    citations: { total: metric(50), verified: metric(48), discrepancy: metric(1), invalid_row: metric(1), verified_rate: metric(0.96) },
-    self_healing: { actions_total: metric(14), non_simulated: metric(0), simulated_share: metric(1) },
-    watchdog: { checks: metric(8), citations_checked: metric(50), discrepancies: metric(1), isolations: metric(0) },
-    feedback: { total: metric(0), confirmed: metric(0), false_positive: metric(0) },
-    brier: metric(null),
-    ...overrides,
-  };
-}
+const makeStats = fullStats;
 
 const EVAL = { accuracy: metric(0.95) } as unknown as EvaluationResponse;
 

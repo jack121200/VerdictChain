@@ -195,7 +195,7 @@ const CONTAINMENT_COLUMNS: readonly TableColumn<ResponseAction>[] = [
 ];
 
 function ContainmentTab() {
-  const actions = useAsync(() => listResponseActions({ limit: 100 }), 30_000);
+  const actions = useAsync(() => listResponseActions({ limit: 100 }), 30_000, ['actions']);
   return (
     <div className="mt-4 space-y-3">
       <div className="flex items-center gap-2">
@@ -248,7 +248,7 @@ function exportCustodyBundle(data: AuditTrailResponse): void {
 }
 
 export default function AuditPage() {
-  const trail = useAsync(() => listAuditTrail({ limit: 50 }), 30_000);
+  const trail = useAsync(() => listAuditTrail({ limit: 50 }), 30_000, ['audit']);
   const [tab, setTab] = useState<AuditTab>('ledger');
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [verifyResult, setVerifyResult] = useState<AuditVerifyResult | null>(null);

@@ -13,10 +13,10 @@ import { Skeleton } from '../../ui/Skeleton';
 /** Live debates first, then the most recent closed ones. Refreshes every 4s so a running
  *  debate appears without a manual reload. Every row links to its debate room. */
 export function DebateList() {
-  const investigations = useAsync(() => listInvestigations({ limit: 50 }), 4000);
+  const investigations = useAsync(() => listInvestigations({ limit: 50 }), 4000, ['investigations']);
   const rows = investigations.data?.items ?? [];
-  const live = rows.filter((row) => row.status === 'running');
-  const recent = rows.filter((row) => row.status !== 'running').slice(0, 12);
+  const live = rows.filter((row) => row.status === 'investigating');
+  const recent = rows.filter((row) => row.status !== 'investigating').slice(0, 12);
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-6">

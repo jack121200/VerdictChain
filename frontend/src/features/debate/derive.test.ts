@@ -52,7 +52,7 @@ describe('roundSteps', () => {
 
   it('marks the next round active while running', () => {
     const rounds = [round(1, [turn('network_traffic'), turn('access_log'), turn('endpoint_behavior')])];
-    const steps = roundSteps(rounds, 3, 'running', 3);
+    const steps = roundSteps(rounds, 3, 'investigating', 3);
     expect(steps[0].state).toBe('complete');
     expect(steps[1].state).toBe('active');
     expect(steps[2].state).toBe('pending');
@@ -88,7 +88,7 @@ describe('fromDetail', () => {
   it('seeds the live state from an investigation detail', () => {
     const detail = {
       id: 'i',
-      status: 'running',
+      status: 'investigating',
       verdict_class: null,
       verdict_confidence: null,
       primary_agent: 'network_traffic',
@@ -106,6 +106,6 @@ describe('fromDetail', () => {
     } as unknown as InvestigationDetail;
     const state = fromDetail(detail);
     expect(state.rounds.map((r) => r.round)).toEqual([1, 2]);
-    expect(state.status).toBe('running');
+    expect(state.status).toBe('investigating');
   });
 });

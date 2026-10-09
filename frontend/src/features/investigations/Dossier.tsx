@@ -164,7 +164,7 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
       ? verifyVerdictConfidence(detail.data.verdict_confidence, detail.data.votes, verdictClass)
       : 'not_checkable';
 
-  const canFeedback = verdictClass !== null && status !== 'running' && status !== 'failed';
+  const canFeedback = verdictClass !== null && status !== 'investigating' && status !== 'error';
 
   return (
     <div className="sticky top-24 space-y-5 rounded-2xl border border-outline-variant/50 bg-surface-container-low p-5 shadow-2xl backdrop-blur-xl">

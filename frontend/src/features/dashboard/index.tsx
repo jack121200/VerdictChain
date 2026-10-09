@@ -52,21 +52,21 @@ function auditTime(iso: string): string {
 
 /** The live forensic console (plan 2.4): tactical banner, scenario control, pod triad, verdict ledger, audit stream, cited evidence. */
 export default function DashboardPage() {
-  const stats = useAsync(getStats, 30_000);
-  const fleet = useAsync(getAgentFleet, 30_000);
+  const stats = useAsync(getStats, 30_000, ['stats', 'investigations', 'actions']);
+  const fleet = useAsync(getAgentFleet, 30_000, ['agents', 'credibility']);
   const scenarios = useAsync(listScenarios);
-  const settings = useAsync(getSettings, 30_000);
+  const settings = useAsync(getSettings, 30_000, ['settings']);
   const me = useAsync(getMe);
-  const audit = useAsync(() => listAuditTrail({ limit: AUDIT_LIMIT }), 30_000);
-  const ledger = useAsync(() => listInvestigations({ limit: LEDGER_LIMIT }), 30_000);
+  const audit = useAsync(() => listAuditTrail({ limit: AUDIT_LIMIT }), 30_000, ['audit']);
+  const ledger = useAsync(() => listInvestigations({ limit: LEDGER_LIMIT }), 30_000, ['investigations']);
 
   const items = ledger.data?.items ?? [];
   const latest: InvestigationSummary | undefined = items[0];
   const threat = useMemo(() => items.find((item) => isThreatClass(item.verdict_class)) ?? null, [items]);
 
   // Detail + citations of the latest investigation (drives the pod theories and cited evidence).
-  const detail = useAsync(() => (latest ? getInvestigation(latest.id) : Promise.resolve(undefined)));
-  const citations = useAsync(() => (latest ? getInvestigationCitations(latest.id) : Promise.resolve(undefined)));
+  const detail = useAsync(() => (latest ? getInvestigation(latest.id) : Promise.resolve(undefined)), undefined, ['investigations', 'credibility'], [latest?.id]);
+  const citations = useAsync(() => (latest ? getInvestigationCitations(latest.id) : Promise.resolve(undefined)), undefined, ['investigations', 'credibility'], [latest?.id]);
   const { reload: reloadDetail } = detail;
   const { reload: reloadCitations } = citations;
   useEffect(() => {

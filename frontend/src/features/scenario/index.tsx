@@ -29,7 +29,7 @@ const NOISE_OPTIONS: readonly NoisePct[] = [0, 15, 30];
 /** Dataset groups, in CICIDS-then-CERT order, as in plan 2.11. */
 const GROUP_ORDER: ReadonlyArray<{ dataset: DatasetName; title: string }> = [
   { dataset: 'CICIDS2017', title: 'CICIDS2017 · network traffic' },
-  { dataset: 'CERT_r4.2', title: 'CERT r4.2 · insider' },
+  { dataset: 'CERT r4.2', title: 'CERT r4.2 · insider' },
 ];
 
 const DEFAULT_MAX_ROWS = 5;

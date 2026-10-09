@@ -81,7 +81,7 @@ function DebateChip() {
   const { status } = useShellData();
   if (!status.data) return <Chip tone="idle">Debate engine —</Chip>;
   const slot = status.data.debate_slot;
-  if (slot.state === 'running' && slot.investigation_id !== null) {
+  if (slot.status === 'running' && slot.investigation_id !== null) {
     return (
       <Chip tone="primary" icon="sync_alt" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: 'The debate slot is held by one running investigation.' }}>
         Debate running · {shortId(slot.investigation_id)}

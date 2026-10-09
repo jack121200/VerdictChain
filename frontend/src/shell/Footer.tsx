@@ -4,7 +4,7 @@ import { Icon } from '../ui/Icon';
 import type { IconName } from '../ui/icon-names';
 import { Metric } from '../ui/Metric';
 import { Proof, type ProofProps } from '../ui/Proof';
-import { getLiveStatus, subscribeLiveStatus, type LiveStatus } from '../api/live-status';
+import { getEventsStatus, subscribeEventsStatus, type EventsState } from '../api/live-events';
 import { useShellData } from './shell-data';
 
 type Tone = 'secondary' | 'error' | 'tertiary' | 'primary' | 'idle';
@@ -84,25 +84,34 @@ function ThresholdItems() {
   );
 }
 
-const LIVE_TEXT: Record<LiveStatus['state'], { text: string; tone: Tone }> = {
-  connecting: { text: 'Live feed connecting', tone: 'tertiary' },
-  open: { text: 'Live feed open', tone: 'secondary' },
-  reconnecting: { text: 'Live feed reconnecting', tone: 'tertiary' },
-  closed: { text: 'Live feed closed', tone: 'idle' },
+const PUSH_TEXT: Record<EventsState, { text: string; tone: Tone; icon: IconName }> = {
+  idle: { text: 'Live updates starting', tone: 'idle', icon: 'sync' },
+  connecting: { text: 'Live updates connecting', tone: 'tertiary', icon: 'sync' },
+  live: { text: 'Live updates on', tone: 'secondary', icon: 'bolt' },
+  reconnecting: { text: 'Live updates down, polling', tone: 'tertiary', icon: 'sync_problem' },
+  stopped: { text: 'Live updates off', tone: 'idle', icon: 'sync_problem' },
 };
 
+/** State of the push channel every screen uses. When it is not live, screens poll instead. */
 function LiveItem() {
-  const live = useSyncExternalStore(subscribeLiveStatus, getLiveStatus, getLiveStatus);
+  const push = useSyncExternalStore(subscribeEventsStatus, getEventsStatus, getEventsStatus);
+  const { text, tone, icon } = PUSH_TEXT[push.state];
   const proof: Omit<ProofProps, 'label'> = {
-    source: 'browser WebSocket state (api/socket.ts)',
+    source: 'browser WebSocket state (api/live-events.ts, /ws/events)',
     n: 1,
-    asOf: null,
-    definition: 'State of the investigation socket on this page. No socket open reads as "no socket open".',
-    inputs: live ? [{ label: 'reconnect attempt', value: String(live.attempt) }] : [],
+    asOf: push.lastEventAt,
+    definition:
+      'The push channel announces each committed change so screens refresh on their own. When it is not live, screens fall back to polling, so data still refreshes. "As of" is the last change event received.',
+    inputs: [
+      { label: 'state', value: push.state },
+      { label: 'reconnect attempt', value: String(push.attempt) },
+    ],
   };
-  if (!live) return <Item tone="idle" proof={proof}>No socket open</Item>;
-  const { text, tone } = LIVE_TEXT[live.state];
-  return <Item tone={tone} proof={proof}>{text}</Item>;
+  return (
+    <Item tone={tone} icon={icon} proof={proof}>
+      {text}
+    </Item>
+  );
 }
 
 function RedisItem() {

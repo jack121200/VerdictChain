@@ -1,0 +1,38 @@
+[
+  {
+    "agent_id": "endpoint_behavior",
+    "expected": "AAW0353",
+    "field": "user_id",
+    "investigation_id": "0136cff5-4074-409b-90c7-826b6e0c8ea0",
+    "reason": "ok",
+    "round": 3,
+    "row_fingerprint": "92c647b5f416c97b4950eeb339afa54dbd828edad39733f0c8d0c995f430903d",
+    "row_id": "b115450e-6ee5-4f62-8b72-11b3b3e4ed0a",
+    "status": "VERIFIED",
+    "value": "AAW0353"
+  },
+  {
+    "agent_id": "endpoint_behavior",
+    "expected": "AIM0627",
+    "field": "user_id",
+    "investigation_id": "0136cff5-4074-409b-90c7-826b6e0c8ea0",
+    "reason": "ok",
+    "round": 3,
+    "row_fingerprint": "0ee723eb49e847e9ecf412f9826b99e65268e80aa963dc5f9c20bd8f56ab93a0",
+    "row_id": "0f302985-29da-475a-a8bb-ed6d4bcd2750",
+    "status": "VERIFIED",
+    "value": "AIM0627"
+  },
+  {
+    "agent_id": "access_log",
+    "expected": "SCP0130",
+    "field": "user_id",
+    "investigation_id": "0136cff5-4074-409b-90c7-826b6e0c8ea0",
+    "reason": "ok",
+    "round": 3,
+    "row_fingerprint": "4c0202506b062c1bc8b7ddbf077245cc9955302a0753a8abf628b2ae2c3f0754",
+    "row_id": "a5f170de-70d9-4e5b-afbf-1481784b6eab",
+    "status": "VERIFIED",
+    "value": "SCP0130"
+  }
+]

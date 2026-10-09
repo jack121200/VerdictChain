@@ -63,8 +63,8 @@ describe('connectInvestigationSocket', () => {
     socket.onmessage?.({ data: JSON.stringify(roundFrame(1)) });
     socket.onmessage?.({ data: JSON.stringify(roundFrame(1)) });
     socket.onmessage?.({ data: JSON.stringify(roundFrame(2)) });
-    socket.onmessage?.({ data: JSON.stringify({ type: 'snapshot', investigation_id: 'inv-1', status: 'running', rounds: [], credibility: [], actions: [], verdict: null }) });
-    socket.onmessage?.({ data: JSON.stringify({ type: 'snapshot', investigation_id: 'inv-1', status: 'running', rounds: [], credibility: [], actions: [], verdict: null }) });
+    socket.onmessage?.({ data: JSON.stringify({ type: 'snapshot', investigation_id: 'inv-1', status: 'investigating', rounds: [], credibility: [], actions: [], verdict: null }) });
+    socket.onmessage?.({ data: JSON.stringify({ type: 'snapshot', investigation_id: 'inv-1', status: 'investigating', rounds: [], credibility: [], actions: [], verdict: null }) });
     expect(onFrame.mock.calls.map(([frame]) => (frame as LiveFrame).type)).toEqual([
       'round_completed',
       'round_completed',

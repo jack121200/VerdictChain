@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import realDetail from '../test/real/investigation-detail.json';
 import {
   API_BASE,
   ApiError,
@@ -49,10 +50,10 @@ afterEach(() => {
 describe('request URL, method and body', () => {
   it('sends a GET with the query string and the bearer token', async () => {
     setToken('tok-1');
-    fetchMock.mockResolvedValue(jsonResponse({ items: [], total: { value: 0, n: 0, as_of: '', source: '', definition: '', reason: null }, limit: 5, offset: 0 }));
-    await listInvestigations({ limit: 5, status: 'running' });
+    fetchMock.mockResolvedValue(jsonResponse([]));
+    await listInvestigations({ limit: 5, status: 'investigating' });
     const { url, init } = firstCall(fetchMock);
-    expect(url).toBe(`${API_BASE}/investigations?limit=5&status=running`);
+    expect(url).toBe(`${API_BASE}/investigations?limit=5&status=investigating`);
     expect(init.method).toBe('GET');
     expect(headerOf(init, 'Authorization')).toBe('Bearer tok-1');
     expect(init.body).toBeUndefined();
@@ -93,7 +94,7 @@ describe('request URL, method and body', () => {
 
   it('encodes path ids so they cannot add segments', async () => {
     setToken('tok');
-    fetchMock.mockResolvedValue(jsonResponse({}));
+    fetchMock.mockResolvedValue(jsonResponse(realDetail));
     await getInvestigation('a/b c');
     expect(firstCall(fetchMock).url).toBe(`${API_BASE}/investigations/a%2Fb%20c`);
   });

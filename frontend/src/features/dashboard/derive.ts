@@ -25,7 +25,7 @@ export interface StatusMeta {
 /** Pill tone and label for an investigation status. */
 export function investigationStatusMeta(status: InvestigationStatus): StatusMeta {
   switch (status) {
-    case 'running':
+    case 'investigating':
       return { tone: 'primary', label: 'Running' };
     case 'verdict_reached':
       return { tone: 'secondary', label: 'Verdict reached' };
@@ -33,7 +33,7 @@ export function investigationStatusMeta(status: InvestigationStatus): StatusMeta
       return { tone: 'primary', label: 'Contained' };
     case 'ambiguous':
       return { tone: 'tertiary', label: 'Ambiguous' };
-    case 'failed':
+    case 'error':
       return { tone: 'error', label: 'Failed' };
   }
 }

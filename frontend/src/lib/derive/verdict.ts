@@ -47,7 +47,7 @@ export function verifyVerdictConfidence(
   return Math.abs(serverValue - computed) <= CONFIDENCE_TOLERANCE ? 'match' : 'mismatch';
 }
 
-export type QuorumStatus = 'agreed' | 'tie' | 'unmatched' | 'no_votes';
+export type QuorumStatus = 'agreed' | 'primary_decided' | 'tie' | 'unmatched' | 'no_votes';
 
 export interface Quorum {
   status: QuorumStatus;
@@ -56,15 +56,19 @@ export interface Quorum {
   agreeing: number;
   /** All votes cast, including votes that matched no class. */
   voters: number;
-  /** "2/3 agree", "tie → ambiguous", "no class matched" or "no votes yet". */
+  /** "2/3 agree", "no majority: primary agent decided", "tie → ambiguous", "no class matched" or "no votes yet". */
   label: string;
 }
 
 /**
- * Quorum from the votes. Agreed when one class leads, otherwise a tie (ambiguous).
+ * Quorum from the votes, mirroring the server (backend/debate/verdict.py aggregate_verdict):
+ * - a class with more votes than any other wins ("agreed");
+ * - with no majority (a tie), the primary agent's class decides if it cast a real vote. The primary agent
+ *   is the one whose data slice matched the injected scenario ("primary_decided");
+ * - otherwise a tie stays ambiguous.
  * Votes with a null class count as voters but support no class.
  */
-export function quorumFromVotes(votes: readonly VoteLike[]): Quorum {
+export function quorumFromVotes(votes: readonly VoteLike[], primaryAgentId: string | null = null): Quorum {
   const voters = votes.length;
   if (voters === 0) {
     return { status: 'no_votes', winner: null, agreeing: 0, voters, label: 'no votes yet' };
@@ -83,8 +87,19 @@ export function quorumFromVotes(votes: readonly VoteLike[]): Quorum {
   let top = 0;
   for (const count of counts.values()) top = Math.max(top, count);
   const leaders = [...counts.entries()].filter(([, count]) => count === top).map(([name]) => name);
-  if (leaders.length !== 1) {
-    return { status: 'tie', winner: null, agreeing: top, voters, label: 'tie → ambiguous' };
+  if (leaders.length === 1) {
+    return { status: 'agreed', winner: leaders[0], agreeing: top, voters, label: `${top}/${voters} agree` };
   }
-  return { status: 'agreed', winner: leaders[0], agreeing: top, voters, label: `${top}/${voters} agree` };
+
+  const primaryClass = votes.find((vote) => vote.agent_id === primaryAgentId)?.verdict_class ?? null;
+  if (primaryClass !== null) {
+    return {
+      status: 'primary_decided',
+      winner: primaryClass,
+      agreeing: counts.get(primaryClass) ?? 0,
+      voters,
+      label: 'no majority: primary agent decided',
+    };
+  }
+  return { status: 'tie', winner: null, agreeing: top, voters, label: 'tie → ambiguous' };
 }

@@ -119,9 +119,9 @@ function DebateRoom({ id }: { id: string }) {
   const [roundFilter, setRoundFilter] = useState<RoundFilter>('all');
   const [signBusy, setSignBusy] = useState(false);
 
-  const fleet = useAsync(getAgentFleet);
-  const settings = useAsync(getSettings);
-  const status = useAsync(getSystemStatus);
+  const fleet = useAsync(getAgentFleet, undefined, ['agents', 'credibility']);
+  const settings = useAsync(getSettings, undefined, ['settings']);
+  const status = useAsync(getSystemStatus, undefined, ['investigations', 'agents', 'settings', 'actions']);
   const me = useAsync(getMe);
 
   // Authoritative load of the investigation, its citations and its evidence bundle, keyed by id and reloadKey.
@@ -157,7 +157,7 @@ function DebateRoom({ id }: { id: string }) {
     if (frame.type === 'error') pushToast(frame.detail, { tone: 'error' });
   }, []);
 
-  const running = debate.status === 'running';
+  const running = debate.status === 'investigating';
 
   // Live feed only while the debate is running. Replay (a finished case) never opens a socket, so it triggers no provider call.
   useEffect(() => {
@@ -207,7 +207,7 @@ function DebateRoom({ id }: { id: string }) {
     .map((provider) => provider.model as string);
   const engineText = providers.length > 0 ? providers.join(', ') : configuredModels.length > 0 ? configuredModels.join(', ') : 'per-call provider recorded with each turn';
 
-  const quorum = quorumFromVotes(debate.votes);
+  const quorum = quorumFromVotes(debate.votes, meta?.primary_agent ?? null);
   const supporters = debate.verdictClass ? meanSupporterConfidence(debate.votes, debate.verdictClass) : { value: null, n: 0 };
   const confidenceCheck = debate.verdictClass
     ? verifyVerdictConfidence(debate.verdictConfidence, debate.votes, debate.verdictClass)
@@ -481,7 +481,7 @@ function DebateRoom({ id }: { id: string }) {
           <Aggregator
             debate={debate}
             quorumLabel={quorum.label}
-            quorumTone={quorum.status === 'agreed' ? 'secondary' : quorum.status === 'no_votes' ? 'neutral' : 'tertiary'}
+            quorumTone={quorum.status === 'agreed' || quorum.status === 'primary_decided' ? 'secondary' : quorum.status === 'no_votes' ? 'neutral' : 'tertiary'}
             supporters={supporters}
             confidenceCheck={confidenceCheck}
             consensusThreshold={consensusThreshold}

@@ -1,5 +1,5 @@
 """GET /evaluation (plan section 3.4): labelled investigations only, mapped classes, abstentions never
-correct, every number a Metric with its n, and the insider mapping stated as a default.
+correct, every number a Metric with its n, and the source of the insider mapping stated.
 """
 
 import pytest
@@ -28,10 +28,10 @@ def test_empty_database_gives_null_rates_with_reasons(db_session):
     assert all(c["precision"]["value"] is None and c["precision"]["reason"] for c in body["per_class"])
     assert [g["noise_pct"] for g in body["by_noise"]] == [0, 15, 30]
     assert len(body["mapping"]) == 9
-    assert "default" in body["mapping_status"]
+    assert "CERT r4.2 answer files" in body["mapping_status"]
 
 
-def test_scores_only_labelled_verdicts_with_the_default_mapping(db_session):
+def test_scores_only_labelled_verdicts_with_the_mapping(db_session):
     add_investigation(db_session, scenario_label="DDoS", verdict_class="ddos", confidence=0.9, noise_pct=0)
     add_investigation(
         db_session, scenario_label="DDoS", verdict_class="port_scan", confidence=0.8, noise_pct=15
@@ -70,7 +70,7 @@ def test_scores_only_labelled_verdicts_with_the_default_mapping(db_session):
     assert body["abstain_rate"]["value"] == pytest.approx(1 / 4)
     assert body["accuracy"]["n"] == 4
     assert "ambiguous counts as wrong" in body["accuracy"]["definition"]
-    assert "pending owner confirmation" in body["accuracy"]["definition"]
+    assert "also accept the other insider class" in body["accuracy"]["definition"]
 
 
 def test_per_class_and_confusion_matrix(db_session):

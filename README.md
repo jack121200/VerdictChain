@@ -5,8 +5,9 @@ A multi-agent forensics console for insider threats and network intrusions.
 - **Three investigator agents** (Network-Traffic, Access-Log, Endpoint-Behavior) each read a different slice of
   the logs (CICIDS2017 network flows, CERT r4.2 file / logon / device events) and never see which scenario was
   injected. The blind test is enforced in code and covered by tests.
-- **A 3-round debate** (state a theory, challenge or support, final position). The verdict is a deterministic
-  function of the final positions, not another LLM call.
+- **A 3-round debate** (state a theory, challenge or support, final position), run as a LangGraph state graph in
+  which the investigators of a round answer in parallel. The verdict is a deterministic function of the final
+  positions, not another LLM call.
 - **A Watchdog** checks every cited log row against Postgres and keeps a credibility score per agent
   (`CrS_new = clamp(CrS_old * (1 + eta * (2 * match_rate - 1)), 0, 1)`, `eta` default 0.20). An agent whose score
   falls below the isolation threshold (default 0.30) is quarantined.
@@ -218,7 +219,7 @@ docker-compose.yml           infra services; backend + frontend under the "app" 
 backend/
   pipeline/                  dataset ingestion, normalization, noise, log streaming
   agents/                    the three investigators and the Groq / Gemini REST clients
-  debate/                    the 3-round engine and the deterministic verdict
+  debate/                    the 3-round debate (LangGraph graph in graph.py, steps in engine.py) and the verdict
   watchdog/                  citation verification, credibility score, fault injection
   self_healing/              sandboxed containment actions
   evaluation/                ground-truth mapping and accuracy metrics (labelled runs only)
@@ -228,7 +229,7 @@ backend/
   tests/                     pytest suite
 frontend/                    React + TypeScript + Vite console (src/, scripts/, e2e/)
 data/                        datasets and the CICIDS2017 merge script (the data itself is gitignored)
-verdictchain---multi-agent-soc/   read-only reference export of the approved HUD design
+reference/                   read-only reference export of the approved HUD design (git-ignored, local only)
 ```
 
 ## The no-bluff contract
@@ -267,6 +268,4 @@ votes, but its verdict cannot trigger autonomous containment (a human can contai
   it, which is why the setup and CI install it separately.
 - **Continuous monitoring is off.** `/system/status` reports `continuous_mode: false`: investigations start from
   the Simulate flow (`POST /investigations/simulate`), not from a background stream.
-- **No LangGraph.** `CLAUDE.md` lists LangGraph in the stack, but nothing in `backend/` imports it; the debate
-  engine is plain Python (`backend/debate/engine.py`).
 - **The Docker app profile is a local stack**, not a deployment: no TLS, no reverse proxy, loopback ports only.

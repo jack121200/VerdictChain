@@ -1,7 +1,7 @@
 """Evaluation route (plan section 3.4): accuracy and per-class metrics over labelled investigations.
 
 Only investigations with a scenario label that reached a verdict are scored. The label-to-class mapping
-is a default (backend/evaluation/ground_truth_map.py) that the project owner has not confirmed yet.
+(backend/evaluation/ground_truth_map.py) comes from the CERT r4.2 answer files for the insider scenarios.
 Ambiguous verdicts are abstentions and are never correct.
 """
 
@@ -29,8 +29,13 @@ router = APIRouter(prefix="/evaluation", tags=["evaluation"])
 
 SOURCE = "/evaluation"
 VERDICT_STATUSES = frozenset({"verdict_reached", "contained", "ambiguous"})
-MAPPING_STATUS = "default mapping; insider_scenario_1 to 3 are pending confirmation by the project owner"
-MAPPING_NOTE = " Insider mapping is a default pending owner confirmation (plan section 8, item 7)."
+MAPPING_STATUS = (
+    "insider scenarios 1 to 3 are mapped from the event types in the CERT r4.2 answer files; "
+    "each also accepts the other insider class"
+)
+MAPPING_NOTE = (
+    " Insider scenarios also accept the other insider class (CERT r4.2 answers, ground_truth_map.py)."
+)
 
 
 def _metric(rate: Rate, definition: str) -> Metric[float]:

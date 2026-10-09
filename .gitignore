@@ -12,3 +12,6 @@ frontend/dist/
 *.log
 .venv/
 venv/
+
+# Read-only design reference exports (kept locally, never on GitHub)
+/reference/

@@ -1,8 +1,17 @@
 """Scenario label -> verdict class mapping used by /evaluation (plan section 3.4 and section 8, item 7).
 
-The insider mapping is a DEFAULT. It is not confirmed by the project owner yet. Insider scenarios
-1 to 3 are mapped to one primary class each, and the other insider class is accepted as well.
-`ambiguous` is an abstention and is never counted as correct.
+The insider rows come from the CERT r4.2 answer files (data/raw_data/insider_raw_data/answers_extracted/
+answers/r4.2-N/), which list every event of each insider. Their event types decide the primary class
+(counts from those files; test_ground_truth_map.py re-derives them when the dataset is present):
+  scenario 1, 30 insiders: logon, device, http. 126 of 138 logons are before 07:00 or from 19:00, each with
+      a removable-drive connect, and the http events are wikileaks.org pages  -> insider_logon_anomaly
+  scenario 2, 30 insiders: http, email, device. Job-site pages and email, then 2607 device events (no logon
+      events at all)  -> insider_file_exfiltration
+  scenario 3, 10 insiders: logon, device, file, email, http. 60 logons, 34 of them off-hours, plus the only
+      file events of the three scenarios  -> insider_logon_anomaly
+The other insider class is accepted in every case, so acceptable accuracy and family accuracy do not depend
+on which class is primary; only exact accuracy does. `ambiguous` is an abstention and is never counted as
+correct.
 """
 
 from collections.abc import Mapping

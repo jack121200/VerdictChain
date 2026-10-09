@@ -21,7 +21,7 @@ already fully specified there.
 - Database: PostgreSQL (Neon/Supabase in prod, local Postgres via Docker in dev)
 - Cache / live credibility scores: Redis
 - Message queue (agent-to-agent + log ingestion): RabbitMQ
-- Frontend: React (TypeScript). Port the approved HUD design (SKILL-design-system.md v2) onto the real API; the reference export lives in verdictchain---multi-agent-soc/ and is read-only
+- Frontend: React (TypeScript). Port the approved HUD design (SKILL-design-system.md v2) onto the real API; the reference export lives in reference/verdictchain---multi-agent-soc/ (git-ignored, local only) and is read-only
 - Icons: Material Symbols Outlined (font). Lucide is not used
 - Charts: hand-written SVG. Recharts is not used
 - Test tooling: Vitest (frontend unit tests) and Playwright (frontend E2E)
@@ -84,7 +84,7 @@ verdictchain/
 ├── backend/
 │   ├── pipeline/            ← ingestion, normalization, feature extraction
 │   ├── agents/               ← investigator agents (LangGraph nodes)
-│   ├── debate/               ← debate engine / state machine
+│   ├── debate/               ← debate engine + LangGraph state graph (graph.py)
 │   ├── watchdog/              ← credibility scoring + verification
 │   ├── self_healing/          ← containment actions (sandboxed)
 │   ├── api/                   ← FastAPI routes + WebSocket

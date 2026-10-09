@@ -214,6 +214,11 @@ that every mapped class is in `VERDICT_CLASSES`.
 | insider_scenario_2 | insider_file_exfiltration | insider_logon_anomaly |
 | insider_scenario_3 | insider_logon_anomaly | insider_file_exfiltration |
 
-The insider rows are a **default that the project owner has not confirmed yet** (plan section 8, item 7).
+The insider rows come from the CERT r4.2 answer files (`data/raw_data/insider_raw_data/answers_extracted/answers/r4.2-N/`),
+which list every event of each insider. Scenario 1 (30 insiders) is logon, device and http events, 126 of its 138 logons
+outside 07:00-19:00. Scenario 2 (30 insiders) is http, email and device events, with no logon events at all. Scenario 3
+(10 insiders) is logon, device, file, email and http events, and the only one with file events. The other insider class
+is accepted in every case, so acceptable and family accuracy do not depend on which class is primary; exact accuracy
+does. `test_ground_truth_map.py` re-derives the event types when the dataset is present.
 `ambiguous` counts as an abstention and is never correct. Accuracy is an exact match, acceptable accuracy
 also accepts the listed alternative, and family accuracy compares network, insider and benign families.

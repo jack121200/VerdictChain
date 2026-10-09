@@ -5,7 +5,7 @@ description: Approved HUD design v2 (decided 2026-10-05) - exact tokens, type, i
 
 # VerdictChain — Design System v2 (LOCKED, approved 2026-10-05)
 
-**This file supersedes the v1 token table and its rules (list in §12).** The target look is the reference export `verdictchain---multi-agent-soc/` (read-only, not committed). Port it onto the real API. Every value on screen is real data (no-bluff contract, §11).
+**This file supersedes the v1 token table and its rules (list in §12).** The target look is the reference export `reference/verdictchain---multi-agent-soc/` (read-only, git-ignored, never pushed). Port it onto the real API. Every value on screen is real data (no-bluff contract, §11).
 
 ## 1. Personality
 Single dark theme. A multi-agent forensic console: dense HUD panels, hairline accents, monospace evidence. Labels say what the system does. No marketing claims.

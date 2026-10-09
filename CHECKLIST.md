@@ -1,6 +1,6 @@
 # VerdictChain — Master Checklist
 
-Legend: ✅ done · 🟡 partial · ⬜ todo · ❓ needs your decision
+Legend: ✅ done · 🟡 partial · ⬜ todo · ❓ needs your decision · ➖ closed, not counted
 
 Rule: one line per item, `ID status text`. Updated after every finished task. Counts are generated, not typed (see bottom).
 
@@ -48,9 +48,9 @@ FE9 ✅ Icon whitelist widened (17 -> ~75 glyphs), any icon size
 FE10 ✅ Command palette (Ctrl/Cmd+K and a TopNav button): pages, investigation search, inject; arrow keys, Enter, Shift+Enter, Esc
 
 ## D. 70 points — BACKEND
-BE1 🟡 Debate off the request path: 202 + thread, progress endpoint and restart recovery done; no job queue (see SD2/SD4 decision)
+BE1 🟡 Debate off the request path: 202 + thread, progress endpoint and restart recovery done; the job queue is SD2
 BE2 🟡 Multi-worker safe: events fan out over Redis pub/sub (done); atomic CrS update pending
-BE3 🟡 Continuous mode: honestly reported as OFF; not wired to the pipeline
+BE3 🟡 Continuous mode: honestly reported as OFF; the simulated live feed is section L (RT1-RT8)
 BE4 🟡 Gemini quota: daily caps + in-flight slot exist; clear quota-error message + caching pending
 BE5 ✅ /stats cached 5 s in Redis, invalidated by every committed change, incremental chain check inside
 BE6 ✅ Audit verify is incremental by default (checkpoint) and says so (mode, verified_from_seq); full=true re-verifies everything
@@ -65,7 +65,7 @@ LG2 🟡 Verdict: primary-agent tie-break done (+tests); structured verdict fiel
 LG3 ✅ Non-primary agents see the scenario's rows / time window (tiered, tested incl. day-padding and label-blindness); CICIDS (2017) vs CERT (2010-11) have no shared timeline, so a network scenario honestly falls back to a recent sample
 LG4 ⬜ Stance enforced in the agent schema (not parsed from the first word)
 LG5 ✅ Self-healing credibility gate now bites: an agent between 0.30 and 0.50 still votes but cannot trigger autonomous containment (it used to be the isolation threshold, which a contributing agent can never be under)
-LG6 ❓ Evaluation insider ground-truth mapping needs your confirmation
+LG6 ✅ Insider scenario mapping derived from the CERT r4.2 answer files (event types per scenario: S1 off-hours logon + drive, S2 heavy drive use, S3 logon + file); a test re-derives them; the other insider class is accepted, so acceptable and family accuracy do not depend on the primary class
 LG7 ⬜ Noise: separate, clearly labelled adversarial mode
 LG8 ✅ Restore semantics documented in the README and proven end to end (restore resets CrS to 0.50, audited, history stays)
 LG9 ✅ Live isolation path exercised end to end through POST /investigations/simulate: stub fabricate mode -> real Watchdog -> CrS -> quarantine -> next debate without the agent -> audited restore (+ seed_demo --drill, stub --fabricate)
@@ -75,18 +75,18 @@ LG10 ⬜ Analyst feedback actually feeds an adaptive threshold
 ST1 ✅ One source of truth for API schemas: no inline route models exist, a guard test keeps it that way
 ST2 ⬜ Split 700–1000-line screens into view / data
 ST3 ⬜ Shared usePageData hook (load / live / empty)
-ST4 ❓ Reference folder: move to /reference or delete after the port
+ST4 ✅ Reference folder moved to reference/ and git-ignored (kept locally, never pushed)
 ST5 ✅ Playwright specs: smoke, inject flow, hallucination drill (isolate -> quarantined everywhere -> restore by a lead), no-bluff canary (numbers = API, no invented claim on any page, null metric = em dash + reason), RBAC + forged token, audit verify + browser SHA-256, realtime without reload
 ST6 ⬜ Agent id / name mapping centralised
 ST7 🟡 API types vs backend: hand-written types now VERIFIED against the live API + OpenAPI by contract-check (no codegen)
 ST8 ✅ Migration round-trip test (upgrade, downgrade base, upgrade) on a scratch database; single head 0007
 ST9 ⬜ Dev tools separated from the test harness in backend/scripts
 ST10 ⬜ Docs consolidated (CLAUDE.md + SKILL files in sync)
-ST11 ❓ LangGraph is in the locked stack (CLAUDE.md) but nothing imports it: the debate engine is plain Python. Adopt LangGraph, or change the stack list?
+ST11 ✅ LangGraph runs the debate: backend/debate/graph.py is a StateGraph (route_round fans out one node per investigator with Send, close_round joins them, then aggregate and respond); the investigators of a round run in parallel (peak 3 proven, results follow the agent order, a failing agent ends the debate as error); 63 debate tests, 703 backend tests green
 
 ## G. 70 points — FORMATTING
 FM1 ⬜ Surface elevation + borders re-tuned for pure black
-FM2 ⬜ One locked type scale
+FM2 ➖ One locked type scale: closed. Your exact-ditto directive (UD16) keeps the reference font sizes, so a locked scale would reduce fidelity
 FM3 ⬜ Evidence values always JetBrains Mono (audit)
 FM4 ⬜ Every status colour paired with an icon shape (audit)
 FM5 🟡 Number formatting goes through lib/format.ts on the pages the agent swept (Dashboard, Investigations, Audit, Access, Overview); Trust/Fleet/Debate sweep pending
@@ -98,9 +98,9 @@ FM10 ✅ color-scheme: dark set (native controls)
 
 ## H. 70 points — SYSTEM DESIGN
 SD1 🟡 WS fan-out over Redis pub/sub done; CrS updates atomic pending
-SD2 ❓ Debates through a worker queue: today ONE debate runs at a time on purpose (credibility is shared state, provider quota is global) and a second inject is refused with 409. A queue (DB-backed, one worker, no RabbitMQ needed) would accept it as 'queued'. Your call: queue, or keep the single slot?
+SD2 ⬜ Debates through a worker queue (decided: build it): DB-durable FIFO, one worker, a second inject is accepted as queued with a position instead of 409
 SD3 ✅ Idempotency-Key on POST /investigations/simulate (same key = same investigation, no second debate; a refused request frees the key)
-SD4 ❓ Per-user debate slot: same decision as SD2 (a per-user cap only makes sense once there is a queue)
+SD4 ⬜ Per-user and global caps on queued debates (decided with SD2)
 SD5 ✅ Boot-time secret/key validation (api/startup_checks.py, 17 tests)
 SD6 🟡 Stats cached; read endpoints are bounded; per-endpoint rate limits on reads not added
 SD7 🟡 Observability: request id + latency log lines done; provider latency/quota counters pending
@@ -117,7 +117,7 @@ DF5 🟡 Inject -> debate handoff: id in URL + replay exist; failure paths unpro
 DF6 ✅ Provider shown per message in the debate stream and per investigation in the header
 DF7 ✅ Continuous ingestion surfaced honestly: Access page shows 'off · manual injection only' from /system/status
 DF8 🟡 Labelled evaluation runs: seeded with labels; /evaluation view not yet re-checked
-DF9 ❓ Credibility history: per-case vs global trend (your decision)
+DF9 ✅ Credibility history: Trust and Fleet show the global per-agent trend (last 60 scored rounds, threshold line); the Debate Room shows the per-case round-by-round CrS before and after
 DF10 ✅ Footer shows live / reconnecting; screens poll as a fallback while the socket is down
 
 ## J. Release / hygiene
@@ -147,7 +147,15 @@ CT15 ✅ Debate Room shows each agent's data slice (scenario rows / same user + 
 CT16 ⬜ Debate Room explains why an investigation was not contained (verdict under the threshold / an agent under the 0.50 floor / non-actionable class), derived in the browser with a Proof
 CT17 ✅ Bugs the E2E suite found, all fixed with tests: the live verdict frame crashed the Debate Room, the snapshot gave action rows no id (React key warning), round frames carried a score dict where the page wanted a number, Overview crashed on a scenario with no rows, the first 401 could miss the login redirect, button inside a button in the scenario modal, dashboard without an h1, the palette lost its highlighted row on a refresh
 
+## L. Real-time operation (your latest request: the system runs on its own)
+RT1 ⬜ Simulated live feed: a background feed streams dataset rows into RabbitMQ on its own (no inject click); pointer-only messages, no label in any message
+RT2 ⬜ Monitor consumes the queue, keeps a window per source and scores it with a documented, label-free rule (Proof shows the numbers)
+RT3 ⬜ A flagged window starts an investigation by itself (trigger_type continuous) with a cooldown, a queue cap and a daily cap, so a live feed cannot burn the LLM quota
+RT4 ⬜ The evaluation label of an automatic investigation is attached server-side afterwards; agents never see it (a test with seeded secret labels proves it)
+RT5 ⬜ Live page: feed rate, per-source window score against its threshold, queue, recent automatic investigations; honest 'simulated replay of dataset rows' banner; updates over WebSocket
+RT6 ⬜ Start / pause / resume / speed of the feed: RBAC-gated, audited, and /system/status.continuous_mode is real
+RT7 ⬜ Backend tests + Playwright spec: the feed runs, a window flags, an investigation starts and finishes with no click
+RT8 ⬜ Queue position shown in progress, the Debate list and the Dashboard (queued state)
+
 ## Open decisions for you (❓)
-- LG6 confirm insider scenario -> verdict-class mapping used by /evaluation
-- ST4 keep, move or delete verdictchain---multi-agent-soc/
-- DF9 credibility trend: global per agent, or per investigation
+- none: every decision is made (see ➖ and ✅ lines)

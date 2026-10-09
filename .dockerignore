@@ -1,0 +1,19 @@
+# Ignore list for the repo-root build context (backend/Dockerfile). The image needs backend/ only.
+# Secrets and datasets must never reach an image layer.
+.env
+.env.*
+.git
+.github
+.claude
+.qodo
+data
+frontend
+verdictchain---multi-agent-soc
+VerdictChain Forensics Console_FIGMA_ONLY_FOR_REFRENCE
+backend/tests
+**/node_modules
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+*.log

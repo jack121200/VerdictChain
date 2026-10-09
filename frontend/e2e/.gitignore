@@ -1,0 +1,4 @@
+.auth/
+.results/
+.scratch/
+__pycache__/

@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test",
+    "e2e:api": "node e2e/support/start-backend.mjs",
+    "e2e:headed": "playwright test --headed",
+    "typecheck:e2e": "tsc --noEmit -p e2e/tsconfig.json",
     "check:no-bluff": "node scripts/no-bluff-check.mjs",
     "format": "oxfmt"
   },

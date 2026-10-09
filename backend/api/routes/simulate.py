@@ -55,6 +55,7 @@ class _Prepared:
     investigation_id: uuid.UUID
     primary_agent: str
     rows: list
+    scenario_rows: list
     max_rows: int
     scenario_label: str
     noise_pct: int
@@ -182,6 +183,7 @@ def _prepare(payload: SimulateScenarioRequest, username: str) -> _Prepared:
         investigation_id=investigation_id,
         primary_agent=primary_agent,
         rows=window,
+        scenario_rows=rows,
         max_rows=payload.max_rows_per_agent,
         scenario_label=payload.scenario_label,
         noise_pct=payload.noise_pct,
@@ -199,6 +201,7 @@ def _run(prepared: _Prepared, loop: asyncio.AbstractEventLoop) -> dict:
             investigation_id=prepared.investigation_id,
             max_rows_per_agent=prepared.max_rows,
             on_update=make_debate_broadcaster(str(prepared.investigation_id), prepared.scenario_label, loop),
+            scenario_rows=prepared.scenario_rows,
         )
     finally:
         prepared.slot.release()

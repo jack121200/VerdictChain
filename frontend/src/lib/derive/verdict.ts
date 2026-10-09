@@ -7,11 +7,18 @@ export interface VoteLike {
   agent_id: string;
   verdict_class: string | null;
   confidence: number | null;
+  /** false = the agent was isolated in this investigation, so the verdict leaves its vote out. */
+  counted?: boolean;
 }
 
-/** Votes whose class equals the verdict class. */
+/** The votes the verdict is made of: an isolated agent's last position is shown but not counted. */
+export function countedVotes<V extends VoteLike>(votes: readonly V[]): V[] {
+  return votes.filter((vote) => vote.counted !== false);
+}
+
+/** Counted votes whose class equals the verdict class. */
 export function supportersOf<V extends VoteLike>(votes: readonly V[], verdictClass: string): V[] {
-  return votes.filter((vote) => vote.verdict_class === verdictClass);
+  return countedVotes(votes).filter((vote) => vote.verdict_class === verdictClass);
 }
 
 /**
@@ -68,7 +75,8 @@ export interface Quorum {
  * - otherwise a tie stays ambiguous.
  * Votes with a null class count as voters but support no class.
  */
-export function quorumFromVotes(votes: readonly VoteLike[], primaryAgentId: string | null = null): Quorum {
+export function quorumFromVotes(allVotes: readonly VoteLike[], primaryAgentId: string | null = null): Quorum {
+  const votes = countedVotes(allVotes);
   const voters = votes.length;
   if (voters === 0) {
     return { status: 'no_votes', winner: null, agreeing: 0, voters, label: 'no votes yet' };

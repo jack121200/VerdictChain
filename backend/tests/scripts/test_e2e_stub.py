@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from backend.agents.base_agent import parse_and_validate
 from backend.agents.llm_clients import GeminiClient, GroqClient
@@ -161,6 +162,43 @@ def test_stub_output_is_labelled_as_stub_and_the_names_come_back():
     stub.uninstall()
     assert (GroqClient.name, GeminiClient.name) == ("groq", "gemini")
     assert GroqClient.__dict__["complete"] is _REAL_GROQ_COMPLETE
+
+
+def test_fabricate_mode_corrupts_only_the_named_agents_values():
+    rows = stub.sample_rows("access_log")
+    honest, _ = _reply("access_log", 1, rows)
+    assert stub.set_fabricate(["access_log"]) == ["access_log"]
+    fabricated, _ = _reply("access_log", 1, rows)
+    other, _ = _reply("network_traffic", 1)
+
+    honest_cited = json.loads(honest)["cited_evidence"]
+    fabricated_cited = json.loads(fabricated)["cited_evidence"]
+    assert [e["row_id"] for e in fabricated_cited] == [e["row_id"] for e in honest_cited]  # real rows
+    assert all(e["value"] == stub._FABRICATED_VALUE for e in fabricated_cited)  # wrong values
+    assert all(e["value"] != stub._FABRICATED_VALUE for e in json.loads(other)["cited_evidence"])
+    # The agent layer only checks that the cited row ids are in its slice, so this reaches the Watchdog.
+    parse_and_validate(fabricated, "access_log", 1, {str(r.row_id) for r in rows})
+
+    stub.uninstall()  # also switches fabricate mode off
+    assert stub.get_fabricate() == {"agents": []}
+
+
+def test_set_fabricate_rejects_names_that_are_not_investigators():
+    with pytest.raises(ValueError, match="unknown investigator"):
+        stub.set_fabricate(["watchdog"])
+    assert stub.get_fabricate() == {"agents": []}
+
+
+def test_fabricate_route_round_trip():
+    app = FastAPI()
+    stub.add_stub_route(app)
+    http = TestClient(app)
+    assert http.post("/__e2e/fabricate", json={"agents": ["endpoint_behavior"]}).json() == {
+        "agents": ["endpoint_behavior"]
+    }
+    assert http.get("/__e2e/fabricate").json() == {"agents": ["endpoint_behavior"]}
+    assert http.post("/__e2e/fabricate", json={"agents": ["nobody"]}).status_code == 422
+    assert http.post("/__e2e/fabricate", json={"agents": []}).json() == {"agents": []}
 
 
 def test_selftest_prints_ok(capsys):

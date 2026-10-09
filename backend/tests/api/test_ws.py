@@ -266,7 +266,7 @@ def test_live_frames_reach_the_socket_and_each_carries_the_investigation_id(db_s
     can_emit = threading.Event()
     finished = threading.Event()
 
-    def fake_debate(primary, rows, *, investigation_id, max_rows_per_agent, on_update):
+    def fake_debate(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
         can_emit.wait(timeout=10)
         on_update({"type": "round_completed", "round": 1, "agents": [{"agent_id": "network_traffic"}]})
         on_update({"type": "verdict", "verdict": {"verdict_class": "ddos"}, "actions_taken": []})

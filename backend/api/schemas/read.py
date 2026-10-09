@@ -1,9 +1,9 @@
 """Response models for the investigation, agent, audit, response-action and raw-log read endpoints."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.api.metrics import Metric
 from backend.api.schemas.evidence import CitationSummaryOut
@@ -31,6 +31,17 @@ class AgentVoteOut(BaseModel):
     round: int
     vote_class: str
     matched_keywords: list[str]
+    # False when the Watchdog isolated this agent during the investigation: the engine leaves it out of the
+    # verdict, so its last transcript is shown but not counted.
+    counted: bool = True
+
+
+class InputBasisOut(BaseModel):
+    """How one agent's data slice was chosen (backend/debate/state.py): scenario_rows, same_user_window,
+    time_window or recent_sample, and how many rows it got."""
+
+    basis: str
+    row_count: int
 
 
 class CredibilityLogOut(BaseModel):
@@ -73,6 +84,7 @@ class InvestigationSummaryOut(BaseModel):
 
 class InvestigationDetailOut(InvestigationSummaryOut):
     effective_noise_pct: float | None
+    input_basis: dict[str, InputBasisOut] = Field(default_factory=dict)
     debate: list[DebateRoundOut]
     votes: list[AgentVoteOut]
     citations: CitationSummaryOut
@@ -124,10 +136,14 @@ class AuditTrailOut(BaseModel):
 
 class AuditVerifyOut(BaseModel):
     chain_valid: bool
-    entries_checked: int
+    entries_checked: int  # entries whose hash was recomputed in this pass, not the size of the chain
     first_break_seq: int | None
     reason: str | None
     head_hash: str | None
+    # Which part of the chain this pass covered: "full" walked every entry, "incremental" started at the
+    # last verified checkpoint (verified_from_seq) and does not re-walk older entries.
+    mode: Literal["incremental", "full"]
+    verified_from_seq: int | None
 
 
 class RawLogOut(BaseModel):

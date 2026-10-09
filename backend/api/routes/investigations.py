@@ -26,11 +26,19 @@ from backend.api.schemas.read import (
     CitedEvidenceOut,
     CredibilityLogOut,
     DebateRoundOut,
+    InputBasisOut,
     InvestigationDetailOut,
     InvestigationSummaryOut,
     ResponseActionOut,
 )
-from backend.db.models import AnalystFeedback, CredibilityLog, DebateTranscript, Investigation, ResponseAction
+from backend.db.models import (
+    AnalystFeedback,
+    AuditTrail,
+    CredibilityLog,
+    DebateTranscript,
+    Investigation,
+    ResponseAction,
+)
 from backend.db.session import SessionLocal
 from backend.debate.verdict import _CLASS_KEYWORDS, classify_theory
 
@@ -64,26 +72,17 @@ def _escape_like(term: str) -> str:
 
 
 def rounds_complete_by_investigation(session: Session, investigation_ids: list[uuid.UUID]) -> Counter:
-    """Counts the rounds in which all three investigators have a transcript row."""
+    """Counts the rounds the engine finished. It writes one `round_completed` audit entry per round, after
+    every ACTIVE agent has answered, so a round still counts when an agent was quarantined or isolated
+    (counting transcripts per round would call every such round unfinished)."""
     if not investigation_ids:
         return Counter()
     rows = session.execute(
-        select(
-            DebateTranscript.investigation_id,
-            DebateTranscript.round,
-            func.count(func.distinct(DebateTranscript.agent_id)),
-        )
-        .where(
-            DebateTranscript.investigation_id.in_(investigation_ids),
-            DebateTranscript.agent_id.in_(INVESTIGATOR_IDS),
-        )
-        .group_by(DebateTranscript.investigation_id, DebateTranscript.round)
+        select(AuditTrail.investigation_id, func.count())
+        .where(AuditTrail.action == "round_completed", AuditTrail.investigation_id.in_(investigation_ids))
+        .group_by(AuditTrail.investigation_id)
     ).all()
-    complete: Counter = Counter()
-    for investigation_id, _round, agents in rows:
-        if agents == len(INVESTIGATOR_IDS):
-            complete[investigation_id] += 1
-    return complete
+    return Counter({investigation_id: count for investigation_id, count in rows})
 
 
 def containment_by_investigation(session: Session, investigation_ids: list[uuid.UUID]) -> Counter:
@@ -165,8 +164,42 @@ def list_investigations(
         session.close()
 
 
-def _votes(transcripts: list[DebateTranscript]) -> list[AgentVoteOut]:
-    """Each agent's vote is its latest transcript (highest round). The input is ordered by round."""
+def isolated_agents(session: Session, investigation_id: uuid.UUID) -> set[str]:
+    """Agents the Watchdog isolated during this investigation. The engine leaves them out of the verdict
+    (backend/debate/engine.py), so every read that re-derives votes or a verdict must leave them out too."""
+    return set(
+        session.execute(
+            select(CredibilityLog.agent_id).where(
+                CredibilityLog.investigation_id == investigation_id, CredibilityLog.isolated.is_(True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def input_basis_for(session: Session, investigation_id: uuid.UUID) -> dict[str, InputBasisOut]:
+    """How each agent's data slice was chosen, from the first round_completed audit entry (the engine records
+    it there). Empty for an investigation that predates the record."""
+    detail = session.execute(
+        select(AuditTrail.detail)
+        .where(AuditTrail.investigation_id == investigation_id, AuditTrail.action == "round_completed")
+        .order_by(AuditTrail.seq)
+        .limit(1)
+    ).scalar_one_or_none()
+    raw = (detail or {}).get("input_basis")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        agent: InputBasisOut(basis=str(item["basis"]), row_count=int(item["row_count"]))
+        for agent, item in raw.items()
+        if isinstance(item, dict) and "basis" in item and "row_count" in item
+    }
+
+
+def _votes(transcripts: list[DebateTranscript], isolated: set[str]) -> list[AgentVoteOut]:
+    """Each agent's vote is its latest transcript (highest round). The input is ordered by round. An agent
+    isolated in this investigation keeps its row but is marked not counted."""
     latest: dict[str, DebateTranscript] = {}
     for transcript in transcripts:
         latest[transcript.agent_id] = transcript
@@ -182,6 +215,7 @@ def _votes(transcripts: list[DebateTranscript]) -> list[AgentVoteOut]:
                 round=transcript.round,
                 vote_class=vote_class,
                 matched_keywords=matched_keywords(transcript.theory, vote_class),
+                counted=agent_id not in isolated,
             )
         )
     return votes
@@ -223,6 +257,7 @@ def get_investigation(
         return InvestigationDetailOut(
             **summary.model_dump(),
             effective_noise_pct=inv.effective_noise_pct,
+            input_basis=input_basis_for(session, investigation_id),
             debate=[
                 DebateRoundOut(
                     round=t.round,
@@ -236,7 +271,7 @@ def get_investigation(
                 )
                 for t in transcripts
             ],
-            votes=_votes(transcripts),
+            votes=_votes(transcripts, {c.agent_id for c in credibility_rows if c.isolated}),
             citations=citation_summary(
                 [c.status for _, c in checked], source=f"/investigations/{investigation_id}"
             ),

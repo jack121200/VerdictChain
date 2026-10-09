@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.agents.schemas import AgentResponse
 from backend.api.auth import CurrentAnalyst, require_capability
+from backend.api.routes.investigations import isolated_agents
 from backend.api.schemas.ops import (
     ContainmentActionOut,
     ContainmentOut,
@@ -25,6 +26,7 @@ from backend.api.schemas.ops import (
 from backend.db.audit import RELEASE_PREFIX, append_entry
 from backend.db.models import AgentQuarantine, DebateTranscript, Investigation, RawLog, ResponseAction
 from backend.db.session import SessionLocal
+from backend.debate.engine import MIN_ACTIVE_AGENTS
 from backend.debate.verdict import aggregate_verdict
 from backend.self_healing import sandbox
 
@@ -52,6 +54,14 @@ def emergency_containment(
         if not positions:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, detail="The verdict has not been reached: no round-3 transcripts."
+            )
+        if len(positions) < MIN_ACTIVE_AGENTS:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Only {len(positions)} agent counted in this verdict (the rest were isolated); "
+                    f"at least {MIN_ACTIVE_AGENTS} are required."
+                ),
             )
         # Same inputs the engine used, so a tie broken by the primary agent re-derives to the same class.
         verdict = aggregate_verdict(positions, primary_agent_id=inv.primary_agent)
@@ -214,6 +224,9 @@ def _active_containment(session: Session, investigation_id: uuid.UUID) -> Counte
 
 
 def _final_positions(session: Session, investigation_id: uuid.UUID) -> list[AgentResponse]:
+    """Round-3 positions of the agents the engine counted: one isolated during the investigation (for
+    example when round 3 was scored) is left out, exactly as in the verdict the engine stored."""
+    skip = isolated_agents(session, investigation_id)
     rows = (
         session.execute(
             select(DebateTranscript)
@@ -232,6 +245,7 @@ def _final_positions(session: Session, investigation_id: uuid.UUID) -> list[Agen
             round=3,
         )
         for r in rows
+        if r.agent_id not in skip
     ]
 
 

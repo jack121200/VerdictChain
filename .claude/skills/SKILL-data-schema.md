@@ -172,7 +172,7 @@ Aggregate `logon.csv`, `device.csv`, `file.csv` into per-user, per-time-bin feat
 ```
 CrS_new = clamp( CrS_old * (1 + η * (2 * verification_match_rate − 1)), 0.0, 1.0 )
 ```
-- `η` (eta) = 0.15 by default (runtime setting `eta`, range [0.01, 0.5], shown as the "Trust Threshold" tab).
+- `η` (eta) = 0.20 by default (runtime setting `eta`, range [0.01, 0.5], shown as the "Trust Threshold" tab).
 - Rate 0.5 leaves CrS unchanged. Rate 1 grows it by η. Rate 0 shrinks it by η.
 - `verification_match_rate` = (# cited_evidence entries that matched raw_logs) /
   (total # cited_evidence entries) for that agent in that round.
@@ -180,7 +180,9 @@ CrS_new = clamp( CrS_old * (1 + η * (2 * verification_match_rate − 1)), 0.0, 
   not zero — avoids unfairly punishing a new agent instantly).
 - **Isolation threshold: 0.30** (runtime setting `isolation_threshold`). CrS below it →
   the agent's `agent_quarantine` row is set active, and `credibility_log` records
-  `isolated = true`. From 0.5 with η = 0.15, four consecutive rate-0 rounds isolate an agent.
+  `isolated = true`. From 0.5 with η = 0.20, three consecutive rate-0 rounds (0.40, 0.32, 0.256) isolate an agent,
+  so an agent none of whose citations verify for a whole 3-round debate is isolated when round 3
+  is scored. (Default η was 0.15 until 2026-10-09; migration 0007 moves an unedited row.)
 
 **Formula resolved 2026-10-05, owner-approved.** The earlier multiplier `(1 + η·rate)` could
 only hold or grow CrS, so isolation was unreachable from 0.5. The corrected form shrinks CrS

@@ -126,21 +126,21 @@ def test_a_ghost_row_dry_run_leaves_production_state_unchanged(db_session):
     assert body["citation"]["status"] == "INVALID_ROW"
     assert body["citation"]["reason"] == "row_not_found"
     assert body["projected_match_rate"] == 0.0
-    assert body["eta"] == 0.15
+    assert body["eta"] == 0.20
     assert body["isolation_threshold"] == 0.30
     assert len(body["projected_trajectory"]) == 4
     assert body["projected_trajectory"][0]["projected_crs_before"] == 0.8
-    assert body["projected_trajectory"][0]["projected_crs_after"] == pytest.approx(0.8 * (1 - 0.15))
+    assert body["projected_trajectory"][0]["projected_crs_after"] == pytest.approx(0.8 * (1 - 0.20))
 
 
-def test_the_projection_isolates_after_four_rounds_from_the_starting_value(db_session):
+def test_the_projection_isolates_after_three_rounds_from_the_starting_value(db_session):
     _set_crs(AGENT, 0.5)
     body = _inject("ghost_row", rounds=6).json()
     trajectory = body["projected_trajectory"]
-    # 0.5 -> 0.425 -> 0.361 -> 0.307 -> 0.261 with no verified citations (eta 0.15, threshold 0.30).
-    assert [round(p["projected_crs_after"], 3) for p in trajectory[:4]] == [0.425, 0.361, 0.307, 0.261]
-    assert [p["projected_isolated"] for p in trajectory] == [False, False, False, True, True, True]
-    assert body["would_isolate_at_round"] == 4
+    # 0.5 -> 0.400 -> 0.320 -> 0.256 with no verified citations (eta 0.20, threshold 0.30).
+    assert [round(p["projected_crs_after"], 3) for p in trajectory[:3]] == [0.4, 0.32, 0.256]
+    assert [p["projected_isolated"] for p in trajectory] == [False, False, True, True, True, True]
+    assert body["would_isolate_at_round"] == 3
     assert get_crs(AGENT) == 0.5
 
 

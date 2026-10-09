@@ -7,6 +7,12 @@ agent's system prompt and data slice, never a label or a noise setting.
 
   python -m backend.scripts.e2e_server --port 8000   serve backend.api.main:app with the stub
   python -m backend.scripts.e2e_server --selftest    validate the stub's output against AgentResponse
+  python -m backend.scripts.e2e_server --fabricate access_log
+                                                     serve with a hallucinating agent (see below)
+
+Fabricate mode makes the named agents cite real rows with values that do not match them, like a model that
+invents evidence. Nothing about the Watchdog is stubbed: it scores those rounds at match rate 0, so the real
+credibility update, isolation, quarantine and audit code runs end to end.
 """
 
 import argparse
@@ -16,10 +22,11 @@ import re
 import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from backend.agents import access_log, endpoint_behavior, network_traffic
 from backend.agents.llm_clients import GeminiClient, GroqClient
@@ -36,6 +43,11 @@ AGENTS = {
 }
 
 _CONFIDENCE = {"network_traffic": 0.88, "access_log": 0.86, "endpoint_behavior": 0.90}
+
+# Agents whose cited VALUES are corrupted. The row ids stay real (the agent layer rejects unknown ids), the
+# value never matches the row, so the Watchdog's exact match fails for every citation of that agent.
+_FABRICATED_VALUE = "stub-fabricated-value"
+_fabricate: frozenset[str] = frozenset()
 
 # Canned theories per domain and round; rounds 2 and 3 open with the stance the prompt requires.
 # Round-3 wording is chosen so classify_theory() (backend/debate/verdict.py) reads each agent as its own
@@ -152,12 +164,15 @@ def fake_reply(system_prompt: str, user_prompt: str) -> str:
     if agent_id is None:
         return _FALLBACK_TEXT
     round_no = _round_of(user_prompt)
+    cited = _cited_evidence(_data_slice(user_prompt))
+    if agent_id in _fabricate:
+        cited = [{**entry, "value": _FABRICATED_VALUE} for entry in cited]
     return json.dumps(
         {
             "agent_id": agent_id,
             "theory": _THEORIES[agent_id][min(round_no, 3)],
             "confidence": _CONFIDENCE[agent_id],
-            "cited_evidence": _cited_evidence(_data_slice(user_prompt)),
+            "cited_evidence": cited,
             "round": round_no,
         }
     )
@@ -197,6 +212,18 @@ def uninstall() -> None:
         _, (cls, original, real_name) = _originals.popitem()
         cls.complete = original
         cls.name = real_name
+    set_fabricate(())
+
+
+def set_fabricate(agent_ids: Iterable[str]) -> list[str]:
+    """Makes exactly these investigators cite wrong values from now on (an empty iterable turns it off)."""
+    global _fabricate
+    chosen = frozenset(agent_ids)
+    unknown = chosen - set(AGENTS)
+    if unknown:
+        raise ValueError(f"unknown investigator(s): {sorted(unknown)}")
+    _fabricate = chosen
+    return sorted(chosen)
 
 
 def stub_calls() -> dict[str, int]:
@@ -204,8 +231,25 @@ def stub_calls() -> dict[str, int]:
         return dict(CALLS)
 
 
+class FabricateBody(BaseModel):
+    agents: list[str]
+
+
+def get_fabricate() -> dict[str, list[str]]:
+    return {"agents": sorted(_fabricate)}
+
+
+def post_fabricate(body: FabricateBody) -> dict[str, list[str]]:
+    try:
+        return {"agents": set_fabricate(body.agents)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def add_stub_route(app: FastAPI) -> None:
     app.add_api_route("/__e2e/stub-calls", stub_calls, methods=["GET"])
+    app.add_api_route("/__e2e/fabricate", get_fabricate, methods=["GET"])
+    app.add_api_route("/__e2e/fabricate", post_fabricate, methods=["POST"])
 
 
 def _row(source: str, event_type: str, user_id: str | None, host_id: str, raw_fields: dict) -> RawLog:
@@ -269,7 +313,7 @@ def selftest() -> None:
     print("OK")
 
 
-def serve(host: str, port: int) -> None:
+def serve(host: str, port: int, fabricate: Iterable[str] = ()) -> None:
     import uvicorn
 
     from backend.api.main import app
@@ -280,6 +324,12 @@ def serve(host: str, port: int) -> None:
         "e2e_server: LLM stub installed for GroqClient and GeminiClient; counts at /__e2e/stub-calls",
         flush=True,
     )
+    chosen = set_fabricate(fabricate)
+    if chosen:
+        print(
+            f"e2e_server: fabricate mode ON for {', '.join(chosen)} (their citations will not verify)",
+            flush=True,
+        )
     uvicorn.run(app, host=host, port=port)
 
 
@@ -290,11 +340,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--selftest", action="store_true", help="validate the stub's output, then exit")
+    parser.add_argument(
+        "--fabricate",
+        nargs="+",
+        choices=sorted(AGENTS),
+        default=[],
+        metavar="AGENT",
+        help="agents that cite wrong values (a hallucination drill for the Watchdog and isolation)",
+    )
     args = parser.parse_args(argv)
     if args.selftest:
         selftest()
     else:
-        serve(args.host, args.port)
+        serve(args.host, args.port, args.fabricate)
     return 0
 
 

@@ -16,6 +16,7 @@ from backend.tests.fixtures.read_seed import (
     add_raw,
     add_transcript,
     ago,
+    audit,
     bearer_for,
     cite,
     clear_crs_keys,
@@ -135,6 +136,8 @@ def test_rounds_complete_and_containment_count(db_session):
     add_transcript(
         db_session, inv.investigation_id, round_no=2, agent_id="network_traffic", theory="SUPPORT y"
     )
+    # The engine audits a round only after every active agent answered: round 1 is done, round 2 is not.
+    audit(db_session, "debate_engine", "round_completed", {"round": 1}, inv.investigation_id)
     add_action(db_session, inv.investigation_id)
     add_action(db_session, inv.investigation_id, action_type="trigger_audit")
     db_session.commit()
@@ -148,6 +151,41 @@ def test_rounds_complete_and_containment_count(db_session):
     assert detail["rounds_complete"] == 1
     assert len(detail["actions"]) == 2
     assert all(a["is_simulated"] is True and a["id"] for a in detail["actions"])
+
+
+def test_detail_reports_how_each_agents_rows_were_chosen(db_session):
+    inv = add_investigation(db_session)
+    basis = {
+        "network_traffic": {"basis": "scenario_rows", "row_count": 5},
+        "access_log": {"basis": "same_user_window", "row_count": 2},
+    }
+    audit(
+        db_session,
+        "debate_engine",
+        "round_completed",
+        {"round": 1, "input_basis": basis},
+        inv.investigation_id,
+    )
+    audit(db_session, "debate_engine", "round_completed", {"round": 2}, inv.investigation_id)
+    db_session.commit()
+
+    detail = client.get(
+        f"/investigations/{inv.investigation_id}", headers=bearer_for("forensic_analyst")
+    ).json()
+
+    assert detail["input_basis"] == basis
+
+
+def test_detail_has_no_input_basis_for_an_investigation_that_predates_the_record(db_session):
+    inv = add_investigation(db_session)
+    audit(db_session, "debate_engine", "round_completed", {"round": 1}, inv.investigation_id)
+    db_session.commit()
+
+    detail = client.get(
+        f"/investigations/{inv.investigation_id}", headers=bearer_for("forensic_analyst")
+    ).json()
+
+    assert detail["input_basis"] == {}
 
 
 def test_dataset_mapping_is_per_primary_agent():

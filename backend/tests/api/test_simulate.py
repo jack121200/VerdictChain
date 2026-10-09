@@ -69,7 +69,7 @@ def _fake_result(investigation_id) -> dict:
     }
 
 
-def _quick_debate(primary, rows, *, investigation_id, max_rows_per_agent, on_update):
+def _quick_debate(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
     return _fake_result(investigation_id)
 
 
@@ -116,7 +116,7 @@ def test_wait_false_returns_202_with_the_id_before_the_debate_finishes(db_sessio
     started, release, finished = threading.Event(), threading.Event(), threading.Event()
     seen: dict = {}
 
-    def slow_debate(primary, rows, *, investigation_id, max_rows_per_agent, on_update):
+    def slow_debate(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
         seen["investigation_id"] = investigation_id
         started.set()
         release.wait(timeout=10)
@@ -273,7 +273,7 @@ def test_noise_is_recorded_on_the_investigation_and_in_its_audit_entry(db_sessio
 def test_a_failed_debate_returns_502_and_releases_the_slot(db_session, monkeypatch):
     _seed_scenario(db_session)
 
-    def failing(primary, rows, *, investigation_id, max_rows_per_agent, on_update):
+    def failing(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
         raise DebateFailedError(str(investigation_id), "all providers exhausted")
 
     monkeypatch.setattr("backend.api.routes.simulate.run_debate", failing)
@@ -304,7 +304,7 @@ def test_the_defaults_are_wait_true_no_noise_and_five_rows(db_session, monkeypat
     _seed_scenario(db_session)
     seen: dict = {}
 
-    def capture(primary, rows, *, investigation_id, max_rows_per_agent, on_update):
+    def capture(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
         seen["max_rows"] = max_rows_per_agent
         return _fake_result(investigation_id)
 

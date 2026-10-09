@@ -219,7 +219,7 @@ class RuntimeSettings(Base):
     )
 
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
-    eta: Mapped[float] = mapped_column(DOUBLE_PRECISION, nullable=False, server_default=text("0.15"))
+    eta: Mapped[float] = mapped_column(DOUBLE_PRECISION, nullable=False, server_default=text("0.20"))
     isolation_threshold: Mapped[float] = mapped_column(
         DOUBLE_PRECISION, nullable=False, server_default=text("0.30")
     )

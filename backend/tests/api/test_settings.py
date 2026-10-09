@@ -13,12 +13,12 @@ from backend.watchdog import credibility
 client = TestClient(app)
 
 DEFAULTS = {
-    "eta": 0.15,
+    "eta": 0.20,
     "isolation_threshold": 0.30,
     "verdict_confidence_threshold": 0.80,
     "intake_paused": False,
 }
-NEW = {"eta": 0.2, "isolation_threshold": 0.25, "verdict_confidence_threshold": 0.9, "intake_paused": True}
+NEW = {"eta": 0.25, "isolation_threshold": 0.25, "verdict_confidence_threshold": 0.9, "intake_paused": True}
 
 
 def _audit_rows(action: str) -> list[AuditTrail]:
@@ -125,7 +125,7 @@ def test_range_boundaries_are_accepted(db_session):
     [
         {**NEW, "role": "secops_lead"},  # extra fields are forbidden
         {
-            "eta": 0.2,
+            "eta": 0.25,
             "isolation_threshold": 0.25,
             "verdict_confidence_threshold": 0.9,
         },  # full replace: intake_paused required
@@ -185,7 +185,7 @@ def test_save_does_not_commit_so_the_caller_owns_the_transaction(db_session):
         ({**NEW, "eta": 0.9}, "eta must be between"),
         ({**NEW, "isolation_threshold": 0.9}, "isolation_threshold must be between"),
         ({**NEW, "verdict_confidence_threshold": 0.1}, "verdict_confidence_threshold must be between"),
-        ({"eta": 0.2}, "missing"),
+        ({"eta": 0.25}, "missing"),
         ({**NEW, "extra": 1}, "unknown"),
         ({**NEW, "eta": True}, "must be a number"),
         ({**NEW, "intake_paused": 1}, "must be a boolean"),

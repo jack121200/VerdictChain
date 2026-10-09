@@ -135,7 +135,7 @@ def test_audit_seq_is_a_database_assigned_unique_identity(db_session):
 def test_runtime_settings_is_seeded_with_the_defaults(db_session):
     row = db_session.get(RuntimeSettings, 1)
     assert row is not None
-    assert (row.eta, row.isolation_threshold, row.verdict_confidence_threshold) == (0.15, 0.30, 0.80)
+    assert (row.eta, row.isolation_threshold, row.verdict_confidence_threshold) == (0.20, 0.30, 0.80)
     assert row.intake_paused is False
 
 

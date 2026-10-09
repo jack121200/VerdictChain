@@ -96,10 +96,29 @@ describe('toVotes', () => {
 
   it('turns "unclassified" into null so the UI never shows a made-up class', () => {
     const votes = toVotes(
-      [{ agent_id: 'access_log', round: 3, vote_class: 'unclassified', matched_keywords: [] }],
+      [{ agent_id: 'access_log', round: 3, vote_class: 'unclassified', matched_keywords: [], counted: true }],
       detailWire.debate,
     );
     expect(votes[0].verdict_class).toBeNull();
+  });
+
+  it('marks exactly the agents the Watchdog isolated as not counted, on the real drill payload', () => {
+    const isolated = detailWire.credibility.filter((row) => row.isolated).map((row) => row.agent_id);
+    expect(isolated.length).toBeGreaterThan(0); // the captured investigation is a hallucination drill
+    for (const vote of toVotes(detailWire.votes, detailWire.debate)) {
+      expect(vote.counted).toBe(!isolated.includes(vote.agent_id));
+    }
+  });
+
+  it('keeps the server counted flag, so an isolated agent is shown but not counted', () => {
+    const votes = toVotes(
+      [
+        { agent_id: 'access_log', round: 3, vote_class: 'ddos', matched_keywords: ['flood'], counted: false },
+        { agent_id: 'network_traffic', round: 3, vote_class: 'ddos', matched_keywords: ['flood'], counted: true },
+      ],
+      detailWire.debate,
+    );
+    expect(votes.map((vote) => vote.counted)).toEqual([false, true]);
   });
 });
 
@@ -124,6 +143,12 @@ describe('toInvestigationDetail on a real investigation', () => {
     expect(model.credibility.every((row) => row.investigation_id === detailWire.investigation_id)).toBe(true);
     expect(model.actions.length).toBe(detailWire.actions.length);
     expect(model.actions.every((action) => action.investigation_id === detailWire.investigation_id)).toBe(true);
+  });
+
+  it('carries how each agent\'s rows were chosen, as the engine recorded it', () => {
+    const basis = { access_log: { basis: 'same_user_window' as const, row_count: 2 } };
+    expect(toInvestigationDetail({ ...detailWire, input_basis: basis }).input_basis).toEqual(basis);
+    expect(toInvestigationDetail({ ...detailWire, input_basis: {} }).input_basis).toEqual({});
   });
 
   it('keeps the citation summary as sent', () => {

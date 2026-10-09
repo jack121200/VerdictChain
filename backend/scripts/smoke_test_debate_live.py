@@ -27,7 +27,9 @@ def main() -> None:
         started_by="smoke_test",
         max_rows_per_agent=5,
     )
-    result = run_debate(primary_agent, primary_rows[:5], investigation_id=investigation_id)
+    result = run_debate(
+        primary_agent, primary_rows[:5], investigation_id=investigation_id, scenario_rows=rows
+    )
 
     print(f"\ninvestigation_id: {result['investigation_id']}")
     print(f"status: {result['status']}")

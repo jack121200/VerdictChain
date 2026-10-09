@@ -91,6 +91,7 @@ export function toVotes(votes: AgentVoteWire[], debate: DebateRoundWire[]): Vote
       verdict_class: vote.vote_class === 'unclassified' ? null : vote.vote_class,
       confidence: turn ? turn.confidence : null,
       matched_keywords: vote.matched_keywords,
+      counted: vote.counted,
     };
   });
 }
@@ -123,6 +124,7 @@ export function toInvestigationDetail(wire: InvestigationDetailWire): Investigat
     credibility: wire.credibility.map((row) => toCredibilityRow(id, row)),
     actions,
     votes: toVotes(wire.votes, wire.debate),
+    input_basis: wire.input_basis ?? {},
     created_at: wire.created_at,
   };
 }

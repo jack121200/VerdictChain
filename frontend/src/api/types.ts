@@ -227,6 +227,8 @@ export interface Vote {
   verdict_class: VerdictClass | null;
   confidence: number | null;
   matched_keywords: string[];
+  /** false = isolated during this investigation, so not part of the verdict. Missing means counted. */
+  counted?: boolean;
 }
 
 /** credibility_log row. */
@@ -300,6 +302,14 @@ export interface InvestigationSummary {
 }
 
 /** GET /investigations/{id} */
+/** How an agent's data slice was chosen (backend/debate/state.py), best first. */
+export type InputBasisKind = 'scenario_rows' | 'same_user_window' | 'time_window' | 'recent_sample';
+
+export interface InputBasis {
+  basis: InputBasisKind;
+  row_count: number;
+}
+
 export interface InvestigationDetail {
   id: string;
   status: InvestigationStatus;
@@ -316,6 +326,8 @@ export interface InvestigationDetail {
   credibility: CredibilityRow[];
   actions: ResponseAction[];
   votes: Vote[];
+  /** Per agent id. Missing or empty for an investigation that predates the record. */
+  input_basis?: Record<string, InputBasis>;
   created_at: string;
 }
 
@@ -363,6 +375,8 @@ export interface AgentVoteWire {
   /** Server classify_theory result. "unclassified" when no keyword matched. */
   vote_class: VerdictClass | 'unclassified';
   matched_keywords: string[];
+  /** False when the Watchdog isolated this agent during the investigation: the verdict leaves it out. */
+  counted: boolean;
 }
 
 export interface CredibilityWire {
@@ -387,6 +401,7 @@ export interface ActionWire {
 
 export interface InvestigationDetailWire extends InvestigationSummaryWire {
   effective_noise_pct: number | null;
+  input_basis: Record<string, InputBasis>;
   debate: DebateRoundWire[];
   votes: AgentVoteWire[];
   citations: CitationSummary;

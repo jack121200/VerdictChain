@@ -1,26 +1,36 @@
 """Debate-round input assembly, peripheral digest, and near-duplicate detection
 (SKILL-architecture.md Sections 3 and 5).
 
-Design decision (2026-09-07 session, undocumented in the skill files - flagged
-here for review): an investigation as currently built (investigation_builder.py)
-only ever has ONE agent's domain populated - a manual scenario is either a
-network attack type OR a CERT insider scenario, never both, and there's no
-column tying a network row to a CERT row. A real 3-agent debate needs the other
-two agents to have SOMETHING real and citable, so they're given a small recent
-sample from their OWN domain (not scenario-matched) rather than sitting out.
-Peripheral awareness is therefore structural-only (row counts/event types) - not
-a bug, a hard limit of these two datasets not sharing a real timeline (CICIDS2017
-is July 2017; CERT r4.2 is 2010-2011). True content-level cross-domain
-correlation needs a scenario deliberately built to span both, which doesn't
-exist yet.
+A real 3-agent debate needs every agent to have something real and citable, so a
+non-primary agent never sits out. What it is given, best first (recorded per agent
+as its "input basis" in the audit trail):
+
+  scenario_rows     rows of its own domain that the scenario itself carries (a CERT
+                    insider scenario tags logon, file and device rows together)
+  same_user_window  its domain's rows for the SAME user(s) the scenario names, inside
+                    the scenario's time window (padded by WINDOW_PAD)
+  time_window       its domain's rows inside that window, for other users
+  recent_sample     the newest rows of its domain, unrelated to the scenario
+
+The last tier is a hard limit, not a bug: CICIDS2017 is July 2017 and CERT r4.2 is
+2010-2011, so a network scenario has no CERT rows in its window. Peripheral awareness
+for such a debate is structural only (row counts and event types).
 """
 
 import difflib
+from datetime import timedelta
+from typing import Literal
 
 from sqlalchemy import select
 
 from backend.db.models import RawLog
 from backend.db.session import SessionLocal
+
+# How a non-primary agent's data slice was chosen, best first (module docstring).
+InputBasis = Literal["scenario_rows", "same_user_window", "time_window", "recent_sample"]
+
+# The window around a scenario's first and last row inside which other domains are searched.
+WINDOW_PAD = timedelta(hours=24)
 
 DOMAIN_SOURCES = {
     "network_traffic": ["cicids2017"],
@@ -84,17 +94,70 @@ def _contextual_sample(agent_id: str, limit: int) -> list[RawLog]:
         session.close()
 
 
+def _window_sample(agent_id: str, scenario_rows: list[RawLog], limit: int) -> tuple[list[RawLog], InputBasis]:
+    """The agent's own-domain rows inside the scenario's time window, preferring the users the scenario
+    names. Empty when the datasets do not overlap in time. Only timestamps and user ids of the scenario's
+    rows are used, never a label."""
+    stamps = [row.timestamp for row in scenario_rows if row.timestamp is not None]
+    if not stamps:
+        return [], "time_window"
+    start, end = min(stamps) - WINDOW_PAD, max(stamps) + WINDOW_PAD
+    users = sorted({row.user_id for row in scenario_rows if row.user_id})
+    in_window = (
+        select(RawLog)
+        .where(
+            RawLog.source.in_(DOMAIN_SOURCES[agent_id]), RawLog.timestamp >= start, RawLog.timestamp <= end
+        )
+        .order_by(RawLog.timestamp)
+        .limit(limit)
+    )
+    attempts = []
+    if users:
+        attempts.append(("same_user_window", in_window.where(RawLog.user_id.in_(users))))
+    attempts.append(("time_window", in_window))
+
+    session = SessionLocal()
+    try:
+        for basis, query in attempts:
+            rows = session.execute(query).scalars().all()
+            if rows:
+                for row in rows:
+                    session.refresh(row)
+                return rows, basis
+        return [], "time_window"
+    finally:
+        session.close()
+
+
 def assemble_debate_inputs(
-    primary_agent_id: str, primary_rows: list[RawLog], max_rows: int = 5
-) -> dict[str, list[RawLog]]:
-    """primary agent gets the real scenario-matched rows; the other two get a
-    real recent sample from their own domain so they have something to cite.
+    primary_agent_id: str,
+    primary_rows: list[RawLog],
+    max_rows: int = 5,
+    scenario_rows: list[RawLog] | None = None,
+) -> tuple[dict[str, list[RawLog]], dict[str, InputBasis]]:
+    """Returns (rows per agent, how each agent's rows were chosen).
+
+    The primary agent gets the scenario's rows of its domain. Every other agent gets the best it can have
+    (module docstring): the scenario's own rows of its domain, else rows of the same users in the scenario's
+    time window, else rows in that window, else the newest rows of its domain.
+    scenario_rows is everything the scenario carries (all domains); it defaults to primary_rows.
     """
+    context = scenario_rows if scenario_rows else primary_rows
     inputs = {primary_agent_id: primary_rows[:max_rows]}
+    basis: dict[str, InputBasis] = {primary_agent_id: "scenario_rows"}
     for agent_id in DOMAIN_SOURCES:
-        if agent_id != primary_agent_id:
-            inputs[agent_id] = _contextual_sample(agent_id, limit=max_rows)
-    return inputs
+        if agent_id == primary_agent_id:
+            continue
+        own = [row for row in context if EVENT_TYPE_TO_AGENT.get(row.event_type) == agent_id]
+        if own:
+            inputs[agent_id], basis[agent_id] = own[:max_rows], "scenario_rows"
+            continue
+        rows, chosen = _window_sample(agent_id, context, max_rows)
+        if rows:
+            inputs[agent_id], basis[agent_id] = rows, chosen
+        else:
+            inputs[agent_id], basis[agent_id] = _contextual_sample(agent_id, limit=max_rows), "recent_sample"
+    return inputs, basis
 
 
 def build_peripheral_digest(rows_by_agent: dict[str, list[RawLog]], exclude_agent: str) -> dict:

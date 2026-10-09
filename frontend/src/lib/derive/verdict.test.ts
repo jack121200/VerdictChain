@@ -85,3 +85,27 @@ describe('quorumFromVotes with the primary agent (mirrors the server tie-break)'
     expect(quorum.winner).toBe('ddos');
   });
 });
+
+describe('isolated agents are shown but not counted (mirrors the engine leaving them out of the verdict)', () => {
+  const withIsolated: VoteLike[] = [
+    { agent_id: 'network_traffic', verdict_class: 'ddos', confidence: 0.9, counted: false },
+    { agent_id: 'access_log', verdict_class: 'insider_file_exfiltration', confidence: 0.8, counted: true },
+    { agent_id: 'endpoint_behavior', verdict_class: 'insider_logon_anomaly', confidence: 0.7, counted: true },
+  ];
+
+  it('does not count an uncounted vote as a supporter', () => {
+    expect(supportersOf(withIsolated, 'ddos')).toHaveLength(0);
+    expect(meanSupporterConfidence(withIsolated, 'ddos')).toEqual({ value: null, n: 0 });
+  });
+
+  it('computes the quorum from counted votes only', () => {
+    const quorum = quorumFromVotes(withIsolated, 'network_traffic');
+    // 1-1 between the two counted agents; the isolated primary agent cannot break the tie.
+    expect(quorum).toMatchObject({ status: 'tie', winner: null, voters: 2 });
+  });
+
+  it('treats a vote without the flag as counted', () => {
+    expect(supportersOf(votes, 'ddos')).toHaveLength(2);
+    expect(quorumFromVotes(votes).voters).toBe(3);
+  });
+});

@@ -68,20 +68,33 @@ def test_rate_half_leaves_crs_unchanged():
         assert isolated is False
 
 
-def test_four_failing_rounds_from_starting_crs_isolate():
-    """Rate 0 shrinks CrS by eta each round. From 0.5 with eta 0.15, the third failing
-    round is still above the 0.30 threshold (0.3064) and the fourth drops below it (0.2604).
+def test_three_failing_rounds_from_starting_crs_isolate():
+    """Rate 0 shrinks CrS by eta each round. From 0.5 with the default eta 0.20 the second failing
+    round is still above the 0.30 threshold (0.32) and the third drops below it (0.256), so an agent
+    none of whose citations verify for a whole 3-round debate is isolated when round 3 is scored.
     """
+    assert (STARTING_CRS, ETA, ISOLATION_THRESHOLD) == (0.5, 0.20, 0.30)
     agent_id = _fresh_agent_id()
-    for failing_round in range(1, 4):
+    for failing_round in range(1, 3):
         _, crs_after, isolated = update_crs(agent_id, rate=0.0)
         assert crs_after == pytest.approx(STARTING_CRS * (1 - ETA) ** failing_round)
         assert isolated is False
     _, crs_after, isolated = update_crs(agent_id, rate=0.0)
-    assert crs_after == pytest.approx(STARTING_CRS * (1 - ETA) ** 4)
+    assert crs_after == pytest.approx(0.256)
     assert crs_after < ISOLATION_THRESHOLD
     assert isolated is True
     assert is_isolated(agent_id) is True
+
+
+def test_partly_failing_rounds_do_not_isolate_within_one_debate():
+    """Rate 0.25 (a quarter of the citations verify) shrinks CrS by eta/2 per round: 0.45, 0.405, 0.3645.
+    Isolation is for agents whose citations mostly fail, not for a single bad round.
+    """
+    agent_id = _fresh_agent_id()
+    for _ in range(3):
+        _, crs_after, isolated = update_crs(agent_id, rate=0.25)
+        assert isolated is False
+    assert crs_after == pytest.approx(STARTING_CRS * (1 - ETA / 2) ** 3)
 
 
 def test_isolation_mechanism_works_when_crs_is_already_below_threshold():

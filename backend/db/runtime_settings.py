@@ -45,7 +45,7 @@ class RuntimeSettings:
 
 # Defaults match the migration's server defaults. load() returns them when the row is missing.
 DEFAULTS = RuntimeSettings(
-    eta=0.15,
+    eta=0.20,
     isolation_threshold=0.30,
     verdict_confidence_threshold=0.80,
     intake_paused=False,

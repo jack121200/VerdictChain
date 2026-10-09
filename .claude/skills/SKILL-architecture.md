@@ -149,8 +149,10 @@ mitigations, both required:
   verification failure.
 - Exact update formula (see `SKILL-data-schema.md` Section 5 for the persisted fields):
   `CrS_new = clamp(CrS_old * (1 + η * (2 * verification_match_rate − 1)), 0, 1)`, with
-  `η = 0.15` as the default (runtime setting `eta`). A rate of 0.5 leaves CrS unchanged,
-  1 grows it, 0 shrinks it. Resolved 2026-10-05, owner-approved.
+  `η = 0.20` as the default (runtime setting `eta`). A rate of 0.5 leaves CrS unchanged,
+  1 grows it, 0 shrinks it. Resolved 2026-10-05, owner-approved. Default η raised from 0.15
+  to 0.20 on 2026-10-09 (migration 0007) so three rate-0 rounds (0.40, 0.32, 0.256) cross the
+  0.30 isolation threshold inside one 3-round debate; at 0.15 they left 0.307.
 - **Isolation threshold: 0.30** (runtime setting `isolation_threshold`). If an agent's CrS
   drops below it, the agent is isolated: its `agent_quarantine` row is set active (audited as
   `agent_isolated`). It is excluded from the rest of that debate, from the verdict and from

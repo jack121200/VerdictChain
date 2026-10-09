@@ -9,8 +9,8 @@ Isolation (decision D1, on): after an agent's round is scored, a CrS below the i
 sets its agent_quarantine row active. That agent takes no part in later rounds or in the verdict.
 The quarantine persists across debates and is lifted only by the audited restore action.
 
-See backend/debate/state.py's docstring for why non-primary agents reason over a contextual sample
-from their own domain rather than sitting out, and why peripheral awareness is structural-only.
+See backend/debate/state.py's docstring for what each non-primary agent is given (the scenario's own rows,
+else the same users / time window, else a recent sample) and why that is recorded as its input basis.
 """
 
 import re
@@ -239,17 +239,25 @@ def _isolate_agent(investigation_id: uuid.UUID, agent_id: str, round_no: int, cr
         session.close()
 
 
-def _audit_round(investigation_id: uuid.UUID, round_no: int, providers: dict[str, str]) -> None:
+def _audit_round(
+    investigation_id: uuid.UUID,
+    round_no: int,
+    providers: dict[str, str],
+    input_basis: dict[str, dict] | None = None,
+) -> None:
+    detail: dict = {
+        "round": round_no,
+        "agents": [{"agent_id": agent, "provider": prov} for agent, prov in providers.items()],
+    }
+    if input_basis:
+        detail["input_basis"] = input_basis
     session = SessionLocal()
     try:
         append_entry(
             session,
             actor="debate_engine",
             action="round_completed",
-            detail={
-                "round": round_no,
-                "agents": [{"agent_id": agent, "provider": prov} for agent, prov in providers.items()],
-            },
+            detail=detail,
             investigation_id=investigation_id,
         )
         session.commit()
@@ -329,9 +337,13 @@ def run_debate(
     max_rows_per_agent: int = 5,
     on_update: Callable[[dict], None] | None = None,
     settings: EngineSettings | None = None,
+    scenario_rows: list[RawLog] | None = None,
 ) -> dict:
     """Runs the debate on an existing investigation (create it with start_investigation first).
     Returns {investigation_id, status, verdict, providers_used, actions_taken}.
+
+    scenario_rows is every row the scenario carries, in all domains. The non-primary agents are given rows
+    chosen from it (same domain, same users, same time window) before falling back to a recent sample.
 
     Agents whose agent_quarantine row is active are excluded. NotEnoughActiveAgents is raised if
     fewer than MIN_ACTIVE_AGENTS remain. settings=None loads the runtime settings once.
@@ -359,8 +371,11 @@ def run_debate(
 
     if settings is None:
         settings = _load_settings()
-    assembled = assemble_debate_inputs(primary_agent_id, primary_rows, max_rows=max_rows_per_agent)
+    assembled, basis = assemble_debate_inputs(
+        primary_agent_id, primary_rows, max_rows=max_rows_per_agent, scenario_rows=scenario_rows
+    )
     inputs = {agent: assembled[agent] for agent in active}
+    input_basis = {agent: {"basis": basis[agent], "row_count": len(inputs[agent])} for agent in active}
 
     latest_by_agent: dict[str, AgentResponse] = {}
     providers_used: dict[str, list[str]] = {agent: [] for agent in active}
@@ -414,7 +429,7 @@ def run_debate(
                         )
 
             latest_by_agent = {a: r for a, r in round_responses.items() if a in active}
-            _audit_round(investigation_id, round_no, round_providers)
+            _audit_round(investigation_id, round_no, round_providers, input_basis if round_no == 1 else None)
             if on_update:
                 on_update(
                     {
@@ -425,6 +440,7 @@ def run_debate(
                             _round_entry(a, round_responses[a], round_providers[a], round_scores[a])
                             for a in round_agents
                         ],
+                        **({"input_basis": input_basis} if round_no == 1 else {}),
                     }
                 )
     except Exception as exc:

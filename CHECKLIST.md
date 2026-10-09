@@ -28,8 +28,8 @@ UD9 ✅ Realtime push on EVERY page: Redis pub/sub event bus + /ws/events + ever
 UD10 ✅ Why data did not sync: ROOT CAUSE (frontend types did not match the real API; mocks hid it) fixed, and every route re-verified on the live API
 UD11 ✅ Seed script: complete investigations with zero LLM calls
 UD12 ⬜ Real inject (live LLM) verified end to end once
-UD13 ⬜ Logic: isolation actually fires within a 3-round debate (CrS tune)
-UD14 ⬜ Logic: non-primary agents reason on the scenario time window
+UD13 ✅ Logic: isolation actually fires within a 3-round debate: default eta 0.15 -> 0.20 (migration 0007, audited setting): three fully-failing rounds take CrS 0.5 -> 0.256 < 0.30, so the agent is isolated when round 3 is scored
+UD14 ✅ Logic: non-primary agents reason on the scenario's own rows, then the same users in its time window, then the window, then a recent sample; the basis is recorded per agent (audit + API input_basis)
 UD15 ⬜ Logic: debate as a background job + live progress + instant inject feedback
 UD16 🟡 Exact ditto of the reference look (tokens identical; Investigations + Trust re-ported; rest unverified)
 UD17 🟡 Zero bluff on every stat, graph and label: contract-check now proves types match the live API; full audit pass + Playwright canary pending
@@ -60,15 +60,15 @@ BE9 ⬜ Boot-time provider key validation, fail fast with a clear message
 BE10 ⬜ Request logging + provider/latency/quota metrics
 
 ## E. 70 points — LOGIC
-LG1 ⬜ Isolation reachable in 3 rounds (tune eta / start CrS) — your choice: DO
+LG1 ✅ Isolation reachable in 3 rounds (eta 0.20; tests in credibility, engine and the HTTP API; SKILL docs + Trust page wording updated)
 LG2 🟡 Verdict: primary-agent tie-break done (+tests); structured verdict field instead of keywords pending
-LG3 ⬜ Non-primary agents see the scenario time window — your choice: DO
+LG3 ✅ Non-primary agents see the scenario's rows / time window (tiered, tested incl. day-padding and label-blindness); CICIDS (2017) vs CERT (2010-11) have no shared timeline, so a network scenario honestly falls back to a recent sample
 LG4 ⬜ Stance enforced in the agent schema (not parsed from the first word)
 LG5 ⬜ Self-healing credibility gate can actually bite
 LG6 ❓ Evaluation insider ground-truth mapping needs your confirmation
 LG7 ⬜ Noise: separate, clearly labelled adversarial mode
-LG8 ⬜ Restore semantics documented (resets to 0.5, not history recovery)
-LG9 ⬜ Live isolation path exercised end to end (not only dry-run)
+LG8 🟡 Restore semantics: tested (restore resets CrS to 0.5, audited with previous CrS + note, no history recovery); UI/README wording pending
+LG9 ✅ Live isolation path exercised end to end through POST /investigations/simulate: stub fabricate mode -> real Watchdog -> CrS -> quarantine -> next debate without the agent -> audited restore (+ seed_demo --drill, stub --fabricate)
 LG10 ⬜ Analyst feedback actually feeds an adaptive threshold
 
 ## F. 70 points — STRUCTURE
@@ -138,6 +138,11 @@ CT7 ✅ Every screen re-verified on the live API after the fixes: all 11 routes 
 CT8 ✅ Backend /stats gained mean_crs + citation counts the screens needed (+ tests)
 CT9 ✅ Seeded + stub data is honestly labelled: providers read stub-groq / stub-gemini (restored on uninstall, tested); dev DB reseeded: 6 investigations, 70 stub replies, 0 real provider calls
 CT10 ⬜ UI marks investigations produced by the offline stub, so evaluation accuracy on stub data never reads as system accuracy
+CT11 🟡 API votes carry counted; quorum + supporters use counted votes; the aggregator marks an isolated agent as not counted; Debate Room lane wording for a quarantined agent pending
+CT12 ✅ Manual containment re-derives the verdict WITHOUT isolated agents (it counted them: could contain a verdict the engine never reached); regression test, mutation-checked
+CT13 ✅ rounds_complete counts the engine's round_completed audit entries (it was 0 for every debate that had a quarantined agent)
+CT14 ⬜ Subject / containment-target ties: UI and backend must break a most-cited tie the same way (smallest value) and say it was a tie
+CT15 ⬜ Debate Room shows each agent's input basis (scenario rows / same user window / time window / recent sample) and says 'quarantined, did not take part' for an agent that sat out
 
 ## Open decisions for you (❓)
 - LG6 confirm insider scenario -> verdict-class mapping used by /evaluation

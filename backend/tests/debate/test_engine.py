@@ -19,6 +19,7 @@ from backend.db.models import (
     RawLog,
     ResponseAction,
 )
+from backend.db.runtime_settings import DEFAULTS
 from backend.debate import engine
 from backend.debate.engine import (
     DebateFailedError,
@@ -30,7 +31,12 @@ from backend.debate.engine import (
 from backend.watchdog.credibility import _client, _crs_key, reset_agent
 
 DOMAIN_AGENTS = ("network_traffic", "access_log", "endpoint_behavior")
-SETTINGS = SimpleNamespace(eta=0.15, isolation_threshold=0.30, verdict_confidence_threshold=0.80)
+# The shipped defaults, read once at import (the autouse fixture below swaps the module for a fake).
+SETTINGS = SimpleNamespace(
+    eta=DEFAULTS.eta,
+    isolation_threshold=DEFAULTS.isolation_threshold,
+    verdict_confidence_threshold=DEFAULTS.verdict_confidence_threshold,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +101,10 @@ def _make_fake_investigator(agent_id: str, theories_by_round: dict[int, str], co
             agent_id=agent_id,
             theory=theory,
             confidence=confidence,
-            cited_evidence=[{"row_id": str(rows[0].row_id), "field": "f", "value": "0"}],
+            # Cite what the first row really holds, so it verifies whichever rows the engine chose.
+            cited_evidence=[
+                {"row_id": str(rows[0].row_id), "field": "f", "value": str(rows[0].raw_fields["f"])}
+            ],
             round=round_no,
         )
         return response, "fake_provider"
@@ -220,9 +229,9 @@ def test_start_investigation_creates_row_and_audit_entry_in_one_transaction(db_s
     assert started.detail["noise_pct"] == 15
     assert started.detail["injected_row_ids"] == [str(r) for r in row_ids]
     assert started.detail["settings"] == {
-        "eta": 0.15,
-        "isolation_threshold": 0.3,
-        "verdict_confidence_threshold": 0.8,
+        "eta": SETTINGS.eta,
+        "isolation_threshold": SETTINGS.isolation_threshold,
+        "verdict_confidence_threshold": SETTINGS.verdict_confidence_threshold,
     }
     assert verify_chain(entries) is True
 
@@ -449,14 +458,14 @@ def test_run_debate_scores_every_round_and_persists_credibility_log(db_session):
     )
     assert [log.round for log in logs] == [1, 2, 3]
     assert all(log.verification_match_rate == 0.0 for log in logs)
-    # 0.5 -> 0.425 -> 0.361 -> 0.307: three failing rounds stay above the 0.30 threshold
-    assert logs[-1].crs_after == pytest.approx(0.5 * 0.85**3)
-    assert all(not log.isolated for log in logs)
+    # 0.5 -> 0.40 -> 0.32 -> 0.256: with the default eta the third failing round crosses the 0.30 threshold
+    assert [log.crs_after for log in logs] == pytest.approx([0.4, 0.32, 0.256])
+    assert [log.isolated for log in logs] == [False, False, True]
 
 
 def test_isolated_agent_is_excluded_from_later_rounds_and_from_the_verdict(db_session):
     network_rows = _seed_all_domains(db_session)
-    # 0.20 * 0.85 = 0.17 after one failing round, which is below the 0.30 threshold
+    # 0.20 * (1 - eta) = 0.16 after one failing round, which is below the 0.30 threshold
     _client().set(_crs_key("network_traffic"), 0.20)
     network_calls: list[int] = []
 
@@ -496,7 +505,7 @@ def test_isolated_agent_is_excluded_from_later_rounds_and_from_the_verdict(db_se
     assert len(isolated_events) == 1
     assert isolated_events[0]["agent_id"] == "network_traffic"
     assert isolated_events[0]["round"] == 1
-    assert isolated_events[0]["crs_after"] == pytest.approx(0.17)
+    assert isolated_events[0]["crs_after"] == pytest.approx(0.20 * (1 - SETTINGS.eta))
     assert isolated_events[0]["investigation_id"] == result["investigation_id"]
 
     round_events = [e for e in events if e["type"] == "round_completed"]
@@ -513,6 +522,84 @@ def test_isolated_agent_is_excluded_from_later_rounds_and_from_the_verdict(db_se
     assert isolation_audit[0].actor == "watchdog"
     assert isolation_audit[0].detail["agent_id"] == "network_traffic"
     assert isolation_audit[0].detail["round"] == 1
+
+
+def test_default_settings_isolate_a_fully_ungrounded_agent_when_round_three_is_scored(db_session):
+    """The end-to-end consequence of the default eta: an agent none of whose citations verify is
+    isolated at the end of round 3, quarantined, audited, and left out of the verdict."""
+    network_rows = _seed_all_domains(db_session)
+
+    def ungrounded(rows, round_no, peripheral_digest=None, debate_context=None):
+        response = AgentResponse(
+            agent_id="network_traffic",
+            theory=f"Unfounded claim, round {round_no}.",
+            confidence=0.9,
+            cited_evidence=[{"row_id": str(rows[0].row_id), "field": "f", "value": "definitely_wrong_value"}],
+            round=round_no,
+        )
+        return response, "fake_provider"
+
+    investigators = {
+        "network_traffic": ungrounded,
+        "access_log": _make_fake_investigator(
+            "access_log", {1: "No anomaly in file access.", 2: "SUPPORT: no anomaly.", 3: "Final: normal."}
+        ),
+        "endpoint_behavior": _make_fake_investigator(
+            "endpoint_behavior",
+            {1: "Normal login pattern.", 2: "SUPPORT: normal login.", 3: "Final: normal."},
+        ),
+    }
+
+    events = []
+    result = _debate(network_rows, investigators, on_update=events.append)
+
+    isolated_events = [e for e in events if e["type"] == "agent_isolated"]
+    assert [(e["agent_id"], e["round"]) for e in isolated_events] == [("network_traffic", 3)]
+    assert isolated_events[0]["crs_after"] == pytest.approx(0.256)
+    assert db_session.get(AgentQuarantine, "network_traffic").active is True
+    assert set(result["verdict"]["contributing_agents"]) == {"access_log", "endpoint_behavior"}
+    audit_rows = (
+        db_session.execute(select(AuditTrail).where(AuditTrail.action == "agent_isolated")).scalars().all()
+    )
+    assert [(row.detail["agent_id"], row.detail["round"]) for row in audit_rows] == [("network_traffic", 3)]
+    assert (
+        verify_chain(db_session.execute(select(AuditTrail).order_by(AuditTrail.seq)).scalars().all()) is True
+    )
+
+
+def test_run_debate_records_how_each_agents_rows_were_chosen(db_session):
+    network_rows = _seed_all_domains(db_session)
+    file_row = RawLog(
+        timestamp=datetime.now(timezone.utc),
+        source="cert_r4.2_file",
+        event_type="file_access",
+        user_id="U9",
+        raw_fields={"f": 0},
+        ground_truth_label="benign",
+    )
+    db_session.add(file_row)
+    db_session.commit()
+
+    events = []
+    _debate(network_rows, _three_agents(), on_update=events.append, scenario_rows=[*network_rows, file_row])
+
+    rounds = [e for e in events if e["type"] == "round_completed"]
+    assert rounds[0]["input_basis"] == {
+        "network_traffic": {"basis": "scenario_rows", "row_count": 2},
+        "access_log": {"basis": "scenario_rows", "row_count": 1},  # the scenario carried a file row
+        # it carried no logon row, but the seeded logon rows lie inside the scenario's time window
+        "endpoint_behavior": {"basis": "time_window", "row_count": 2},
+    }
+    assert all("input_basis" not in later for later in rounds[1:])  # recorded once, with round 1
+
+    first_audit = (
+        db_session.execute(
+            select(AuditTrail).where(AuditTrail.action == "round_completed").order_by(AuditTrail.seq)
+        )
+        .scalars()
+        .first()
+    )
+    assert first_audit.detail["input_basis"] == rounds[0]["input_basis"]
 
 
 def test_agent_quarantined_before_the_debate_is_never_called(db_session):

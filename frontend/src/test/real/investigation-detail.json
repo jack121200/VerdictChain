@@ -1,130 +1,130 @@
 {
   "actions": [
     {
+      "action_type": "trigger_audit",
+      "created_at": "2026-10-09T05:41:28.435117Z",
+      "id": "351292e2-f536-446f-a56d-70e3e9ffa5b4",
+      "investigation_id": "5f7158e4-bac2-46ae-9f83-ee725ab21338",
+      "is_simulated": true,
+      "reason": "Stub justification (test harness): containment action recorded for the audit trail.",
+      "target": "172.16.0.1"
+    },
+    {
       "action_type": "trigger_rate_limiting",
-      "created_at": "2026-10-09T04:53:49.596703Z",
-      "id": "59755ab6-9a2d-4f90-aec6-e7c95d13ef29",
-      "investigation_id": "0136cff5-4074-409b-90c7-826b6e0c8ea0",
+      "created_at": "2026-10-09T05:41:28.435117Z",
+      "id": "5c809cb6-b2ad-420a-812f-324ec51f42dd",
+      "investigation_id": "5f7158e4-bac2-46ae-9f83-ee725ab21338",
       "is_simulated": true,
       "reason": "Stub justification (test harness): containment action recorded for the audit trail.",
       "target": "172.16.0.1"
     },
     {
       "action_type": "block_ip_range",
-      "created_at": "2026-10-09T04:53:49.596703Z",
-      "id": "e8c724d9-ce72-4d48-bc3f-14a5d87673c6",
-      "investigation_id": "0136cff5-4074-409b-90c7-826b6e0c8ea0",
-      "is_simulated": true,
-      "reason": "Stub justification (test harness): containment action recorded for the audit trail.",
-      "target": "172.16.0.1"
-    },
-    {
-      "action_type": "trigger_audit",
-      "created_at": "2026-10-09T04:53:49.596703Z",
-      "id": "f23a8baa-45fb-4ba4-8d37-4da4ef051131",
-      "investigation_id": "0136cff5-4074-409b-90c7-826b6e0c8ea0",
+      "created_at": "2026-10-09T05:41:28.435117Z",
+      "id": "6ae50806-42ab-45e7-b1da-4668e8aed249",
+      "investigation_id": "5f7158e4-bac2-46ae-9f83-ee725ab21338",
       "is_simulated": true,
       "reason": "Stub justification (test harness): containment action recorded for the audit trail.",
       "target": "172.16.0.1"
     }
   ],
   "citations": {
-    "discrepancy": 0,
+    "discrepancy": 6,
     "invalid_row": 0,
     "match_rate": {
-      "as_of": "2026-10-09T05:05:48.985971Z",
+      "as_of": "2026-10-09T05:42:48.285155Z",
       "definition": "verified citations / total citations, exact match against raw_logs (no tolerance)",
       "n": 18,
       "reason": null,
-      "source": "/investigations/0136cff5-4074-409b-90c7-826b6e0c8ea0",
-      "value": 1.0
+      "source": "/investigations/5f7158e4-bac2-46ae-9f83-ee725ab21338",
+      "value": 0.6666666666666666
     },
     "total": 18,
-    "verified": 18
+    "verified": 12
   },
   "containment_count": 3,
-  "created_at": "2026-10-09T04:53:49.241609Z",
+  "created_at": "2026-10-09T05:41:28.157327Z",
   "credibility": [
     {
       "agent_id": "access_log",
-      "created_at": "2026-10-09T04:53:49.355808Z",
-      "crs_after": 1.0,
-      "crs_before": 1.0,
+      "created_at": "2026-10-09T05:41:28.225479Z",
+      "crs_after": 0.40960000000000013,
+      "crs_before": 0.5120000000000001,
       "isolated": false,
       "round": 1,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 0
     },
     {
       "agent_id": "endpoint_behavior",
-      "created_at": "2026-10-09T04:53:49.378268Z",
-      "crs_after": 0.9774999999999999,
-      "crs_before": 0.85,
+      "created_at": "2026-10-09T05:41:28.245277Z",
+      "crs_after": 1,
+      "crs_before": 1,
       "isolated": false,
       "round": 1,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 1
     },
     {
       "agent_id": "network_traffic",
-      "created_at": "2026-10-09T04:53:49.328809Z",
-      "crs_after": 1.0,
-      "crs_before": 1.0,
+      "created_at": "2026-10-09T05:41:28.206080Z",
+      "crs_after": 1,
+      "crs_before": 1,
       "isolated": false,
       "round": 1,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 1
     },
     {
       "agent_id": "access_log",
-      "created_at": "2026-10-09T04:53:49.441316Z",
-      "crs_after": 1.0,
-      "crs_before": 1.0,
+      "created_at": "2026-10-09T05:41:28.296192Z",
+      "crs_after": 0.32768000000000014,
+      "crs_before": 0.40960000000000013,
       "isolated": false,
       "round": 2,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 0
     },
     {
       "agent_id": "endpoint_behavior",
-      "created_at": "2026-10-09T04:53:49.466569Z",
-      "crs_after": 1.0,
-      "crs_before": 0.9774999999999999,
+      "created_at": "2026-10-09T05:41:28.316597Z",
+      "crs_after": 1,
+      "crs_before": 1,
       "isolated": false,
       "round": 2,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 1
     },
     {
       "agent_id": "network_traffic",
-      "created_at": "2026-10-09T04:53:49.413866Z",
-      "crs_after": 1.0,
-      "crs_before": 1.0,
+      "created_at": "2026-10-09T05:41:28.274381Z",
+      "crs_after": 1,
+      "crs_before": 1,
       "isolated": false,
       "round": 2,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 1
     },
     {
       "agent_id": "access_log",
-      "created_at": "2026-10-09T04:53:49.528088Z",
-      "crs_after": 1.0,
-      "crs_before": 1.0,
-      "isolated": false,
+      "created_at": "2026-10-09T05:41:28.365533Z",
+      "crs_after": 0.2621440000000001,
+      "crs_before": 0.32768000000000014,
+      "isolated": true,
       "round": 3,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 0
     },
     {
       "agent_id": "endpoint_behavior",
-      "created_at": "2026-10-09T04:53:49.553966Z",
-      "crs_after": 1.0,
-      "crs_before": 1.0,
+      "created_at": "2026-10-09T05:41:28.396856Z",
+      "crs_after": 1,
+      "crs_before": 1,
       "isolated": false,
       "round": 3,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 1
     },
     {
       "agent_id": "network_traffic",
-      "created_at": "2026-10-09T04:53:49.502245Z",
-      "crs_after": 1.0,
-      "crs_before": 1.0,
+      "created_at": "2026-10-09T05:41:28.347116Z",
+      "crs_after": 1,
+      "crs_before": 1,
       "isolated": false,
       "round": 3,
-      "verification_match_rate": 1.0
+      "verification_match_rate": 1
     }
   ],
   "dataset": "CICIDS2017",
@@ -135,17 +135,17 @@
         {
           "field": "user_id",
           "row_id": "a5f170de-70d9-4e5b-afbf-1481784b6eab",
-          "value": "SCP0130"
+          "value": "stub-fabricated-value"
         },
         {
           "field": "user_id",
           "row_id": "af9624d8-92c0-4bd4-8dab-fbde30f8921a",
-          "value": "NDM0417"
+          "value": "stub-fabricated-value"
         }
       ],
       "confidence": 0.86,
-      "created_at": "2026-10-09T04:53:49.342894Z",
-      "provider": "groq",
+      "created_at": "2026-10-09T05:41:28.215797Z",
+      "provider": "stub-groq",
       "round": 1,
       "stance": null,
       "theory": "Unusual file access and exfiltration: this user's file-access summaries show many distinct filenames and a file_access_count well above their own usual level."
@@ -165,8 +165,8 @@
         }
       ],
       "confidence": 0.9,
-      "created_at": "2026-10-09T04:53:49.366719Z",
-      "provider": "gemini",
+      "created_at": "2026-10-09T05:41:28.235490Z",
+      "provider": "stub-gemini",
       "round": 1,
       "stance": null,
       "theory": "Off-hours logon anomaly: logon rows fall outside this user's own historical login hours, and device activity appears on a PC they rarely use."
@@ -176,18 +176,18 @@
       "cited_evidence": [
         {
           "field": "Idle Max",
-          "row_id": "6e0dcca6-10ab-4d11-91d9-30edea73e8db",
+          "row_id": "7093f3e9-e043-4dae-b9c4-1f5eed3ed3ef",
           "value": "0"
         },
         {
           "field": "Idle Max",
-          "row_id": "6bf1b557-816f-4ffc-88a6-951340b8f28f",
+          "row_id": "f854b7e6-4afe-4476-bb4d-637fd2991af5",
           "value": "0"
         }
       ],
       "confidence": 0.88,
-      "created_at": "2026-10-09T04:53:49.314116Z",
-      "provider": "groq",
+      "created_at": "2026-10-09T05:41:28.197913Z",
+      "provider": "stub-groq",
       "round": 1,
       "stance": null,
       "theory": "Volumetric flood pattern: Flow Packets/s and Flow Bytes/s sit far above the window baseline, which fits a traffic flood aimed at one destination."
@@ -198,17 +198,17 @@
         {
           "field": "user_id",
           "row_id": "a5f170de-70d9-4e5b-afbf-1481784b6eab",
-          "value": "SCP0130"
+          "value": "stub-fabricated-value"
         },
         {
           "field": "user_id",
           "row_id": "af9624d8-92c0-4bd4-8dab-fbde30f8921a",
-          "value": "NDM0417"
+          "value": "stub-fabricated-value"
         }
       ],
       "confidence": 0.86,
-      "created_at": "2026-10-09T04:53:49.428171Z",
-      "provider": "groq",
+      "created_at": "2026-10-09T05:41:28.284846Z",
+      "provider": "stub-groq",
       "round": 2,
       "stance": "SUPPORT",
       "theory": "SUPPORT: Endpoint-Behavior's off-hours logon anomaly matches my file-access burst, since the same user-days also show activity outside working hours."
@@ -228,8 +228,8 @@
         }
       ],
       "confidence": 0.9,
-      "created_at": "2026-10-09T04:53:49.454224Z",
-      "provider": "gemini",
+      "created_at": "2026-10-09T05:41:28.306709Z",
+      "provider": "stub-gemini",
       "round": 2,
       "stance": "REVISE",
       "theory": "REVISE: I keep the off-hours logon anomaly and now link it to Access-Log's unusual file access, because the same user-days show both timing and file-volume outliers."
@@ -239,18 +239,18 @@
       "cited_evidence": [
         {
           "field": "Idle Max",
-          "row_id": "6e0dcca6-10ab-4d11-91d9-30edea73e8db",
+          "row_id": "7093f3e9-e043-4dae-b9c4-1f5eed3ed3ef",
           "value": "0"
         },
         {
           "field": "Idle Max",
-          "row_id": "6bf1b557-816f-4ffc-88a6-951340b8f28f",
+          "row_id": "f854b7e6-4afe-4476-bb4d-637fd2991af5",
           "value": "0"
         }
       ],
       "confidence": 0.88,
-      "created_at": "2026-10-09T04:53:49.403009Z",
-      "provider": "groq",
+      "created_at": "2026-10-09T05:41:28.264601Z",
+      "provider": "stub-groq",
       "round": 2,
       "stance": "CHALLENGE",
       "theory": "CHALLENGE: Access-Log's file-exfiltration reading does not explain a packet-rate spike at the network layer, so the flood explanation stays on the table."
@@ -261,17 +261,17 @@
         {
           "field": "user_id",
           "row_id": "a5f170de-70d9-4e5b-afbf-1481784b6eab",
-          "value": "SCP0130"
+          "value": "stub-fabricated-value"
         },
         {
           "field": "user_id",
           "row_id": "af9624d8-92c0-4bd4-8dab-fbde30f8921a",
-          "value": "NDM0417"
+          "value": "stub-fabricated-value"
         }
       ],
       "confidence": 0.86,
-      "created_at": "2026-10-09T04:53:49.516224Z",
-      "provider": "groq",
+      "created_at": "2026-10-09T05:41:28.356002Z",
+      "provider": "stub-groq",
       "round": 3,
       "stance": "SUPPORT",
       "theory": "SUPPORT: I keep the unusual file access and exfiltration theory, and the off-hours logon anomaly from Endpoint-Behavior corroborates the timing of these reads."
@@ -291,8 +291,8 @@
         }
       ],
       "confidence": 0.9,
-      "created_at": "2026-10-09T04:53:49.540585Z",
-      "provider": "gemini",
+      "created_at": "2026-10-09T05:41:28.386422Z",
+      "provider": "stub-gemini",
       "round": 3,
       "stance": "REVISE",
       "theory": "REVISE: I hold the off-hours logon anomaly reading - the logon rows for these user-days fall outside this user's own historical login hours and an unrecognized device appears, which is an unusual login pattern rather than a file-exfiltration one."
@@ -302,25 +302,25 @@
       "cited_evidence": [
         {
           "field": "Idle Max",
-          "row_id": "6e0dcca6-10ab-4d11-91d9-30edea73e8db",
+          "row_id": "7093f3e9-e043-4dae-b9c4-1f5eed3ed3ef",
           "value": "0"
         },
         {
           "field": "Idle Max",
-          "row_id": "6bf1b557-816f-4ffc-88a6-951340b8f28f",
+          "row_id": "f854b7e6-4afe-4476-bb4d-637fd2991af5",
           "value": "0"
         }
       ],
       "confidence": 0.88,
-      "created_at": "2026-10-09T04:53:49.489571Z",
-      "provider": "groq",
+      "created_at": "2026-10-09T05:41:28.335179Z",
+      "provider": "stub-groq",
       "round": 3,
       "stance": "REVISE",
       "theory": "REVISE: I narrow the volumetric flood theory to the destination with the highest packets-per-second share, because byte totals alone cannot separate a flood from bulk transfer."
     }
   ],
-  "effective_noise_pct": 0.0,
-  "investigation_id": "0136cff5-4074-409b-90c7-826b6e0c8ea0",
+  "effective_noise_pct": 0,
+  "investigation_id": "5f7158e4-bac2-46ae-9f83-ee725ab21338",
   "noise_pct": 0,
   "primary_agent": "network_traffic",
   "rounds_complete": 3,
@@ -331,6 +331,7 @@
   "votes": [
     {
       "agent_id": "network_traffic",
+      "counted": true,
       "matched_keywords": [
         "flood",
         "volumetric"
@@ -340,6 +341,7 @@
     },
     {
       "agent_id": "access_log",
+      "counted": false,
       "matched_keywords": [
         "exfiltration",
         "unusual file access"
@@ -349,6 +351,7 @@
     },
     {
       "agent_id": "endpoint_behavior",
+      "counted": true,
       "matched_keywords": [
         "off-hours",
         "unrecognized device",

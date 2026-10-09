@@ -107,9 +107,26 @@ Each agent:
 
 ## 4. Hybrid trigger model
 
-- **Continuous mode (default, always on):** a background worker replays/streams the
-  normalized log dataset (respecting original relative timestamps, sped up) into
-  RabbitMQ. The pipeline consumes from the same queue regardless of trigger source.
+- **Continuous mode (implemented as a simulated live feed, off until started):** there is no
+  real network, so a sensor (`backend/pipeline/live_feed.py`) replays rows of the ingested datasets
+  into RabbitMQ in short segments (ordinary traffic, and now and then a slice of one labelled
+  scenario) at a constant `events_per_second`. The two datasets share no timeline, so the original
+  relative timestamps cannot be kept; the rows keep their own dataset timestamps. The messages are
+  pointers only (row id, time, source, event type), never a label. A monitor
+  (`backend/pipeline/live_monitor.py`, rule in `live_detector.py`) keeps a sliding window of the
+  newest rows per source group (30 network flows, 20 CERT rows) and scores it with a fixed rule
+  that reads no label: network = spread of log10(1 + Flow Packets/s) at most 0.50; CERT = window
+  mean of `off_hours`, `connect_count` or `file_access_count` at least 4 standard errors above
+  the dataset mean. A flagged window becomes an investigation (`trigger_type = continuous`,
+  `started_by = live_monitor`) in the debate queue, if the guards allow it: intake not paused,
+  at least two active investigators, a minimum gap (`LIVE_MIN_GAP_SECONDS`), a limit on waiting
+  automatic investigations (`LIVE_MAX_QUEUED`), a back-off after a failed one, a daily cap
+  (`LIVE_DAILY_CAP`, also counted in the global cap) and the queue limits. The reason a window
+  was refused is kept and shown. The evaluation label of the window is attached to the
+  investigation row on the server afterwards (`backend/evaluation/live_labels.py`) and is never
+  part of what an agent reads. `POST /live/start` and `/live/stop` need capability
+  `control_live_feed` and are audited (`live_feed_started`, `live_feed_stopped`);
+  `GET /live/status` and `GET /live/arrivals` are open to every analyst.
 - **Manual mode ("Simulate scenario" button):** the frontend lets the user pick one
   scenario from two groups:
   - Internal: off-hours cross-department file access, privileged-account misuse,
@@ -124,11 +141,22 @@ Each agent:
   /investigations/simulate` takes `scenario_label`, `max_rows_per_agent` (1–15),
   `noise_pct` (0, 15 or 30) and `wait`. The checks run in this order: authentication,
   capability `inject_scenario`, rate limit (5 per minute per client), intake paused (423),
-  rows (404), dominant investigator (422), noise dilution, the single debate slot (409),
-  the daily caps per analyst and across analysts (429, 24-hour window), then
-  `start_investigation()`. `wait=true` runs the debate inline and returns 201. `wait=false`
-  returns 202 with the investigation id and runs the debate in a background thread. The
-  slot (`verdictchain:debate:slot`) is released in `finally`.
+  rows (404), dominant investigator (422), noise dilution, active investigators (409),
+  queue capacity (429), the daily caps per analyst and across analysts (429, 24-hour window),
+  then `start_investigation()` with a `run_spec`, which creates the investigation as `queued`.
+  `wait=true` blocks until the debate has run and returns 201 with the verdict. `wait=false`
+  returns 202 at once with the investigation id, its status and, while it waits, its place in
+  the queue (`queue_position`, `queue_length`).
+- **Debate queue (`backend/api/debate_queue.py`, migration 0008):** one debate runs at a time
+  (credibility scores are shared state and the model quota is global), so an accepted request
+  that finds the debate slot busy waits as status `queued`. The queue is the `investigations`
+  table (`queued_at`, `run_spec` with ids and numbers only, never a label), so it survives a
+  restart. One worker thread takes the oldest queued investigation (`FOR UPDATE SKIP LOCKED`),
+  holds the slot (`verdictchain:debate:slot`) while it runs `run_debate`, writes a
+  `debate_started` audit entry and releases the slot when the debate ends. It starts nothing
+  while intake is paused. Waiting debates are limited per analyst and in total
+  (`DEBATE_QUEUE_MAX_PER_USER`, `DEBATE_QUEUE_MAX_TOTAL`); `GET /investigations/{id}/progress`
+  reports phase `queued`, the place and the investigation it waits for.
 - **Noise (`backend/pipeline/noise.py`):** the window the agent reads (the first
   `max_rows_per_agent` rows) loses k = round(n × pct / 100) scenario rows, always keeping at
   least one. Each dropped row is replaced by a benign row of the same source, so no value is

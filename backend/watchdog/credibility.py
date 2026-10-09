@@ -11,8 +11,8 @@ Formula: resolved 2026-10-05, owner-approved (the earlier multiplier 1 + eta * r
 only hold or grow CrS, so isolation was unreachable). Default eta 0.15 -> 0.20: 2026-10-09,
 migration 0007; eta stays an audited runtime setting in [0.01, 0.5].
 
-Lives in Redis for fast read/write; every update is also logged to Postgres
-credibility_log by watchdog/service.py (Redis is a cache, Postgres is the durable record).
+Lives in Redis for fast read/write (update_crs is one atomic transaction); every update is also logged to
+Postgres credibility_log by watchdog/service.py (Redis is a cache, Postgres is the durable record).
 
 Isolation is persistent and is recorded in Postgres (agent_quarantine, set by
 backend/debate/engine.py). The Redis flag mirrors the last scored state. reset_agent()
@@ -78,12 +78,27 @@ def update_crs(
     eta: float = ETA,
     isolation_threshold: float = ISOLATION_THRESHOLD,
 ) -> tuple[float, float, bool]:
-    """Returns (crs_before, crs_after, isolated)."""
-    crs_before = get_crs(agent_id)
-    crs_after = compute_crs(crs_before, rate, eta)
-    _client().set(_crs_key(agent_id), crs_after)
+    """Returns (crs_before, crs_after, isolated).
 
-    isolated = crs_after < isolation_threshold
-    if isolated:
-        _client().set(_isolated_key(agent_id), "1")
-    return crs_before, crs_after, isolated
+    Atomic: the read, the new value and the write are one Redis transaction watching the key, and it is
+    retried if anyone else wrote the key in between. Two updates of the same agent at the same moment (two API
+    workers, a restore during a round) therefore both count; a plain get-then-set would lose one of them.
+    """
+    key = _crs_key(agent_id)
+    outcome: list[tuple[float, float, bool]] = []
+
+    def apply(pipe: redis.client.Pipeline) -> None:
+        raw = pipe.get(key)
+        crs_before = float(raw) if raw is not None else STARTING_CRS
+        crs_after = compute_crs(crs_before, rate, eta)
+        isolated = crs_after < isolation_threshold
+        pipe.multi()
+        pipe.set(key, crs_after)
+        if isolated:
+            pipe.set(_isolated_key(agent_id), "1")
+        outcome.append(
+            (crs_before, crs_after, isolated)
+        )  # a retry appends again: the last one is the one that ran
+
+    _client().transaction(apply, key)
+    return outcome[-1]

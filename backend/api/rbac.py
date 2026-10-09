@@ -18,6 +18,7 @@ CAPABILITIES: Mapping[str, frozenset[str]] = MappingProxyType(
         "quarantine_agent": frozenset({_LEAD, _SUPERVISOR}),
         "manage_users": frozenset({_LEAD}),
         "edit_settings": frozenset({_LEAD}),
+        "control_live_feed": frozenset({_LEAD, _SUPERVISOR}),
     }
 )
 

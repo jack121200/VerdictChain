@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 CHANNEL = "verdictchain:events"
 
-TOPICS = ("investigations", "stats", "audit", "credibility", "agents", "settings", "users", "actions")
+TOPICS = ("investigations", "stats", "audit", "credibility", "agents", "settings", "users", "actions", "live")
 
 _ALL_ROUND = ("investigations", "credibility", "agents", "stats", "audit")
 _CONTAINMENT = ("actions", "investigations", "stats", "audit")
@@ -54,6 +54,10 @@ TOPICS_FOR_ACTION: dict[str, tuple[str, ...]] = {
     "register": ("users", "audit"),
     "login": ("audit",),
     "byzantine_fault_injected": ("agents", "audit"),
+    "debate_started": ("investigations", "stats", "audit"),
+    "live_feed_started": ("live", "audit"),
+    "live_feed_stopped": ("live", "audit"),
+    "live_tick": ("live",),  # published by the live monitor about once a second; never audited
 }
 
 _client: redis.Redis | None = None

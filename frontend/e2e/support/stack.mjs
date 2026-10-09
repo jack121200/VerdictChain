@@ -56,6 +56,12 @@ export function backendEnv() {
     // The suite runs more debates than the production daily caps allow; the caps are tested in the backend suite.
     DEBATE_DAILY_LIMIT_USER: '500',
     DEBATE_DAILY_LIMIT_GLOBAL: '1000',
+    // The live feed has its own RabbitMQ queue here (never the dev stack's) and replays only the scenario rows, so
+    // the live spec gets a flagged window within seconds. Its daily cap is generous for the same reason as above.
+    LIVE_FEED_QUEUE: 'verdictchain_pw_live',
+    LIVE_FEED_ATTACK_SHARE: '1',
+    LIVE_MIN_GAP_SECONDS: '3',
+    LIVE_DAILY_CAP: '100',
     // Replaced per run by the global setup.
     BOOTSTRAP_LEAD_USERNAME: '',
     BOOTSTRAP_LEAD_PASSWORD: '',

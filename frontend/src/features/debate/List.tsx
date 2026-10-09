@@ -13,6 +13,7 @@ import { Icon } from '../../ui/Icon';
 import { PageHeader } from '../../ui/Headings';
 import { HintStrip } from '../../ui/HintStrip';
 import { Pill } from '../../ui/Pill';
+import { Proof } from '../../ui/Proof';
 import { Skeleton } from '../../ui/Skeleton';
 import { Timestamp } from '../../ui/Timestamp';
 
@@ -28,7 +29,11 @@ export function DebateList() {
   const investigations = useAsync(() => listInvestigations({ limit: 50 }), 4000, ['investigations']);
   const rows = investigations.data?.items ?? [];
   const live = rows.filter((row) => row.status === 'investigating');
-  const recent = rows.filter((row) => row.status !== 'investigating').slice(0, 12);
+  // Waiting cases in the order the worker takes them: oldest first (the queue is first in, first out).
+  const waiting = rows
+    .filter((row) => row.status === 'queued')
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const recent = rows.filter((row) => row.status !== 'investigating' && row.status !== 'queued').slice(0, 12);
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-6">
@@ -84,6 +89,27 @@ export function DebateList() {
             )}
           </section>
 
+          {waiting.length > 0 && (
+            <section className="space-y-2" aria-label="Waiting in the queue">
+              <div className="flex items-center gap-2">
+                <Icon name="schedule" size={14} className="text-on-surface-variant" />
+                <span className="text-label uppercase tracking-wider text-on-surface-variant">
+                  Waiting in the queue ({formatCount(waiting.length)})
+                </span>
+                <Proof
+                  source="GET /investigations (status queued)"
+                  n={waiting.length}
+                  asOf={investigations.loadedAt}
+                  label="Queue place"
+                  definition="Place = the row's rank among investigations with status queued, ordered by created_at (oldest first). The worker takes them in that order, one at a time."
+                />
+              </div>
+              {waiting.map((row, index) => (
+                <DebateRow key={row.id} row={row} place={index + 1} />
+              ))}
+            </section>
+          )}
+
           {recent.length > 0 && (
             <section className="space-y-2">
               <span className="text-label uppercase tracking-wider text-on-surface-variant">Recent ({formatCount(recent.length)})</span>
@@ -102,7 +128,7 @@ export function DebateList() {
  * One row. The link covers the whole card; the copy button is positioned and later in the DOM, so it paints
  * above the link and stays clickable (a button may not sit inside a link).
  */
-function DebateRow({ row, live = false }: { row: InvestigationSummary; live?: boolean }) {
+function DebateRow({ row, live = false, place }: { row: InvestigationSummary; live?: boolean; place?: number }) {
   return (
     <Card hoverTone="primary" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <a
@@ -119,7 +145,7 @@ function DebateRow({ row, live = false }: { row: InvestigationSummary; live?: bo
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {row.verdict_class && <Pill tone="secondary">{row.verdict_class}</Pill>}
-        <Pill tone={live ? 'error' : 'neutral'}>{row.status}</Pill>
+        <Pill tone={live ? 'error' : 'neutral'}>{place !== undefined ? `queued · place ${place}` : row.status}</Pill>
         <Icon name="chevron_right" size={16} className="hidden text-on-surface-variant sm:inline" />
       </div>
     </Card>

@@ -254,7 +254,7 @@ export type LaneAbsence = 'quarantined' | 'no_turns' | null;
 export function laneAbsence(lane: AgentLane, isolatedNow: boolean, status: InvestigationStatus | null): LaneAbsence {
   if (lane.turns.length > 0) return null;
   if (isolatedNow) return 'quarantined';
-  const finished = status !== null && status !== 'investigating';
+  const finished = status !== null && status !== 'investigating' && status !== 'queued';
   return finished ? 'no_turns' : null;
 }
 

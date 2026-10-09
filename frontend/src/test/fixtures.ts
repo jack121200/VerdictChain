@@ -24,7 +24,7 @@ export function fullStats(overrides: Partial<StatsResponse> = {}): StatsResponse
     threats_24h: metric(0),
     insider_count: metric(0),
     contained: metric(0),
-    by_status: { investigating: metric(0), verdict_reached: metric(0), ambiguous: metric(0), contained: metric(0), error: metric(0) },
+    by_status: { queued: metric(0), investigating: metric(0), verdict_reached: metric(0), ambiguous: metric(0), contained: metric(0), error: metric(0) },
     by_verdict_class: { ddos: metric(0), benign: metric(0) },
     mean_agent_confidence: metric(0.5),
     mean_crs: metric(0.9),

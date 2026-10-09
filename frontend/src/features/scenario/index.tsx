@@ -90,8 +90,12 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
         // One key per opening of the modal: a double click sends the same key twice and the server starts one debate.
         { idempotencyKey },
       );
+      const where =
+        accepted.status === 'queued' && accepted.queue_position !== null
+          ? `queued · place ${accepted.queue_position} of ${accepted.queue_length ?? accepted.queue_position}`
+          : 'started';
       pushToast(
-        `Investigation ${shortId(accepted.investigation_id)} started · primary ${accepted.primary_agent} · effective noise ${accepted.effective_noise_pct}%`,
+        `Investigation ${shortId(accepted.investigation_id)} ${where} · primary ${accepted.primary_agent} · effective noise ${accepted.effective_noise_pct}%`,
         { tone: 'secondary', durationMs: 6000 },
       );
       onClose();

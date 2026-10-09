@@ -32,7 +32,8 @@ export type Capability =
   | 'override_fault_weights'
   | 'quarantine_agent'
   | 'manage_users'
-  | 'edit_settings';
+  | 'edit_settings'
+  | 'control_live_feed';
 
 /** The three investigator agents. Display names and domains come from GET /agents/fleet. */
 export type InvestigatorId = 'network_traffic' | 'access_log' | 'endpoint_behavior';
@@ -48,7 +49,13 @@ export type VerdictClass =
   | 'ambiguous';
 
 /** Exactly the values the backend writes to investigations.status (debate engine, self-healing, containment). */
-export type InvestigationStatus = 'investigating' | 'verdict_reached' | 'ambiguous' | 'contained' | 'error';
+export type InvestigationStatus =
+  | 'queued'
+  | 'investigating'
+  | 'verdict_reached'
+  | 'ambiguous'
+  | 'contained'
+  | 'error';
 
 export type Stance = 'CHALLENGE' | 'SUPPORT' | 'REVISE';
 
@@ -93,6 +100,9 @@ export const AUDIT_ACTION_NAMES = [
   'emergency_containment',
   'containment_released',
   'byzantine_fault_injected',
+  'debate_started',
+  'live_feed_started',
+  'live_feed_stopped',
   'lock_account',
   'block_ip_range',
   'trigger_rate_limiting',
@@ -498,10 +508,13 @@ export interface SimulateAccepted {
   noise_pct: NoisePct;
   effective_noise_pct: number;
   primary_agent: InvestigatorId;
+  /** Set while the investigation waits in the debate queue: its place (1 = next) and how many wait. */
+  queue_position: number | null;
+  queue_length: number | null;
 }
 
-/** Where a debate is (GET /investigations/{id}/progress). unknown = still investigating but no debate holds the slot. */
-export type ProgressPhase = 'running' | 'finished' | 'error' | 'unknown';
+/** Where a debate is (GET /investigations/{id}/progress). queued = waiting for the worker; unknown = still investigating but no debate holds the slot. */
+export type ProgressPhase = 'queued' | 'running' | 'finished' | 'error' | 'unknown';
 
 export interface InvestigationProgress {
   investigation_id: string;
@@ -512,6 +525,88 @@ export interface InvestigationProgress {
   /** The round in progress; null unless phase is running. */
   round: number | null;
   elapsed_seconds: number;
+  queue_position: number | null;
+  queue_length: number | null;
+  /** The investigation that holds the debate slot while this one is queued. */
+  waiting_for: string | null;
+}
+
+// ---- simulated live feed (GET /live/status, GET /live/arrivals, POST /live/start and /live/stop) ----
+
+export type LiveGroup = 'network' | 'logon' | 'device' | 'file';
+
+/** The latest window of one source group and how the rule scored it. */
+export interface LiveWindow {
+  group: LiveGroup;
+  source: string;
+  feature: string;
+  size: number;
+  rows: number;
+  scored_rows: number;
+  /** network: spread of log10(1 + packets/s); other groups: the window mean of the field. */
+  value: number | null;
+  /** The value at which the window is flagged. */
+  threshold: number | null;
+  /** Standard errors above the dataset mean (null for network). */
+  z: number | null;
+  /** 0..1, flagged at 0.5. */
+  suspicion: number;
+  flagged: boolean;
+  rule: string;
+  evaluated_at: string | null;
+}
+
+export interface LiveTrigger {
+  investigation_id: string;
+  group: string;
+  reason: string;
+  at: string;
+}
+
+export interface LiveBlocked {
+  reason: string;
+  at: string | null;
+}
+
+export interface LiveStatus {
+  state: 'running' | 'stopped';
+  /** Always true: the feed replays dataset rows, no real network is monitored. */
+  simulated: boolean;
+  notice: string;
+  started_at: string | null;
+  started_by: string | null;
+  events_per_second: number | null;
+  auto_investigate: boolean;
+  published: Metric<number>;
+  consumed: Metric<number>;
+  rate: Metric<number>;
+  backlog: Metric<number>;
+  flagged: Metric<number>;
+  triggered: Metric<number>;
+  triggers_today: Metric<number>;
+  daily_cap: Metric<number>;
+  windows: LiveWindow[];
+  last_trigger: LiveTrigger | null;
+  blocked: LiveBlocked | null;
+  error: string | null;
+  generated_at: string;
+}
+
+/** One row that arrived: the pointer plus allow-listed fields. Never a label, never raw_fields. */
+export interface LiveArrival {
+  row_id: string;
+  timestamp: string;
+  source: string;
+  event_type: string;
+  user_id: string | null;
+  host_id: string | null;
+  arrived_at: string;
+}
+
+/** POST /live/start body. Both fields are optional; the server uses its settings for the rest. */
+export interface LiveStartRequest {
+  events_per_second?: number;
+  auto_investigate?: boolean;
 }
 
 /** One sandboxed action as the containment endpoints report it. */

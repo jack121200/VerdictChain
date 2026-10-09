@@ -26,6 +26,7 @@ export const VERDICT_LABEL: Record<VerdictClass, string> = {
 };
 
 export const STATUS_LABEL: Record<InvestigationStatus, string> = {
+  queued: 'Queued',
   investigating: 'Investigating',
   verdict_reached: 'Verdict reached',
   ambiguous: 'Ambiguous',
@@ -54,6 +55,8 @@ export function verdictIcon(verdict: VerdictClass | null): IconName {
 /** Colour role for an investigation status. */
 export function statusTone(status: InvestigationStatus): PillTone {
   switch (status) {
+    case 'queued':
+      return 'neutral';
     case 'contained':
       return 'error';
     case 'verdict_reached':

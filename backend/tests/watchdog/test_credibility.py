@@ -132,3 +132,32 @@ def test_reset_agent_restores_neutral_state():
     reset_agent(agent_id)
     assert is_isolated(agent_id) is False
     assert get_crs(agent_id) == STARTING_CRS
+
+
+def test_concurrent_updates_of_one_agent_all_count():
+    """The update is atomic: 40 threads each apply one rate-1 round at the same moment, and the result is the
+    same as applying them one after the other. A get-then-set loses updates and ends lower."""
+    import threading
+
+    agent_id = _fresh_agent_id()
+    eta = 0.01
+    results: list[tuple[float, float, bool]] = []
+    start = threading.Barrier(40)
+
+    def one_round() -> None:
+        start.wait()
+        results.append(update_crs(agent_id, rate=1.0, eta=eta))
+
+    threads = [threading.Thread(target=one_round) for _ in range(40)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    expected = STARTING_CRS
+    for _ in range(40):
+        expected = compute_crs(expected, 1.0, eta)
+    assert get_crs(agent_id) == pytest.approx(expected)
+    # every update saw the value the previous one wrote: the "before" values are the chain 0.5, 0.505, ...
+    befores = sorted(before for before, _, _ in results)
+    assert len(set(befores)) == 40

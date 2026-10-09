@@ -64,14 +64,9 @@ def investigation_key(investigation_id: str) -> str:
     return f"investigation:{investigation_id}"
 
 
-def make_debate_broadcaster(
-    investigation_id: str, scenario_label: str, loop: asyncio.AbstractEventLoop
-) -> Callable[[dict], None]:
+def make_debate_broadcaster(investigation_id: str, loop: asyncio.AbstractEventLoop) -> Callable[[dict], None]:
     """run_debate() calls the returned function from a worker thread. Each frame gets investigation_id and
     goes to the investigation channel. A failed broadcast never breaks the debate.
-
-    `scenario_label` is unused since the legacy scenario-keyed channel was removed (BE7). It stays in the
-    signature only so the caller in routes/simulate.py need not change in the same step.
     """
     key = investigation_key(investigation_id)
 

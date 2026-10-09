@@ -27,6 +27,8 @@ export interface StatusMeta {
 /** Pill tone and label for an investigation status. */
 export function investigationStatusMeta(status: InvestigationStatus): StatusMeta {
   switch (status) {
+    case 'queued':
+      return { tone: 'neutral', label: 'Queued' };
     case 'investigating':
       return { tone: 'primary', label: 'Running' };
     case 'verdict_reached':

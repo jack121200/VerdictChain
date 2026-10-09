@@ -68,6 +68,11 @@ description: Security requirements — auth, secrets, sandbox enforcement, and a
 - The blind-test boundary (agents never see `ground_truth_label` /
   `scenario_label`) is itself a security-relevant invariant — treat any code that
   would leak it into an agent's prompt as a security bug, not just a design bug.
+  On the live feed the boundary has one deliberate crossing: the sensor (`live_feed.py`) reads labels to
+  decide which rows the simulated world emits, and `live_labels.py` attaches the evaluation label to an
+  automatic investigation on the server. Everything between them (the queue messages, the monitor, the
+  detector, the shared state, `run_spec`, the audit detail and every API response) carries no label; a test
+  scans the monitor-side modules for the label names and others check the stored specs and responses.
 - Account and admin actions are audited: `register`, `login` (successful logins only),
   `role_changed` and `settings_changed` (with `before` and `after`). Each is written in
   the same transaction as the change it records: the domain row is written first, and

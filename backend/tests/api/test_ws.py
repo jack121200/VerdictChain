@@ -224,7 +224,7 @@ def test_the_broadcaster_tags_every_frame_and_feeds_the_investigation_channel_on
         sent.append((key, message))
 
     monkeypatch.setattr(websocket_module.manager, "broadcast", record)
-    on_update = make_debate_broadcaster("inv-1", "DDoS", event_loop_thread)
+    on_update = make_debate_broadcaster("inv-1", event_loop_thread)
     on_update({"type": "round_completed", "round": 1, "agents": []})
 
     deadline = time.monotonic() + 5
@@ -239,7 +239,7 @@ def test_the_broadcaster_tags_every_frame_and_feeds_the_investigation_channel_on
 def test_a_stopped_event_loop_never_breaks_the_debate(monkeypatch):
     loop = asyncio.new_event_loop()
     loop.close()  # the request that owned this loop has ended
-    on_update = make_debate_broadcaster("inv-2", "Botnet", loop)
+    on_update = make_debate_broadcaster("inv-2", loop)
     on_update({"type": "verdict", "verdict": {}, "actions_taken": []})  # must not raise
 
 
@@ -275,7 +275,7 @@ def test_live_frames_reach_the_socket_and_each_carries_the_investigation_id(db_s
         finished.set()
         return {"investigation_id": str(investigation_id), "verdict": {"verdict_class": "ddos"}}
 
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", fake_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", fake_debate)
 
     headers = auth_headers("forensic_analyst")
     with TestClient(app) as client:

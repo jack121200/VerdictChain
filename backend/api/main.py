@@ -2,13 +2,17 @@
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.debate_queue import worker as debate_worker
 from backend.api.event_stream import run_event_forwarder
+from backend.api.live_runner import LiveFeedError
+from backend.api.live_runner import runner as live_runner
 from backend.api.recovery import recover_after_restart
 from backend.api.request_logging import REQUEST_ID_HEADER, RequestLoggingMiddleware
 from backend.api.routes import (
@@ -20,6 +24,7 @@ from backend.api.routes import (
     evaluation,
     evidence,
     investigations,
+    live,
     raw_logs,
     rbac,
     response_actions,
@@ -32,6 +37,16 @@ from backend.api.routes import (
 )
 from backend.api.startup_checks import run_startup_checks
 from backend.api.ws_investigations import router as ws_investigations_router
+from backend.config import settings as app_settings
+
+logger = logging.getLogger(__name__)
+
+
+def _autostart_live_feed() -> None:
+    try:
+        live_runner.start("system")
+    except LiveFeedError as exc:  # the API still serves; the Live page shows the feed as stopped
+        logger.warning("live feed autostart skipped: %s", exc)
 
 
 @asynccontextmanager
@@ -40,10 +55,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     forwards change events to the /ws/events sockets."""
     await run_startup_checks()
     await asyncio.to_thread(recover_after_restart)
+    debate_worker.ensure_started(asyncio.get_running_loop())  # runs debates that were queued before a restart
+    if app_settings.live_feed_autostart:
+        await asyncio.to_thread(_autostart_live_feed)
     forwarder = asyncio.create_task(run_event_forwarder())
     try:
         yield
     finally:
+        await asyncio.to_thread(live_runner.shutdown)
         forwarder.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await forwarder
@@ -83,6 +102,7 @@ app.include_router(agents.router)
 app.include_router(agent_ops.router)
 app.include_router(containment.router)
 app.include_router(simulate.router)
+app.include_router(live.router)
 app.include_router(investigations.router)
 app.include_router(audit.router)
 app.include_router(response_actions.router)

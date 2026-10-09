@@ -17,7 +17,8 @@ export type ChangeTopic =
   | 'agents'
   | 'settings'
   | 'users'
-  | 'actions';
+  | 'actions'
+  | 'live';
 
 export interface ChangeEvent {
   type: 'changed';

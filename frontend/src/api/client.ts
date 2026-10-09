@@ -21,6 +21,9 @@ import type {
   InvestigationListParams,
   InvestigationPage,
   InvestigationProgress,
+  LiveArrival,
+  LiveStartRequest,
+  LiveStatus,
   InvestigatorId,
   ContainmentResponse,
   Me,
@@ -346,6 +349,27 @@ export function releaseContainment(id: string): Promise<ReleaseResponse> {
   return request<ReleaseResponse>(`/investigations/${encodeURIComponent(id)}/release-containment`, {
     method: 'POST',
   });
+}
+
+// ---- simulated live feed --------------------------------------------------------------
+
+export function getLiveStatus(): Promise<LiveStatus> {
+  return request<LiveStatus>('/live/status');
+}
+
+/** The most recent arrivals, newest first (the server keeps the last 100). */
+export function getLiveArrivals(limit = 20): Promise<LiveArrival[]> {
+  return request<LiveArrival[]>(withQuery('/live/arrivals', { limit }));
+}
+
+/** Capability control_live_feed. Audited. */
+export function startLiveFeed(body: LiveStartRequest = {}): Promise<LiveStatus> {
+  return request<LiveStatus>('/live/start', { method: 'POST', body });
+}
+
+/** Capability control_live_feed. Audited. */
+export function stopLiveFeed(): Promise<LiveStatus> {
+  return request<LiveStatus>('/live/stop', { method: 'POST' });
 }
 
 // ---- citations and raw logs ----------------------------------------------------------

@@ -52,7 +52,7 @@ ACTIVE_WINDOW = timedelta(minutes=30)
 THREAT_WINDOW = timedelta(hours=24)
 THREAT_STATUSES = ("verdict_reached", "contained")
 VERDICT_STATUSES = ("verdict_reached", "contained", "ambiguous")
-KNOWN_STATUSES = ("investigating", "verdict_reached", "contained", "ambiguous", "error")
+KNOWN_STATUSES = ("queued", "investigating", "verdict_reached", "contained", "ambiguous", "error")
 
 
 def _count(value: int, definition: str) -> Metric[int]:

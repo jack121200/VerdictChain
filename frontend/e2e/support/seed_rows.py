@@ -10,6 +10,8 @@ Run from the repo root with the E2E environment (frontend/e2e/support/stack.mjs 
       empty = none), --drop-users also deletes every analyst
   python frontend/e2e/support/seed_rows.py seed
       insert the synthetic raw_logs rows (the table must not hold them already)
+  python frontend/e2e/support/seed_rows.py seed-live
+      insert the logon rows the live feed spec replays (use after reset --rows empty)
 
 Every command refuses to touch anything but the database verdictchain_test_pw and Redis db 7, so it can
 never reach the dev database (verdictchain, Redis db 0).
@@ -106,6 +108,42 @@ def seed() -> None:
     print(f"seed_rows: seeded {len(network)} DDoS, {len(others)} BENIGN and {len(extra)} other-label raw_logs rows")
 
 
+def seed_live() -> None:
+    """The dataset of the live feed spec: 300 ordinary logons, 20 of them off-hours so the baseline has a spread,
+    100 logons of one scenario that are all off-hours, so the segments the sensor takes from the scenario are
+    flagged by the monitor, and a few network and file rows for the other two investigators. The stack runs
+    with LIVE_FEED_ATTACK_SHARE=1 (see stack.mjs)."""
+    from datetime import datetime, timedelta, timezone
+
+    from backend.db.models import RawLog
+    from backend.db.session import SessionLocal
+    from backend.scripts import e2e_server as stub
+
+    start = datetime(2010, 3, 1, tzinfo=timezone.utc)
+
+    def logon(index: int, off_hours: bool, label: str) -> RawLog:
+        return RawLog(
+            timestamp=start + timedelta(minutes=index),
+            source="cert_r4.2_logon",
+            event_type="logon",
+            user_id=f"U{index % 7:03d}",
+            host_id=f"PC-{index % 5}",
+            raw_fields={"off_hours": off_hours, "logon_count": 1},
+            ground_truth_label=label,
+        )
+
+    rows = [logon(i, i >= 280, "benign") for i in range(300)]
+    rows += [logon(300 + i, True, "insider_scenario_1") for i in range(100)]
+    others = stub.sample_rows("network_traffic") + stub.sample_rows("access_log")
+    for row in others:
+        row.ground_truth_label = "BENIGN"
+    rows += others
+    with SessionLocal() as session:
+        session.add_all(rows)
+        session.commit()
+    print(f"seed_rows: seeded {len(rows)} rows for the live feed")
+
+
 def reset(rows: str, drop_users: bool) -> None:
     from sqlalchemy import create_engine, text
 
@@ -135,6 +173,7 @@ def main(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("ensure-db")
     sub.add_parser("seed")
+    sub.add_parser("seed-live")
     reset_parser = sub.add_parser("reset")
     reset_parser.add_argument("--rows", choices=("keep", "seed", "empty"), default="keep")
     reset_parser.add_argument("--drop-users", action="store_true")
@@ -145,6 +184,8 @@ def main(argv: list[str]) -> int:
         ensure_db()
     elif args.command == "seed":
         seed()
+    elif args.command == "seed-live":
+        seed_live()
     else:
         reset(args.rows, args.drop_users)
     return 0

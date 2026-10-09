@@ -48,9 +48,9 @@ FE9 ✅ Icon whitelist widened (17 -> ~75 glyphs), any icon size
 FE10 ✅ Command palette (Ctrl/Cmd+K and a TopNav button): pages, investigation search, inject; arrow keys, Enter, Shift+Enter, Esc
 
 ## D. 70 points — BACKEND
-BE1 🟡 Debate off the request path: 202 + thread, progress endpoint and restart recovery done; the job queue is SD2
+BE1 ✅ Debate off the request path: 202 at once, the queue worker runs it, progress endpoint (phase queued with place), restart recovery
 BE2 🟡 Multi-worker safe: events fan out over Redis pub/sub (done); atomic CrS update pending
-BE3 🟡 Continuous mode: honestly reported as OFF; the simulated live feed is section L (RT1-RT8)
+BE3 ✅ Continuous mode is real: a simulated live feed (sensor, monitor, automatic investigations); /system/status.continuous_mode is true only while it runs
 BE4 🟡 Gemini quota: daily caps + in-flight slot exist; clear quota-error message + caching pending
 BE5 ✅ /stats cached 5 s in Redis, invalidated by every committed change, incremental chain check inside
 BE6 ✅ Audit verify is incremental by default (checkpoint) and says so (mode, verified_from_seq); full=true re-verifies everything
@@ -98,9 +98,9 @@ FM10 ✅ color-scheme: dark set (native controls)
 
 ## H. 70 points — SYSTEM DESIGN
 SD1 🟡 WS fan-out over Redis pub/sub done; CrS updates atomic pending
-SD2 ⬜ Debates through a worker queue (decided: build it): DB-durable FIFO, one worker, a second inject is accepted as queued with a position instead of 409
+SD2 ✅ Debates run through a worker queue (backend/api/debate_queue.py, migration 0008): the queue is the investigations table (status queued, queued_at, run_spec with ids only), one worker takes the oldest, a second inject is accepted as queued with its place instead of 409, a restart keeps waiting debates, intake pause holds them; 11 backend tests, frontend queue banner and list
 SD3 ✅ Idempotency-Key on POST /investigations/simulate (same key = same investigation, no second debate; a refused request frees the key)
-SD4 ⬜ Per-user and global caps on queued debates (decided with SD2)
+SD4 ✅ Limits on waiting debates per analyst and in total (429 with the reason), checked before the daily caps are counted
 SD5 ✅ Boot-time secret/key validation (api/startup_checks.py, 17 tests)
 SD6 🟡 Stats cached; read endpoints are bounded; per-endpoint rate limits on reads not added
 SD7 🟡 Observability: request id + latency log lines done; provider latency/quota counters pending
@@ -115,7 +115,7 @@ DF3 ✅ One database + seed script keeps demo data present
 DF4 ✅ Old dev investigations replaced by fully consistent seeded ones
 DF5 🟡 Inject -> debate handoff: id in URL + replay exist; failure paths unproven
 DF6 ✅ Provider shown per message in the debate stream and per investigation in the header
-DF7 ✅ Continuous ingestion surfaced honestly: Access page shows 'off · manual injection only' from /system/status
+DF7 ✅ Continuous ingestion surfaced honestly: Access page reads continuous_mode from /system/status ('on · simulated live feed' or 'off · manual injection only')
 DF8 🟡 Labelled evaluation runs: seeded with labels; /evaluation view not yet re-checked
 DF9 ✅ Credibility history: Trust and Fleet show the global per-agent trend (last 60 scored rounds, threshold line); the Debate Room shows the per-case round-by-round CrS before and after
 DF10 ✅ Footer shows live / reconnecting; screens poll as a fallback while the socket is down
@@ -148,14 +148,14 @@ CT16 ⬜ Debate Room explains why an investigation was not contained (verdict un
 CT17 ✅ Bugs the E2E suite found, all fixed with tests: the live verdict frame crashed the Debate Room, the snapshot gave action rows no id (React key warning), round frames carried a score dict where the page wanted a number, Overview crashed on a scenario with no rows, the first 401 could miss the login redirect, button inside a button in the scenario modal, dashboard without an h1, the palette lost its highlighted row on a refresh
 
 ## L. Real-time operation (your latest request: the system runs on its own)
-RT1 ⬜ Simulated live feed: a background feed streams dataset rows into RabbitMQ on its own (no inject click); pointer-only messages, no label in any message
-RT2 ⬜ Monitor consumes the queue, keeps a window per source and scores it with a documented, label-free rule (Proof shows the numbers)
-RT3 ⬜ A flagged window starts an investigation by itself (trigger_type continuous) with a cooldown, a queue cap and a daily cap, so a live feed cannot burn the LLM quota
-RT4 ⬜ The evaluation label of an automatic investigation is attached server-side afterwards; agents never see it (a test with seeded secret labels proves it)
-RT5 ⬜ Live page: feed rate, per-source window score against its threshold, queue, recent automatic investigations; honest 'simulated replay of dataset rows' banner; updates over WebSocket
-RT6 ⬜ Start / pause / resume / speed of the feed: RBAC-gated, audited, and /system/status.continuous_mode is real
-RT7 ⬜ Backend tests + Playwright spec: the feed runs, a window flags, an investigation starts and finishes with no click
-RT8 ⬜ Queue position shown in progress, the Debate list and the Dashboard (queued state)
+RT1 ✅ Simulated sensor (backend/pipeline/live_feed.py): replays dataset rows into RabbitMQ on its own in short segments, pointer-only messages with no label, pauses when the queue backs up; 8 tests on real RabbitMQ
+RT2 ✅ Monitor (live_monitor.py + live_detector.py): a window per source scored by a fixed rule that reads no label (network packet-rate spread; CERT window mean at 4 standard errors); on the local dataset 0 of 300 ordinary windows flagged per group and every scenario window flagged (measure_live_detector); Proof on each gauge
+RT3 ✅ A flagged window starts an investigation by itself (trigger_type continuous) through the debate queue, guarded by intake pause, active agents, minimum gap, waiting limit, back-off after a failure, daily cap and queue limits; each refusal keeps its reason
+RT4 ✅ Evaluation label of an automatic investigation is attached on the server (evaluation/live_labels.py); the monitor side never names a label (AST test), run_spec, audit detail and API responses carry none
+RT5 ✅ Live feed page: honest simulated-replay notice, Metric tiles, one gauge per window with its rule, arrivals, last automatic investigation, why nothing started, investigations the monitor started; pushed over the live topic
+RT6 ✅ Start and stop: capability control_live_feed, rate limited, audited (live_feed_started / live_feed_stopped with the analyst), speed and automatic-investigation switch chosen at start, LIVE_FEED_AUTOSTART for the API start-up
+RT7 ✅ Tests: 12 API/runner, 41 pipeline, 15 Vitest and 2 Playwright specs (feed -> flagged window -> investigation -> verdict with nobody clicking); full Playwright suite 12 passed
+RT8 ✅ Queue place shown: progress phase queued, Debate Room banner that reloads by itself, Debate list section, top bar chip with the queued count, inject toast
 
 ## Open decisions for you (❓)
 - none: every decision is made (see ➖ and ✅ lines)

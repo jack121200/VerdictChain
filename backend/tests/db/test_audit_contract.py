@@ -16,7 +16,7 @@ from backend.db.audit import (
 from backend.db.models import AuditTrail
 
 
-def test_catalog_is_exactly_the_plan_action_list():
+def test_catalog_is_exactly_the_documented_action_list():
     assert AUDIT_ACTIONS == frozenset(
         {
             "investigation_started",
@@ -35,6 +35,9 @@ def test_catalog_is_exactly_the_plan_action_list():
             "emergency_containment",
             "containment_released",
             "byzantine_fault_injected",
+            "debate_started",
+            "live_feed_started",
+            "live_feed_stopped",
             "lock_account",
             "block_ip_range",
             "trigger_rate_limiting",

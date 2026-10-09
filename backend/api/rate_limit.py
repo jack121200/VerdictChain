@@ -121,6 +121,11 @@ def enforce_daily_cap(scope: str, identifier: str, limit: int, detail: str) -> N
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail)
 
 
+def daily_runs(scope: str, identifier: str) -> int:
+    """Runs recorded for `identifier` in the current 24 hour window (what enforce_daily_cap compares)."""
+    return int(_client().get(_cap_key(scope, identifier)) or 0)
+
+
 def record_daily_run(scope: str, identifier: str) -> None:
     """Counts one accepted run. The window starts at the first run and lasts 24 hours."""
     key = _cap_key(scope, identifier)

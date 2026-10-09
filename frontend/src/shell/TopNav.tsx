@@ -80,20 +80,24 @@ function LatencyChip() {
 }
 
 function DebateChip() {
-  const { status } = useShellData();
+  const { status, stats } = useShellData();
   if (!status.data) return <Chip tone="idle">Debate engine —</Chip>;
   const slot = status.data.debate_slot;
+  const queued = stats.data?.by_status?.queued?.value ?? null;
+  const waiting = queued !== null && queued > 0 ? ` · ${formatCount(queued)} queued` : '';
+  const queueNote = ' The number of queued investigations is GET /stats.by_status.queued: accepted debates waiting for the slot.';
   if (slot.status === 'running' && slot.investigation_id !== null) {
     return (
-      <Chip tone="primary" icon="sync_alt" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: 'The debate slot is held by one running investigation.' }}>
+      <Chip tone="primary" icon="sync_alt" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: `The debate slot is held by one running investigation.${queueNote}` }}>
         Debate running ·{' '}
         <CopyHash value={slot.investigation_id} display={shortId(slot.investigation_id)} label="running investigation id" size="inherit" textClassName="text-primary" />
+        {waiting}
       </Chip>
     );
   }
   return (
-    <Chip tone="idle" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: 'No investigation holds the debate slot.' }}>
-      Debate engine idle
+    <Chip tone="idle" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: `No investigation holds the debate slot.${queueNote}` }}>
+      Debate engine idle{waiting}
     </Chip>
   );
 }

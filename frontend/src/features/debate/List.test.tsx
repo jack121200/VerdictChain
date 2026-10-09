@@ -51,6 +51,22 @@ describe('DebateList', () => {
     expect(container.querySelectorAll('a button')).toHaveLength(0);
   });
 
+  it('lists queued cases in the order the worker takes them, with their place', async () => {
+    h.listInvestigations.mockResolvedValue(
+      page([
+        row({ id: 'cccccccc-0003', status: 'queued', verdict_class: null, created_at: '2026-10-05T12:03:00Z' }),
+        row({ id: 'bbbbbbbb-0002', status: 'queued', verdict_class: null, created_at: '2026-10-05T12:02:00Z' }),
+        row({ id: 'aaaaaaaa-0001', status: 'investigating', verdict_class: null, created_at: '2026-10-05T12:01:00Z' }),
+      ]),
+    );
+    render(<DebateList />);
+    expect(await screen.findByText('Waiting in the queue (2)')).toBeTruthy();
+    expect(screen.getByText('Debating now (1)')).toBeTruthy();
+    const places = screen.getAllByText(/queued · place/).map((node) => node.textContent);
+    expect(places).toEqual(['queued · place 1', 'queued · place 2']); // oldest first, whatever order the API sent
+    expect(screen.queryByText('Recent (2)')).toBeNull(); // queued cases are not "recent"
+  });
+
   it('with no debates at all, offers to run the first scenario', async () => {
     h.listInvestigations.mockResolvedValue(page([]));
     const open = vi.fn();

@@ -3,7 +3,17 @@
  * rewrite is needed and a reload lands on the same screen.
  */
 
-export type SimpleRouteName = 'landing' | 'login' | 'dashboard' | 'investigations' | 'trust' | 'fleet' | 'audit' | 'access' | 'overview';
+export type SimpleRouteName =
+  | 'landing'
+  | 'login'
+  | 'dashboard'
+  | 'investigations'
+  | 'trust'
+  | 'fleet'
+  | 'audit'
+  | 'access'
+  | 'overview'
+  | 'live';
 
 export type Route =
   | { name: SimpleRouteName }
@@ -21,6 +31,7 @@ const SIMPLE_ROUTES: ReadonlySet<string> = new Set<SimpleRouteName>([
   'audit',
   'access',
   'overview',
+  'live',
 ]);
 
 function decodeSegment(segment: string): string | null {

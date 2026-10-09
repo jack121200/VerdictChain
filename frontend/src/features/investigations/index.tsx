@@ -59,6 +59,7 @@ const BADGE: Record<PillTone, string> = {
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: InvestigationStatus | 'ALL'; label: string }> = [
   { value: 'ALL', label: 'All statuses' },
+  { value: 'queued', label: STATUS_LABEL.queued },
   { value: 'investigating', label: STATUS_LABEL.investigating },
   { value: 'verdict_reached', label: STATUS_LABEL.verdict_reached },
   { value: 'contained', label: STATUS_LABEL.contained },

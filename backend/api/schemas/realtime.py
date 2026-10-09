@@ -35,12 +35,16 @@ class SimulateAcceptedOut(BaseModel):
     noise_pct: int
     effective_noise_pct: float
     primary_agent: str
+    # Set while the investigation waits in the debate queue: its place (1 = next) and how many are waiting.
+    queue_position: int | None = None
+    queue_length: int | None = None
 
 
 class InvestigationProgressOut(BaseModel):
-    """Where a debate is. phase: running (it holds the debate slot), finished, error, or unknown (the
-    investigation is still 'investigating' but no debate holds the slot: it was cut off, for example by an API
-    restart, and the next start marks it error)."""
+    """Where a debate is. phase: queued (waiting for the worker; queue_position says where), running (it
+    holds the debate slot), finished, error, or unknown (the investigation is still 'investigating' but no
+    debate holds the slot: it was cut off, for example by an API restart, and the next start marks it error).
+    waiting_for is the investigation that holds the slot while this one is queued."""
 
     investigation_id: str
     phase: str
@@ -49,6 +53,9 @@ class InvestigationProgressOut(BaseModel):
     rounds_complete: int
     round: int | None
     elapsed_seconds: float
+    queue_position: int | None = None
+    queue_length: int | None = None
+    waiting_for: str | None = None
 
 
 class WsTicketOut(BaseModel):

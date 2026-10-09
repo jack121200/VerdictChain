@@ -6,7 +6,17 @@ export interface PageProps {
 }
 
 /** Routed pages, lazy-loaded so each screen is its own chunk. Login is imported directly by the app. */
-export type PageKey = 'dashboard' | 'debate' | 'investigations' | 'investigation' | 'trust' | 'fleet' | 'audit' | 'access' | 'overview';
+export type PageKey =
+  | 'dashboard'
+  | 'debate'
+  | 'investigations'
+  | 'investigation'
+  | 'trust'
+  | 'fleet'
+  | 'audit'
+  | 'access'
+  | 'overview'
+  | 'live';
 
 export const PAGES: Record<PageKey, LazyExoticComponent<ComponentType<PageProps>>> = {
   dashboard: lazy(() => import('./dashboard')),
@@ -18,6 +28,7 @@ export const PAGES: Record<PageKey, LazyExoticComponent<ComponentType<PageProps>
   audit: lazy(() => import('./audit')),
   access: lazy(() => import('./access')),
   overview: lazy(() => import('./overview')),
+  live: lazy(() => import('./live')),
 };
 
 /** The scenario injection modal (plan 2.11). Opened from the dashboard, not routed. */

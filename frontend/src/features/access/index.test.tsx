@@ -66,6 +66,7 @@ const RBAC: RbacMatrix = {
     quarantine_agent: ['secops_lead'],
     manage_users: ['secops_lead'],
     edit_settings: ['secops_lead'],
+    control_live_feed: ['secops_lead'],
   },
 };
 

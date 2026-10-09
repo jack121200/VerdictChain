@@ -25,6 +25,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from backend.agents.llm_clients import GEMINI_MODEL, GROQ_MODEL
 from backend.api.auth import CurrentAnalyst, get_current_analyst
+from backend.api.live_runner import runner
 from backend.api.metrics import Metric
 from backend.api.schemas.admin import (
     DebateSlotOut,
@@ -42,7 +43,6 @@ from backend.db.session import SessionLocal, engine
 router = APIRouter(prefix="/system", tags=["system"])
 
 API_VERSION = "2.4.0"  # the one place the API version is set (pyproject.toml carries no version)
-CONTINUOUS_MODE = False
 # Mirrors the temperature literal that both clients in backend/agents/llm_clients.py send.
 # test_system.py fails if the source and this value diverge.
 LLM_TEMPERATURE = 0.2
@@ -256,7 +256,7 @@ async def system_status(_: CurrentAnalyst = Depends(get_current_analyst)) -> Sys
         ),
         debate_slot=slot,
         intake_paused=db.intake_paused if db is not None else None,
-        continuous_mode=CONTINUOUS_MODE,
+        continuous_mode=runner.running,
         api_version=API_VERSION,
         migration_head=_migration_head(),
     )

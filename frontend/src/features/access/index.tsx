@@ -451,14 +451,14 @@ export default function AccessPage() {
                 <Field label="Continuous ingestion">
                   <span className="inline-flex items-center gap-1.5">
                     <span className="text-on-surface">
-                      {status.data === undefined ? '—' : status.data.continuous_mode ? 'on' : 'off · manual injection only'}
+                      {status.data === undefined ? '—' : status.data.continuous_mode ? 'on · simulated live feed' : 'off · manual injection only'}
                     </span>
                     <Proof
                       source="GET /system/status (continuous_mode)"
                       n={1}
                       asOf={status.loadedAt}
                       label="Continuous ingestion"
-                      definition="Whether logs are streamed into the debate on their own. It is off: a debate starts only when an analyst injects a scenario, and the Watchdog scores each round of that debate."
+                      definition="Whether the simulated live feed is running: dataset rows are replayed into RabbitMQ on their own and a flagged window starts an investigation. When it is off, a debate starts only when an analyst injects a scenario. Start or stop it on the Live feed page."
                     />
                   </span>
                 </Field>

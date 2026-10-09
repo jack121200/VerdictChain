@@ -39,6 +39,19 @@ class Settings(BaseSettings):
     # How many investigators the debate graph runs at once in a round (1 = one after the other). The provider
     # clients space their own calls, so a higher number cannot flood a provider.
     debate_max_parallel_agents: int = 3
+    # Debates waiting for the single worker (backend/api/debate_queue.py): per analyst and in total.
+    debate_queue_max_per_user: int = 3
+    debate_queue_max_total: int = 10
+
+    # Simulated live feed (backend/pipeline/live_feed.py, live_monitor.py, api/live_runner.py).
+    live_feed_autostart: bool = False  # start the feed when the API starts
+    live_feed_events_per_second: float = 4.0
+    live_feed_attack_share: float = 0.2  # share of replayed segments that are taken from a scenario
+    live_feed_queue: str = "live_log_events"  # RabbitMQ queue; give each environment its own
+    live_auto_investigate: bool = True  # a flagged window starts an investigation by itself
+    live_min_gap_seconds: int = 60  # between two automatic investigations
+    live_max_queued: int = 1  # automatic investigations that may wait at once
+    live_daily_cap: int = 8  # automatic investigations per 24 hours (they also count in the global cap)
 
     # First SecOps Lead, created by `python -m backend.scripts.bootstrap_lead` (plan §3.6).
     bootstrap_lead_username: str = ""

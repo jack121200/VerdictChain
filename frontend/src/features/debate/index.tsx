@@ -31,6 +31,7 @@ import { verifyEvidenceBundleHash } from '../../lib/derive/hash';
 import { formatCount, formatCountNoun, formatPercent, formatSignedPercent, shortId } from '../../lib/format';
 import type { PageProps } from '../index';
 import { DebateList } from './List';
+import { QueueBanner } from './QueueBanner';
 import { Button } from '../../ui/Button';
 import { HintStrip } from '../../ui/HintStrip';
 import { Timestamp } from '../../ui/Timestamp';
@@ -168,6 +169,8 @@ function DebateRoom({ id }: { id: string }) {
   }, []);
 
   const running = debate.status === 'investigating';
+  const queued = debate.status === 'queued';
+  const onLeftQueue = useCallback(() => setReloadKey((key) => key + 1), []);
 
   // Live feed only while the debate is running. Replay (a finished case) never opens a socket, so it triggers no provider call.
   useEffect(() => {
@@ -275,6 +278,8 @@ function DebateRoom({ id }: { id: string }) {
     <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-6">
       <div className="flex w-full flex-col gap-4 text-on-surface">
         <HintStrip pageId="debate-room" sentences={ROOM_HINT} />
+
+        {queued && <QueueBanner investigationId={investigationId} onLeftQueue={onLeftQueue} />}
 
         {/* 1. Case banner */}
         <section className="relative overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container-low p-4 shadow-xl backdrop-blur-md sm:p-5">

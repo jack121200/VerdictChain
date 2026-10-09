@@ -97,11 +97,16 @@ def start_investigation(
     injected_row_ids: list[uuid.UUID],
     started_by: str,
     max_rows_per_agent: int,
+    run_spec: dict | None = None,
 ) -> uuid.UUID:
     """Creates the Investigation row and its investigation_started audit entry in one transaction.
     The audit detail holds the settings snapshot, the noise values and the injected row ids.
     scenario_label is stored on the Investigation row only, as hidden ground truth. It never goes
     into the audit detail, and no agent code reads it.
+
+    With run_spec the investigation is accepted into the debate queue (status 'queued', see
+    backend/api/debate_queue.py): the spec says what the worker runs later. Without it the caller runs
+    the debate itself and the status is 'investigating'.
     """
     session = SessionLocal()
     try:
@@ -114,6 +119,10 @@ def start_investigation(
             noise_pct=noise_pct,
             effective_noise_pct=effective_noise_pct,
         )
+        if run_spec is not None:
+            investigation.status = "queued"
+            investigation.queued_at = func.now()
+            investigation.run_spec = run_spec
         session.add(investigation)
         session.flush()
         investigation_id = investigation.investigation_id
@@ -128,6 +137,7 @@ def start_investigation(
                 "noise_pct": noise_pct,
                 "effective_noise_pct": effective_noise_pct,
                 "max_rows_per_agent": max_rows_per_agent,
+                **({"queued": True} if run_spec is not None else {}),
                 "injected_row_ids": [str(row_id) for row_id in injected_row_ids],
                 "settings": {
                     "eta": snapshot.eta,

@@ -1,28 +1,33 @@
 """Manual 'Simulate scenario' trigger (SKILL-architecture.md Section 4, plan section 3.5).
 
 Order: authenticate, capability inject_scenario, rate limit, intake paused (423), rows (404), dominant
-investigator (422), noise dilution, debate slot (409), daily caps (429), start_investigation, then the
-debate. wait=true runs the debate inline and returns 201 with the verdict. wait=false returns 202 at once
-and runs the debate in a background thread. Either way the debate slot is released in finally.
+investigator (422), noise dilution, active investigators (409), queue capacity (429), daily caps (429),
+start_investigation. The accepted investigation goes into the debate queue (backend/api/debate_queue.py):
+one worker runs the debates one at a time, so a request that arrives while another debate runs waits as
+'queued' instead of being refused. wait=true blocks until the debate has finished and returns 201 with the
+verdict; wait=false returns 202 at once.
 """
 
 import asyncio
-import logging
 import re
-import threading
 import uuid
-from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import select
 
 from backend.api.auth import CurrentAnalyst, require_capability
+from backend.api.debate_queue import (
+    active_agent_count,
+    build_run_spec,
+    enforce_queue_capacity,
+    intake_paused,
+    queue_position,
+    worker,
+)
 from backend.api.rate_limit import (
     GLOBAL_CAP_IDENTIFIER,
     IDEMPOTENCY_PENDING,
-    DebateSlot,
     claim_idempotency,
     client_ip,
     enforce_daily_cap,
@@ -30,45 +35,23 @@ from backend.api.rate_limit import (
     finish_idempotency,
     record_daily_run,
     release_idempotency,
-    slot_holder,
 )
 from backend.api.schemas.realtime import SimulateAcceptedOut, SimulateScenarioRequest
-from backend.api.websocket import make_debate_broadcaster
 from backend.config import settings
-from backend.db.models import AgentQuarantine, Investigation
+from backend.db.models import Investigation
 from backend.db.session import SessionLocal
-from backend.debate.engine import (
-    INVESTIGATORS,
-    MIN_ACTIVE_AGENTS,
-    DebateFailedError,
-    run_debate,
-    start_investigation,
-)
+from backend.debate.engine import MIN_ACTIVE_AGENTS, DebateFailedError, start_investigation
 from backend.debate.state import dominant_agent_for_rows
 from backend.pipeline.log_streamer import get_rows_for_scenario
 from backend.pipeline.noise import dilute_with_benign
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/investigations", tags=["investigations"])
 
-INVESTIGATION_STATUS_ON_START = "investigating"
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 REPLAY_HEADER = "Idempotent-Replay"
 _IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]{8,100}$")
-
-
-@dataclass
-class _Prepared:
-    investigation_id: uuid.UUID
-    primary_agent: str
-    rows: list
-    scenario_rows: list
-    max_rows: int
-    scenario_label: str
-    noise_pct: int
-    effective_noise_pct: float
-    slot: DebateSlot
+# How long a wait=true request waits for its debate (the queue plus the debate itself).
+WAIT_TIMEOUT_SECONDS = 3600.0
 
 
 @router.post(
@@ -108,43 +91,44 @@ async def simulate_scenario(
             return replay
 
     try:
-        prepared = await run_in_threadpool(_prepare, payload, actor.username)
+        investigation_id, primary_agent = await run_in_threadpool(_accept, payload, actor.username)
     except BaseException:
         if idempotency_key:  # refused: the key stays usable for a corrected retry
             await run_in_threadpool(release_idempotency, actor.username, idempotency_key)
         raise
     if idempotency_key:
-        await run_in_threadpool(
-            finish_idempotency, actor.username, idempotency_key, str(prepared.investigation_id)
-        )
-    loop = asyncio.get_running_loop()
+        await run_in_threadpool(finish_idempotency, actor.username, idempotency_key, str(investigation_id))
+    worker.ensure_started(asyncio.get_running_loop())
 
     if payload.wait:
         try:
-            return await run_in_threadpool(_run, prepared, loop)
-        except DebateFailedError as exc:
+            outcome = await run_in_threadpool(worker.wait_for, investigation_id, WAIT_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            raise HTTPException(
+                status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    f"Investigation {investigation_id} has not finished yet. "
+                    f"Follow it at /investigations/{investigation_id}/progress."
+                ),
+            ) from exc
+        if isinstance(outcome.error, DebateFailedError):
             # Both LLM providers exhausted mid-debate. The Investigation is already marked status='error'
             # by run_debate, so the client gets an actionable message rather than a bare 500.
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
-                detail=f"Debate could not complete (investigation {exc.investigation_id}): {exc.reason}",
-            ) from exc
+                detail=(
+                    f"Debate could not complete (investigation {investigation_id}): {outcome.error.reason}"
+                ),
+            ) from outcome.error
+        if outcome.error is not None:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Debate could not run (investigation {investigation_id}): {outcome.error}",
+            ) from outcome.error
+        return outcome.result
 
     response.status_code = status.HTTP_202_ACCEPTED
-    threading.Thread(
-        target=_run_in_background,
-        args=(prepared, loop),
-        name=f"debate-{prepared.investigation_id}",
-        daemon=True,
-    ).start()
-    return SimulateAcceptedOut(
-        investigation_id=str(prepared.investigation_id),
-        status=INVESTIGATION_STATUS_ON_START,
-        ws_path=f"/ws/investigations/{prepared.investigation_id}",
-        noise_pct=prepared.noise_pct,
-        effective_noise_pct=prepared.effective_noise_pct,
-        primary_agent=prepared.primary_agent,
-    )
+    return await run_in_threadpool(_accepted_for, str(investigation_id))
 
 
 def _idempotency_key(request: Request) -> str | None:
@@ -160,7 +144,7 @@ def _idempotency_key(request: Request) -> str | None:
 
 
 def _accepted_for(investigation_id: str) -> SimulateAcceptedOut | None:
-    """The 202 body for an investigation that already exists (an idempotent replay), or None."""
+    """The 202 body for an investigation that exists (a new one, or an idempotent replay), or None."""
     try:
         parsed = uuid.UUID(investigation_id)
     except ValueError:
@@ -169,6 +153,7 @@ def _accepted_for(investigation_id: str) -> SimulateAcceptedOut | None:
         inv = session.get(Investigation, parsed)
         if inv is None:
             return None
+        position = queue_position(session, parsed)
         return SimulateAcceptedOut(
             investigation_id=str(inv.investigation_id),
             status=inv.status,
@@ -176,15 +161,14 @@ def _accepted_for(investigation_id: str) -> SimulateAcceptedOut | None:
             noise_pct=inv.noise_pct or 0,
             effective_noise_pct=inv.effective_noise_pct or 0.0,
             primary_agent=inv.primary_agent or "",
+            queue_position=position[0] if position else None,
+            queue_length=position[1] if position else None,
         )
 
 
-def _prepare(payload: SimulateScenarioRequest, username: str) -> _Prepared:
-    """Every check that can refuse a run, then the investigation row. Holds the slot on success."""
-    # Imported here so tests can patch the settings loader. W1-B owns backend/db/runtime_settings.py.
-    from backend.db.runtime_settings import load as load_runtime_settings
-
-    if load_runtime_settings().intake_paused:
+def _accept(payload: SimulateScenarioRequest, username: str) -> tuple[uuid.UUID, str]:
+    """Every check that can refuse a run, then the queued investigation row."""
+    if intake_paused():
         raise HTTPException(
             status.HTTP_423_LOCKED,
             detail="Intake is paused. New investigations are refused until it is resumed in Settings.",
@@ -207,98 +191,45 @@ def _prepare(payload: SimulateScenarioRequest, username: str) -> _Prepared:
         primary_rows, payload.noise_pct, payload.max_rows_per_agent
     )
 
-    slot = DebateSlot()
-    if not slot.acquire():
-        raise HTTPException(status.HTTP_409_CONFLICT, detail=_busy_detail(slot_holder()))
-    try:
-        if _active_agent_count() < MIN_ACTIVE_AGENTS:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail=(
-                    f"Fewer than {MIN_ACTIVE_AGENTS} investigator agents are active. "
-                    "Restore a quarantined agent first."
-                ),
-            )
-        enforce_daily_cap(
-            "debate_user",
-            username,
-            settings.debate_daily_limit_user,
-            "Daily debate limit reached for this analyst. Try again tomorrow.",
+    if active_agent_count() < MIN_ACTIVE_AGENTS:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=(
+                f"Fewer than {MIN_ACTIVE_AGENTS} investigator agents are active. "
+                "Restore a quarantined agent first."
+            ),
         )
-        enforce_daily_cap(
-            "debate_global",
-            GLOBAL_CAP_IDENTIFIER,
-            settings.debate_daily_limit_global,
-            "Daily debate limit reached across all analysts. Try again tomorrow.",
-        )
-        investigation_id = start_investigation(
-            trigger_type="manual",
-            trigger_reason="manual simulated injection",
-            scenario_label=payload.scenario_label,
-            primary_agent=primary_agent,
-            noise_pct=payload.noise_pct,
-            effective_noise_pct=effective_pct,
-            injected_row_ids=dropped_ids,
-            started_by=username,
-            max_rows_per_agent=payload.max_rows_per_agent,
-        )
-        slot.bind(str(investigation_id))
-    except BaseException:
-        slot.release()
-        raise
-
-    record_daily_run("debate_user", username)
-    record_daily_run("debate_global", GLOBAL_CAP_IDENTIFIER)
-    return _Prepared(
-        investigation_id=investigation_id,
-        primary_agent=primary_agent,
-        rows=window,
-        scenario_rows=rows,
-        max_rows=payload.max_rows_per_agent,
+    enforce_queue_capacity(username)
+    enforce_daily_cap(
+        "debate_user",
+        username,
+        settings.debate_daily_limit_user,
+        "Daily debate limit reached for this analyst. Try again tomorrow.",
+    )
+    enforce_daily_cap(
+        "debate_global",
+        GLOBAL_CAP_IDENTIFIER,
+        settings.debate_daily_limit_global,
+        "Daily debate limit reached across all analysts. Try again tomorrow.",
+    )
+    investigation_id = start_investigation(
+        trigger_type="manual",
+        trigger_reason="manual simulated injection",
         scenario_label=payload.scenario_label,
+        primary_agent=primary_agent,
         noise_pct=payload.noise_pct,
         effective_noise_pct=effective_pct,
-        slot=slot,
+        injected_row_ids=dropped_ids,
+        started_by=username,
+        max_rows_per_agent=payload.max_rows_per_agent,
+        run_spec=build_run_spec(
+            primary_agent=primary_agent,
+            row_ids=[row.row_id for row in window],
+            scenario_row_ids=None,  # every row of the scenario, looked up when the debate starts
+            max_rows_per_agent=payload.max_rows_per_agent,
+            requested_by=username,
+        ),
     )
-
-
-def _run(prepared: _Prepared, loop: asyncio.AbstractEventLoop) -> dict:
-    """Runs the debate on the prepared investigation. Releases the slot in every outcome."""
-    try:
-        return run_debate(
-            prepared.primary_agent,
-            prepared.rows,
-            investigation_id=prepared.investigation_id,
-            max_rows_per_agent=prepared.max_rows,
-            on_update=make_debate_broadcaster(str(prepared.investigation_id), prepared.scenario_label, loop),
-            scenario_rows=prepared.scenario_rows,
-        )
-    finally:
-        prepared.slot.release()
-
-
-def _run_in_background(prepared: _Prepared, loop: asyncio.AbstractEventLoop) -> None:
-    try:
-        _run(prepared, loop)
-    except DebateFailedError as exc:
-        logger.warning("background debate %s failed: %s", exc.investigation_id, exc.reason)
-    except Exception:  # noqa: BLE001 - a thread must never die silently; the investigation is marked error
-        logger.exception("background debate %s crashed", prepared.investigation_id)
-
-
-def _active_agent_count() -> int:
-    with SessionLocal() as session:
-        quarantined = set(
-            session.execute(select(AgentQuarantine.agent_id).where(AgentQuarantine.active.is_(True)))
-            .scalars()
-            .all()
-        )
-    return sum(1 for agent in INVESTIGATORS if agent not in quarantined)
-
-
-def _busy_detail(holder: str | None) -> str:
-    try:
-        uuid.UUID(holder or "")
-    except ValueError:
-        return "Another debate or maintenance operation holds the slot. Wait for it to finish and retry."
-    return f"A debate is already running (investigation {holder}). Wait for it to finish and retry."
+    record_daily_run("debate_user", username)
+    record_daily_run("debate_global", GLOBAL_CAP_IDENTIFIER)
+    return investigation_id, primary_agent

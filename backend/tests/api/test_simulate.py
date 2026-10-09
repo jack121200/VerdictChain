@@ -1,9 +1,9 @@
-"""POST /investigations/simulate: status codes in order, the single debate slot, the daily caps, the intake
-pause, the background path and the noise bookkeeping. The debate itself is replaced by a fake (no LLM).
+"""POST /investigations/simulate: status codes in order, the single debate slot (a busy slot queues the
+request), the daily caps, the intake pause, the background path and the noise bookkeeping. The debate itself
+is replaced by a fake (no LLM). The queue has its own tests in test_debate_queue.py.
 """
 
 import threading
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
+from backend.api.debate_queue import worker
 from backend.api.main import app
 from backend.api.rate_limit import DebateSlot, get_redis, slot_holder
 from backend.config import settings
@@ -18,6 +19,7 @@ from backend.db.models import AuditTrail, Investigation, RawLog
 from backend.db.session import SessionLocal
 from backend.debate.engine import DebateFailedError
 from backend.tests.fixtures.auth import auth_headers
+from backend.tests.fixtures.debate_queue import wait_until_idle
 
 client = TestClient(app)
 SIMULATE = "/investigations/simulate"
@@ -73,11 +75,8 @@ def _quick_debate(primary, rows, *, investigation_id, max_rows_per_agent, on_upd
     return _fake_result(investigation_id)
 
 
-def _wait_until_slot_free(timeout: float = 5.0) -> None:
-    deadline = time.monotonic() + timeout
-    while slot_holder() is not None and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert slot_holder() is None
+def _wait_until_slot_free() -> None:
+    wait_until_idle()
 
 
 def test_unauthenticated_request_is_rejected(db_session):
@@ -87,14 +86,14 @@ def test_unauthenticated_request_is_rejected(db_session):
 
 def test_every_analyst_role_may_inject_a_scenario(db_session, monkeypatch):
     _seed_scenario(db_session)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("red_team_auditor"))
     assert resp.status_code == 201
 
 
 def test_wait_true_runs_inline_and_returns_the_verdict(db_session, monkeypatch):
     _seed_scenario(db_session)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
     assert resp.status_code == 201
     body = resp.json()
@@ -123,7 +122,7 @@ def test_wait_false_returns_202_with_the_id_before_the_debate_finishes(db_sessio
         finished.set()
         return _fake_result(investigation_id)
 
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", slow_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", slow_debate)
     resp = client.post(
         SIMULATE, json={"scenario_label": "DDoS", "wait": False}, headers=auth_headers("forensic_analyst")
     )
@@ -134,33 +133,47 @@ def test_wait_false_returns_202_with_the_id_before_the_debate_finishes(db_sessio
     assert body["investigation_id"] == str(seen["investigation_id"])
     assert body["ws_path"] == f"/ws/investigations/{body['investigation_id']}"
     assert body["primary_agent"] == "network_traffic"
-    assert body["status"] == "investigating"
+    assert body["status"] in ("queued", "investigating")  # the worker may already have taken it
     assert slot_holder() == body["investigation_id"]  # the slot is bound to the running investigation
     release.set()
     assert finished.wait(timeout=5)
     _wait_until_slot_free()
 
 
-def test_a_held_slot_returns_409_with_the_running_investigation_id(db_session, monkeypatch):
+def test_a_held_slot_queues_the_request_and_it_runs_when_the_slot_is_free(db_session, monkeypatch):
     _seed_scenario(db_session)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    ran = threading.Event()
+
+    def record(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
+        ran.set()
+        return _fake_result(investigation_id)
+
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", record)
     running = str(uuid.uuid4())
     slot = DebateSlot()
     assert slot.acquire()
     slot.bind(running)
     try:
         resp = client.post(
-            SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst")
+            SIMULATE,
+            json={"scenario_label": "DDoS", "wait": False},
+            headers=auth_headers("forensic_analyst"),
         )
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "queued"
+        assert (body["queue_position"], body["queue_length"]) == (1, 1)
+        assert not ran.wait(timeout=0.5), "the debate ran while another one held the slot"
     finally:
         slot.release()
-    assert resp.status_code == 409
-    assert running in resp.json()["detail"]
+    worker.notify()
+    assert ran.wait(timeout=5), "the queued debate never started after the slot was freed"
+    _wait_until_slot_free()
 
 
 def test_intake_paused_returns_423_and_creates_nothing(db_session, monkeypatch):
     _seed_scenario(db_session)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     db_session.execute(text("UPDATE runtime_settings SET intake_paused = true WHERE id = 1"))
     db_session.commit()
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
@@ -174,7 +187,7 @@ def test_intake_paused_returns_423_and_creates_nothing(db_session, monkeypatch):
 
 def test_the_per_analyst_daily_cap_returns_429(db_session, monkeypatch):
     _seed_scenario(db_session)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     monkeypatch.setattr(settings, "debate_daily_limit_user", 1)
     headers = auth_headers("forensic_analyst")
     assert client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=headers).status_code == 201
@@ -186,7 +199,7 @@ def test_the_per_analyst_daily_cap_returns_429(db_session, monkeypatch):
 
 def test_the_global_daily_cap_returns_429_for_every_analyst(db_session, monkeypatch):
     _seed_scenario(db_session)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     monkeypatch.setattr(settings, "debate_daily_limit_global", 1)
     first = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
     second = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("secops_lead"))
@@ -198,7 +211,7 @@ def test_the_global_daily_cap_returns_429_for_every_analyst(db_session, monkeypa
 
 def test_a_refused_cap_does_not_leave_the_slot_held(db_session, monkeypatch):
     _seed_scenario(db_session)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     monkeypatch.setattr(settings, "debate_daily_limit_user", 0)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
     assert resp.status_code == 429
@@ -208,14 +221,14 @@ def test_a_refused_cap_does_not_leave_the_slot_held(db_session, monkeypatch):
 def test_rows_that_map_to_no_agent_return_422(db_session, monkeypatch):
     db_session.add_all([_row(i, "DDoS", event_type="unmapped_event") for i in range(3)])
     db_session.commit()
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
     assert resp.status_code == 422
     assert slot_holder() is None
 
 
 def test_no_rows_for_the_scenario_returns_404(db_session, monkeypatch):
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
     assert resp.status_code == 404
 
@@ -232,7 +245,7 @@ def test_the_rate_limit_of_five_per_minute_still_applies(db_session):
 def test_noise_is_recorded_on_the_investigation_and_in_its_audit_entry(db_session, monkeypatch):
     _seed_scenario(db_session, n=10)
     _seed_benign(db_session, n=10)
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", _quick_debate)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     resp = client.post(
         SIMULATE,
         json={"scenario_label": "DDoS", "noise_pct": 30, "max_rows_per_agent": 5, "wait": False},
@@ -276,7 +289,7 @@ def test_a_failed_debate_returns_502_and_releases_the_slot(db_session, monkeypat
     def failing(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
         raise DebateFailedError(str(investigation_id), "all providers exhausted")
 
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", failing)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", failing)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
     assert resp.status_code == 502
     assert "all providers exhausted" in resp.json()["detail"]
@@ -308,7 +321,7 @@ def test_the_defaults_are_wait_true_no_noise_and_five_rows(db_session, monkeypat
         seen["max_rows"] = max_rows_per_agent
         return _fake_result(investigation_id)
 
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", capture)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", capture)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
     assert resp.status_code == 201  # wait defaults to true
     assert seen["max_rows"] == 5

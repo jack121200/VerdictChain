@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.agents.schemas import AgentId
 from backend.api.auth import get_current_user
+from backend.api.debate_queue import queue_position
 from backend.api.rate_limit import slot_holder
 from backend.api.routes.evidence import (
     citation_summary,
@@ -311,6 +312,14 @@ def get_investigation(
 _FINISHED_STATUSES = frozenset({"verdict_reached", "ambiguous", "contained"})
 
 
+def _investigation_id_or_none(slot_value: str | None) -> str | None:
+    """The slot holds an investigation id while a debate runs (a pending token or label otherwise)."""
+    try:
+        return str(uuid.UUID(slot_value or ""))
+    except ValueError:
+        return None
+
+
 @router.get("/{investigation_id}/progress", response_model=InvestigationProgressOut)
 def get_progress(
     investigation_id: uuid.UUID, username: str = Depends(get_current_user)
@@ -322,12 +331,16 @@ def get_progress(
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Investigation not found")
         done = rounds_complete_by_investigation(session, [investigation_id])[investigation_id]
         current_status, created_at = inv.status, inv.created_at
+        position = queue_position(session, investigation_id)
 
+    holder = slot_holder()
     if current_status == "error":
         phase = "error"
     elif current_status in _FINISHED_STATUSES:
         phase = "finished"
-    elif slot_holder() == str(investigation_id):
+    elif current_status == "queued":
+        phase = "queued"
+    elif holder == str(investigation_id):
         phase = "running"
     else:
         phase = "unknown"
@@ -339,6 +352,9 @@ def get_progress(
         rounds_complete=done,
         round=min(done + 1, DEBATE_ROUNDS) if phase == "running" else None,
         elapsed_seconds=round((datetime.now(timezone.utc) - created_at).total_seconds(), 1),
+        queue_position=position[0] if position else None,
+        queue_length=position[1] if position else None,
+        waiting_for=_investigation_id_or_none(holder) if phase == "queued" else None,
     )
 
 

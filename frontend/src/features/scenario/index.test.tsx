@@ -13,6 +13,7 @@ vi.mock('../../api/client', () => ({
   describeError: (error: unknown) => (error instanceof Error ? error.message : 'error'),
 }));
 
+import { clearToasts, getToasts } from '../../ui/toast-store';
 import ScenarioModal from './index';
 
 const metric = (value: number) => ({ value, n: 1, as_of: '2026-10-05T00:00:00Z', source: 'GET /scenarios', definition: 'rows', reason: null });
@@ -29,6 +30,8 @@ const accepted: SimulateAccepted = {
   noise_pct: 0,
   effective_noise_pct: 0,
   primary_agent: 'network_traffic',
+  queue_position: null,
+  queue_length: null,
 };
 
 beforeEach(() => {
@@ -39,6 +42,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  clearToasts();
 });
 
 describe('ScenarioModal', () => {
@@ -66,6 +70,19 @@ describe('ScenarioModal', () => {
     expect(body.scenario_label).toBe('Botnet');
     expect(body.noise_pct).toBe(0);
     await waitFor(() => expect(window.location.hash).toContain('inv-xyz-1'));
+  });
+
+  it('says the case is queued, with its place, when another debate is running', async () => {
+    h.simulateInvestigation.mockResolvedValue({ ...accepted, status: 'queued', queue_position: 2, queue_length: 2 });
+    render(<ScenarioModal open onClose={() => undefined} canInject />);
+    await screen.findByText('Botnet');
+    const authorize = screen.getByRole('button', { name: 'Authorize injection' });
+    await waitFor(() => expect((authorize as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(authorize);
+    });
+    await waitFor(() => expect(h.simulateInvestigation).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getToasts().map((toast) => toast.message).join(' ')).toContain('queued · place 2 of 2'));
   });
 
   it('sends one Idempotency-Key per opening, so a double click cannot start two debates', async () => {

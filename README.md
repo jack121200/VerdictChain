@@ -244,6 +244,34 @@ reference/                   read-only reference export of the approved HUD desi
 5. Every control is a real, RBAC-gated, audited action or it is removed. Enforced by
    `frontend/scripts/no-bluff-check.mjs` and `backend/tests/contract/test_no_bluff_contract.py`.
 
+## Live feed and the debate queue
+
+There is no real network behind this console, so the system can also run on its own against a **simulated**
+feed. `POST /live/start` (or the Start button on the Live feed page, capability `control_live_feed`, audited;
+or `LIVE_FEED_AUTOSTART=true`) starts two threads connected by a RabbitMQ queue:
+
+- the **sensor** (`backend/pipeline/live_feed.py`) replays rows of the ingested datasets in short segments: ordinary
+  traffic, and now and then a slice of one labelled scenario. It is the only part that reads labels, because it
+  plays the world; the messages it publishes are pointers (row id, time, source, event type) with no label.
+- the **monitor** (`live_monitor.py`, rule in `live_detector.py`) keeps a window of the newest rows per source and
+  scores it with a fixed rule that reads no label: for network flows the spread of the packet rate (near-identical
+  flows are unusual), for CERT logons, devices and files the window mean against the dataset mean (flagged at 4
+  standard errors). A flagged window becomes an investigation (`trigger_type = continuous`) by itself.
+
+Automatic investigations go through the same **debate queue** as injected ones (`backend/api/debate_queue.py`):
+one debate runs at a time, a request that arrives while one runs waits as `queued` with a place, in the
+database, so it survives a restart. Limits keep the feed from using the model quota: a minimum gap between two
+automatic investigations (`LIVE_MIN_GAP_SECONDS`), a limit on how many wait (`LIVE_MAX_QUEUED`), a daily cap
+(`LIVE_DAILY_CAP`, also counted in the global debate cap), a back-off after a failed one, the intake pause, and
+the queue limits per analyst and in total (`DEBATE_QUEUE_MAX_PER_USER`, `DEBATE_QUEUE_MAX_TOTAL`).
+
+`python -m backend.scripts.measure_live_detector` measures the rule on the ingested datasets. On this machine's
+copy (300 trials per line, seed 1) it flagged none of the ordinary windows in any group (0 of 300 each) and
+flagged every window cut from the five network scenarios, from insider scenarios 1 (logons), 2 (devices) and 3
+(logons). Insider scenario 1's device rows are not flagged by themselves (0 of 158), and scenario 3 has too few
+device and file rows to fill a window. The segments are contiguous slices of one scenario, which is easier than
+real traffic: read these numbers as a check that the rule does what it says, not as a detection rate.
+
 ## Quarantine and restore
 
 An investigator whose credibility falls below the isolation threshold (0.30) after a round is quarantined: it
@@ -266,6 +294,7 @@ votes, but its verdict cannot trigger autonomous containment (a human can contai
   and `seed_demo` skips every scenario.
 - **`pandas` is missing from `backend/requirements.txt`.** The ingestion modules (and three test modules) import
   it, which is why the setup and CI install it separately.
-- **Continuous monitoring is off.** `/system/status` reports `continuous_mode: false`: investigations start from
-  the Simulate flow (`POST /investigations/simulate`), not from a background stream.
+- **The live feed is a simulation.** It replays dataset rows at a constant rate (the two datasets share no
+  timeline, so original spacing cannot be kept). It runs inside the API process (single worker, like the
+  WebSockets) and is off until started. `/system/status.continuous_mode` is true only while it runs.
 - **The Docker app profile is a local stack**, not a deployment: no TLS, no reverse proxy, loopback ports only.

@@ -1,7 +1,6 @@
 """Idempotency-Key on POST /investigations/simulate, GET /investigations/{id}/progress, and the clean-up of
 debates a restart cut off (checklist UD15, SD3, BE1)."""
 
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +14,7 @@ from backend.api.recovery import recover_after_restart
 from backend.db.models import Investigation, RawLog
 from backend.db.session import SessionLocal
 from backend.tests.fixtures.auth import auth_headers
+from backend.tests.fixtures.debate_queue import wait_until_idle
 from backend.tests.fixtures.read_seed import add_investigation, audit, bearer_for
 
 client = TestClient(app)
@@ -64,14 +64,11 @@ def _fast_debate(monkeypatch, calls: list | None = None) -> None:
             "actions_taken": [],
         }
 
-    monkeypatch.setattr("backend.api.routes.simulate.run_debate", quick)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", quick)
 
 
-def _wait_until_slot_free(timeout: float = 5.0) -> None:
-    deadline = time.monotonic() + timeout
-    while slot_holder() is not None and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert slot_holder() is None
+def _wait_until_slot_free() -> None:
+    wait_until_idle()
 
 
 def _investigation_count() -> int:

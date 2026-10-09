@@ -1,9 +1,11 @@
 """3-round debate orchestration (SKILL-architecture.md Section 3).
 
 start_investigation() creates the Investigation row and its investigation_started audit entry in
-one transaction. run_debate() then runs DEBATE_ROUNDS rounds for the active investigators, and
-aggregate_verdict() combines their final positions (deterministic, not an LLM call). Self-healing
-runs last.
+one transaction. run_debate() checks the run, assembles what each agent reads and hands the rounds to
+the LangGraph debate graph (backend/debate/graph.py): the active investigators run in parallel in each
+of DEBATE_ROUNDS rounds, then aggregate_verdict() combines their final positions (deterministic, not an
+LLM call) and Self-healing runs last. This module keeps the steps the graph calls: persisting a turn, the
+retry on a repeated answer, isolation, the round audit, the verdict write.
 
 Isolation (decision D1, on): after an agent's round is scored, a CrS below the isolation threshold
 sets its agent_quarantine row active. That agent takes no part in later rounds or in the verdict.
@@ -27,11 +29,7 @@ from backend.agents.schemas import AgentResponse
 from backend.db.audit import append_entry
 from backend.db.models import AgentQuarantine, DebateTranscript, Investigation, RawLog
 from backend.db.session import SessionLocal
-from backend.debate.state import assemble_debate_inputs, build_peripheral_digest, is_near_duplicate
-from backend.debate.verdict import aggregate_verdict
-from backend.self_healing.actions import respond_to_verdict
-from backend.watchdog.credibility import AUTONOMOUS_ACTION_MIN_CRS, get_crs
-from backend.watchdog.service import score_agent_round
+from backend.debate.state import assemble_debate_inputs, is_near_duplicate
 
 DEBATE_ROUNDS = 3
 MIN_ACTIVE_AGENTS = 2
@@ -349,8 +347,8 @@ def run_debate(
     fewer than MIN_ACTIVE_AGENTS remain. settings=None loads the runtime settings once.
 
     on_update receives events, each with investigation_id: round_completed (once per round),
-    agent_isolated, verdict (once, at the end), and error. It is called synchronously, so the
-    WebSocket layer can broadcast as the debate runs.
+    agent_isolated, verdict (once, at the end), and error. It is called from the threads the graph runs the
+    agents on, so it must be thread-safe (the WebSocket broadcaster is).
     """
     session = SessionLocal()
     try:
@@ -377,120 +375,33 @@ def run_debate(
     inputs = {agent: assembled[agent] for agent in active}
     input_basis = {agent: {"basis": basis[agent], "row_count": len(inputs[agent])} for agent in active}
 
-    latest_by_agent: dict[str, AgentResponse] = {}
-    providers_used: dict[str, list[str]] = {agent: [] for agent in active}
+    # Imported at call time: graph.py builds on this module's helpers.
+    from backend.debate.graph import RoundPhaseError, RunContext, run_graph
 
+    context = RunContext(
+        investigation_id=investigation_id,
+        primary_agent_id=primary_agent_id,
+        investigators=investigators,
+        settings=settings,
+        inputs=inputs,
+        input_basis=input_basis,
+        on_update=on_update,
+    )
     try:
-        for round_no in range(1, DEBATE_ROUNDS + 1):
-            if len(active) < MIN_ACTIVE_AGENTS:
-                break
-            round_agents = list(active)
-            round_responses: dict[str, AgentResponse] = {}
-            round_providers: dict[str, str] = {}
-            round_scores: dict[str, dict] = {}
-
-            for agent_id in round_agents:
-                digest = build_peripheral_digest({a: inputs[a] for a in round_agents}, exclude_agent=agent_id)
-                debate_context = _debate_context_for(agent_id, latest_by_agent) if round_no > 1 else None
-                response, provider = _respond(
-                    investigators,
-                    agent_id,
-                    inputs[agent_id],
-                    round_no,
-                    digest,
-                    debate_context,
-                    latest_by_agent.get(agent_id),
-                )
-                _persist_round(investigation_id, round_no, agent_id, response, provider)
-                round_responses[agent_id] = response
-                round_providers[agent_id] = provider
-                providers_used[agent_id].append(provider)
-
-                score = score_agent_round(
-                    investigation_id,
-                    round_no,
-                    response,
-                    eta=settings.eta,
-                    isolation_threshold=settings.isolation_threshold,
-                )
-                round_scores[agent_id] = score
-                if score["isolated"]:
-                    _isolate_agent(investigation_id, agent_id, round_no, score["crs_after"])
-                    active.remove(agent_id)
-                    if on_update:
-                        on_update(
-                            {
-                                "type": "agent_isolated",
-                                "investigation_id": str(investigation_id),
-                                "agent_id": agent_id,
-                                "round": round_no,
-                                "crs_after": score["crs_after"],
-                            }
-                        )
-
-            latest_by_agent = {a: r for a, r in round_responses.items() if a in active}
-            _audit_round(investigation_id, round_no, round_providers, input_basis if round_no == 1 else None)
-            if on_update:
-                on_update(
-                    {
-                        "type": "round_completed",
-                        "investigation_id": str(investigation_id),
-                        "round": round_no,
-                        "agents": [
-                            _round_entry(a, round_responses[a], round_providers[a], round_scores[a])
-                            for a in round_agents
-                        ],
-                        **({"input_basis": input_basis} if round_no == 1 else {}),
-                    }
-                )
-    except Exception as exc:
-        # A mid-debate failure (e.g. both LLM providers down at once - observed
-        # live this session) must not leave the Investigation stuck at
-        # status='investigating' forever. Mark it and let the caller (the API
-        # route) decide how to surface this to the client/WebSocket.
+        final = run_graph(context, active)
+    except RoundPhaseError as failure:
+        # A mid-debate failure (e.g. both LLM providers down at once - observed live) must not leave the
+        # Investigation stuck at status='investigating' forever. Mark it and let the caller (the API route)
+        # decide how to surface this to the client/WebSocket.
         _set_status(investigation_id, "error")
         if on_update:
-            on_update({"type": "error", "investigation_id": str(investigation_id), "detail": str(exc)})
-        raise DebateFailedError(str(investigation_id), str(exc)) from exc
-
-    final = list(latest_by_agent.values())
-    verdict = (
-        aggregate_verdict(final, primary_agent_id=primary_agent_id)
-        if len(final) >= MIN_ACTIVE_AGENTS
-        else _insufficient_verdict(final)
-    )
-    _finalize_verdict(investigation_id, verdict)
-
-    # Self-Healing (SKILL-architecture.md Section 7): respond_to_verdict() enforces the verdict
-    # threshold and the CrS gate, using the live settings. Any action taken means "contained".
-    contributing_crs = {agent: get_crs(agent) for agent in verdict["contributing_agents"]}
-    actions_taken = respond_to_verdict(
-        investigation_id,
-        verdict,
-        contributing_crs,
-        confidence_threshold=settings.verdict_confidence_threshold,
-        credibility_threshold=AUTONOMOUS_ACTION_MIN_CRS,
-    )
-    status = verdict["status"]
-    if actions_taken:
-        status = "contained"
-        _set_status(investigation_id, status)
-
-    if on_update:
-        on_update(
-            {
-                "type": "verdict",
-                "investigation_id": str(investigation_id),
-                "verdict": verdict,
-                "status": status,
-                "actions_taken": actions_taken,
-            }
-        )
+            on_update({"type": "error", "investigation_id": str(investigation_id), "detail": str(failure)})
+        raise DebateFailedError(str(investigation_id), str(failure)) from failure.original
 
     return {
         "investigation_id": str(investigation_id),
-        "status": status,
-        "verdict": verdict,
-        "providers_used": providers_used,
-        "actions_taken": actions_taken,
+        "status": final["status"],
+        "verdict": final["verdict"],
+        "providers_used": final["providers_used"],
+        "actions_taken": final["actions_taken"],
     }

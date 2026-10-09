@@ -20,3 +20,6 @@ websockets==16.1.1
 # dev/lint tooling (SKILL-conventions.md: "black + ruff for formatting/lint")
 black==24.10.0
 ruff==0.8.4
+
+# Debate orchestration (backend/debate/graph.py)
+langgraph==1.2.11

@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Daily caps on debate runs (plan §3.5): per analyst and across all analysts.
     debate_daily_limit_user: int = 10
     debate_daily_limit_global: int = 20
+    # How many investigators the debate graph runs at once in a round (1 = one after the other). The provider
+    # clients space their own calls, so a higher number cannot flood a provider.
+    debate_max_parallel_agents: int = 3
 
     # First SecOps Lead, created by `python -m backend.scripts.bootstrap_lead` (plan §3.6).
     bootstrap_lead_username: str = ""

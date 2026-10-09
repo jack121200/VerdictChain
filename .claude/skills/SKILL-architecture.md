@@ -83,6 +83,16 @@ Each agent:
   audit detail carries the settings snapshot, the noise values and the injected row ids. The
   scenario label stays on the investigation row only. `run_debate()` then runs
   `DEBATE_ROUNDS = 3` rounds on that investigation.
+- **LangGraph (`backend/debate/graph.py`):** the rounds run as a LangGraph `StateGraph`.
+  `route_round` fans out one `investigate_agent` node per active investigator (`Send`), so the
+  agents of a round answer in parallel (at most `DEBATE_MAX_PARALLEL_AGENTS`, default 3; 1 runs
+  them one after the other). `close_round` joins them: it audits the round, emits
+  `round_completed` and drops the agents the Watchdog isolated, then `route_round` starts the
+  next round or goes to `aggregate` (the deterministic verdict) and `respond` (Self-Healing).
+  Results and events follow the fixed agent order, never the order in which the agents finish.
+  The graph only orchestrates; the steps it calls stay in `engine.py` and in the Watchdog and
+  Self-Healing modules. A failure inside a round ends the debate as `error`
+  (`DebateFailedError`), as before.
 - **Active agents:** the three investigators, minus any whose `agent_quarantine` row is
   active when the debate starts. Fewer than two active agents raises `NotEnoughActiveAgents`
   (the API returns 409).

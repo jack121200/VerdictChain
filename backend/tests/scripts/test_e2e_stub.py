@@ -153,6 +153,16 @@ def test_install_is_reversible():
     assert GroqClient.__dict__["complete"] is not _REAL_GROQ_COMPLETE
 
 
+def test_stub_output_is_labelled_as_stub_and_the_names_come_back():
+    # The debate engine stores provider.name on every transcript row, so stub data must say it is stub.
+    assert (GroqClient.name, GeminiClient.name) == ("stub-groq", "stub-gemini")
+    stub.install()  # a second install must not stack the prefix
+    assert (GroqClient.name, GeminiClient.name) == ("stub-groq", "stub-gemini")
+    stub.uninstall()
+    assert (GroqClient.name, GeminiClient.name) == ("groq", "gemini")
+    assert GroqClient.__dict__["complete"] is _REAL_GROQ_COMPLETE
+
+
 def test_selftest_prints_ok(capsys):
     stub.selftest()
     assert capsys.readouterr().out.strip().endswith("OK")

@@ -57,3 +57,45 @@ def test_aggregate_verdict_tie_is_ambiguous():
     verdict = aggregate_verdict(responses)
     assert verdict["verdict_class"] == "ambiguous"
     assert verdict["status"] == "ambiguous"
+
+
+def _split_three_ways() -> list[AgentResponse]:
+    return [
+        _resp("network_traffic", "Volumetric flood pattern, a DDoS.", 0.88),
+        _resp("access_log", "Unusual file access and exfiltration.", 0.86),
+        _resp("endpoint_behavior", "Off-hours logon anomaly, an unusual login.", 0.90),
+    ]
+
+
+def test_three_way_split_is_ambiguous_without_a_primary_agent():
+    verdict = aggregate_verdict(_split_three_ways())
+    assert verdict["verdict_class"] == "ambiguous"
+    assert verdict["status"] == "ambiguous"
+
+
+def test_three_way_split_resolves_to_the_primary_agents_class():
+    verdict = aggregate_verdict(_split_three_ways(), primary_agent_id="network_traffic")
+    assert verdict["verdict_class"] == "ddos"
+    assert verdict["status"] == "verdict_reached"
+    assert verdict["contributing_agents"] == ["network_traffic"]
+    assert verdict["verdict_confidence"] == 0.88
+
+
+def test_primary_agent_does_not_override_a_clear_majority():
+    responses = [
+        _resp("network_traffic", "Clear DDoS flood pattern.", 0.9),
+        _resp("access_log", "DDoS-like volumetric spike observed too.", 0.6),
+        _resp("endpoint_behavior", "Off-hours logon anomaly, an unusual login.", 0.95),
+    ]
+    verdict = aggregate_verdict(responses, primary_agent_id="endpoint_behavior")
+    assert verdict["verdict_class"] == "ddos"  # two agents agree; the primary does not outvote them
+
+
+def test_primary_that_cast_no_real_vote_leaves_the_tie_ambiguous():
+    responses = [
+        _resp("network_traffic", "Port scan reconnaissance detected.", 0.7),
+        _resp("access_log", "Brute force credential guessing pattern.", 0.7),
+        _resp("endpoint_behavior", "No evidence of misuse.", 0.5),
+    ]
+    verdict = aggregate_verdict(responses, primary_agent_id="endpoint_behavior")
+    assert verdict["verdict_class"] == "ambiguous"

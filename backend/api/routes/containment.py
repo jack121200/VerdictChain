@@ -53,7 +53,8 @@ def emergency_containment(
             raise HTTPException(
                 status.HTTP_409_CONFLICT, detail="The verdict has not been reached: no round-3 transcripts."
             )
-        verdict = aggregate_verdict(positions)
+        # Same inputs the engine used, so a tie broken by the primary agent re-derives to the same class.
+        verdict = aggregate_verdict(positions, primary_agent_id=inv.primary_agent)
         verdict_class = verdict["verdict_class"]
 
         plan = _plan(session, verdict_class, verdict["supporting_evidence"])

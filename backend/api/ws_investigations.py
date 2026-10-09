@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, WebSocket
 from fastapi.concurrency import run_in_threadpool
 
 from backend.api.auth import get_current_user
+from backend.api.event_stream import event_channel
 from backend.api.schemas.realtime import WsTicketOut
 from backend.api.websocket import investigation_channel, investigation_feed
 from backend.api.ws_tickets import TICKET_TTL_SECONDS, consume_ticket, issue_ticket
@@ -43,6 +44,20 @@ async def investigation_socket(
         await websocket.close(code=WS_CLOSE_NOT_FOUND)
         return
     await investigation_channel(websocket, parsed_id)
+
+
+@router.websocket("/ws/events")
+async def events_socket(websocket: WebSocket, ticket: str | None = None) -> None:
+    """Push channel for every screen: one small "changed" event per committed audited change, carrying
+    topic names only. The browser refetches through the normal REST endpoints. Same single-use ticket as
+    the investigation socket; a missing or bad ticket closes with 4401.
+    """
+    await websocket.accept()
+    username = await run_in_threadpool(consume_ticket, ticket)
+    if username is None:
+        await websocket.close(code=WS_CLOSE_UNAUTHORIZED)
+        return
+    await event_channel(websocket)
 
 
 @router.websocket("/ws/scenarios/{scenario_label}")

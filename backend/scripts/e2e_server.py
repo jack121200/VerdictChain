@@ -35,11 +35,13 @@ AGENTS = {
     "endpoint_behavior": endpoint_behavior,
 }
 
-_CONFIDENCE = {"network_traffic": 0.70, "access_log": 0.72, "endpoint_behavior": 0.74}
+_CONFIDENCE = {"network_traffic": 0.88, "access_log": 0.86, "endpoint_behavior": 0.90}
 
 # Canned theories per domain and round; rounds 2 and 3 open with the stance the prompt requires.
-# Round-3 wording is chosen so classify_theory() (backend/debate/verdict.py) reads network_traffic as
-# ddos and the two insider agents as insider_file_exfiltration, so the debate reaches a verdict class.
+# Round-3 wording is chosen so classify_theory() (backend/debate/verdict.py) reads each agent as its own
+# domain class (network_traffic -> ddos, access_log -> insider_file_exfiltration, endpoint_behavior ->
+# insider_logon_anomaly). With one vote each, the verdict's primary-agent tie-break then resolves to the
+# class of whichever agent actually held the injected scenario's rows.
 _THEORIES = {
     "network_traffic": {
         1: (
@@ -79,8 +81,9 @@ _THEORIES = {
             "because the same user-days show both timing and file-volume outliers."
         ),
         3: (
-            "SUPPORT: Access-Log's unusual file access and exfiltration theory matches the off-hours logon "
-            "anomaly in my slice, so I support the insider reading of these user-days."
+            "REVISE: I hold the off-hours logon anomaly reading - the logon rows for these user-days fall "
+            "outside this user's own historical login hours and an unrecognized device appears, which is an "
+            "unusual login pattern rather than a file-exfiltration one."
         ),
     },
 }
@@ -160,7 +163,9 @@ def fake_reply(system_prompt: str, user_prompt: str) -> str:
     )
 
 
-_originals: dict[str, tuple[type, Callable[..., str]]] = {}
+# class name -> (class, original complete, original provider name). Keyed by class so install() stays
+# idempotent even though the provider name changes while the stub is installed.
+_originals: dict[str, tuple[type, Callable[..., str], str]] = {}
 
 
 def _stub_complete(provider: str) -> Callable[..., str]:
@@ -173,17 +178,25 @@ def _stub_complete(provider: str) -> Callable[..., str]:
 
 
 def install() -> None:
-    """Replace complete() on both provider clients at class level. Idempotent."""
+    """Replace complete() on both provider clients at class level. Idempotent.
+
+    While installed, each client also reports itself as "stub-groq" / "stub-gemini". The provider name is
+    what the debate engine records on every transcript row and shows in the console, so data produced by
+    this harness is honestly labelled as stub output and can never pass for a real model call.
+    """
     for cls in (GroqClient, GeminiClient):
-        if cls.name not in _originals:
-            _originals[cls.name] = (cls, cls.__dict__["complete"])
-            cls.complete = _stub_complete(cls.name)
+        if cls.__name__ not in _originals:
+            real_name = cls.name
+            _originals[cls.__name__] = (cls, cls.__dict__["complete"], real_name)
+            cls.complete = _stub_complete(real_name)
+            cls.name = f"stub-{real_name}"
 
 
 def uninstall() -> None:
     while _originals:
-        _, (cls, original) = _originals.popitem()
+        _, (cls, original, real_name) = _originals.popitem()
         cls.complete = original
+        cls.name = real_name
 
 
 def stub_calls() -> dict[str, int]:

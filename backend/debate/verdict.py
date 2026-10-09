@@ -39,10 +39,15 @@ def classify_theory(theory: str) -> str:
     return best_class if best_score > 0 else "unclassified"
 
 
-def aggregate_verdict(final_responses: list[AgentResponse]) -> dict:
-    """Combines the 3 agents' round-3 positions into one verdict. Ties or an
-    all-benign/unclassified split are flagged "ambiguous"/"benign" rather than
-    forced to a class, per SKILL-architecture.md Section 3.
+def aggregate_verdict(final_responses: list[AgentResponse], primary_agent_id: str | None = None) -> dict:
+    """Combines the 3 agents' round-3 positions into one verdict.
+
+    A clear majority (two or more agents on one class) wins. When the real votes
+    split with no majority (for example one class each), the tie is broken by the
+    PRIMARY agent's class if it cast a real vote - the primary agent is the one
+    whose data slice actually matched the injected scenario, so it is the domain
+    authority for that case. Only a split with no primary signal stays "ambiguous".
+    An all-benign/unclassified set is "benign" (SKILL-architecture.md Section 3).
     """
     classified = [(r, classify_theory(r.theory)) for r in final_responses]
     real_votes = [(r, cls) for r, cls in classified if cls not in ("benign", "unclassified")]
@@ -61,6 +66,19 @@ def aggregate_verdict(final_responses: list[AgentResponse]) -> dict:
     ranked = vote_counts.most_common()
     top_class, top_count = ranked[0]
     tie = len(ranked) > 1 and ranked[1][1] == top_count
+
+    if tie and primary_agent_id is not None:
+        primary_class = next(
+            (
+                cls
+                for r, cls in classified
+                if r.agent_id == primary_agent_id and cls not in ("benign", "unclassified")
+            ),
+            None,
+        )
+        if primary_class is not None:
+            top_class = primary_class
+            tie = False
 
     supporters = [r for r, cls in real_votes if cls == top_class]
     confidence = round(mean(r.confidence for r in supporters), 4)

@@ -438,7 +438,11 @@ def run_debate(
         raise DebateFailedError(str(investigation_id), str(exc)) from exc
 
     final = list(latest_by_agent.values())
-    verdict = aggregate_verdict(final) if len(final) >= MIN_ACTIVE_AGENTS else _insufficient_verdict(final)
+    verdict = (
+        aggregate_verdict(final, primary_agent_id=primary_agent_id)
+        if len(final) >= MIN_ACTIVE_AGENTS
+        else _insufficient_verdict(final)
+    )
     _finalize_verdict(investigation_id, verdict)
 
     # Self-Healing (SKILL-architecture.md Section 7): respond_to_verdict() enforces the verdict

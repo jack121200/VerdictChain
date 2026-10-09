@@ -33,10 +33,12 @@ from backend.db.models import (
 )
 from backend.db.session import SessionLocal
 from backend.evaluation.ground_truth_map import ATTACK_CLASSES, INSIDER_CLASSES, VERDICT_CLASSES
+from backend.watchdog.credibility import get_crs
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 SOURCE = "/stats"
+INVESTIGATOR_IDS = ("network_traffic", "access_log", "endpoint_behavior")
 ACTIVE_WINDOW = timedelta(minutes=30)
 THREAT_WINDOW = timedelta(hours=24)
 THREAT_STATUSES = ("verdict_reached", "contained")
@@ -144,6 +146,8 @@ def _citation_block(session: Session) -> tuple[CitationStatsOut, int, int]:
     statuses = [check.status for _, check in load_investigation_citations(session, transcripts)]
     total = len(statuses)
     verified = statuses.count("VERIFIED")
+    discrepancy = statuses.count("DISCREPANCY")
+    invalid_row = statuses.count("INVALID_ROW")
     failing = total - verified
     citations = CitationStatsOut(
         verified_rate=_share(
@@ -159,8 +163,24 @@ def _citation_block(session: Session) -> tuple[CitationStatsOut, int, int]:
             "no debate citations yet",
         ),
         total=_count(total, "cited evidence entries across all debate transcripts"),
+        verified=_count(verified, "citations whose row exists and whose cited value matches it exactly"),
+        discrepancy=_count(
+            discrepancy, "citations whose row exists but whose cited field or value does not match"
+        ),
+        invalid_row=_count(invalid_row, "citations whose row_id is malformed or not in raw_logs"),
     )
     return citations, total, failing
+
+
+def _mean_crs() -> Metric[float]:
+    scores = [get_crs(agent_id) for agent_id in INVESTIGATOR_IDS]
+    return make_metric(
+        sum(scores) / len(scores),
+        len(scores),
+        SOURCE,
+        "mean Watchdog credibility score (CrS) of the three investigator agents, read from Redis; "
+        "n = investigators",
+    )
 
 
 def _chain_block(session: Session) -> ChainStatsOut:
@@ -284,6 +304,7 @@ def get_stats(username: str = Depends(get_current_user)) -> StatsOut:
         feedback, scored_feedback = _feedback_block(session)
         return StatsOut(
             **investigations,
+            mean_crs=_mean_crs(),
             citations=citations,
             chain=_chain_block(session),
             watchdog=_watchdog_block(session, citations_total, failing),

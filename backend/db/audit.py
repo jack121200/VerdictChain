@@ -15,7 +15,11 @@ from typing import Any, Protocol
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from backend.db.change_events import install_commit_hook, note_change
 from backend.db.models import AuditTrail
+
+# Any process that appends audit entries also announces them after commit.
+install_commit_hook()
 
 # Every action name the frontend knows (plan section 3.2). Writes outside this set are rejected.
 AUDIT_ACTIONS: frozenset[str] = frozenset(
@@ -116,6 +120,8 @@ def append_entry(
         entry_hash=compute_entry_hash(actor, action, canonical, prev_hash),
     )
     session.add(entry)
+    # Tell connected clients once this transaction commits (backend/db/change_events.py).
+    note_change(session, action, str(investigation_id) if investigation_id is not None else None)
     return entry
 
 

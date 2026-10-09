@@ -1,8 +1,14 @@
 """FastAPI app assembly. Run: uvicorn backend.api.main:app --reload"""
 
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.event_stream import run_event_forwarder
 from backend.api.routes import (
     agent_ops,
     agents,
@@ -24,7 +30,20 @@ from backend.api.routes import (
 )
 from backend.api.ws_investigations import router as ws_investigations_router
 
-app = FastAPI(title="VerdictChain API")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """One Redis subscriber per API process forwards change events to the /ws/events sockets."""
+    forwarder = asyncio.create_task(run_event_forwarder())
+    try:
+        yield
+    finally:
+        forwarder.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await forwarder
+
+
+app = FastAPI(title="VerdictChain API", lifespan=lifespan)
 
 # Frontend dev server origin - dashboard is a separate origin from this API,
 # so CORS is required for the browser to call it at all. Vite's default port

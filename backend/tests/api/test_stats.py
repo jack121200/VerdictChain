@@ -46,6 +46,11 @@ def test_empty_database_nulls_rates_with_reasons_and_counts_are_real_zeros(db_se
     assert body["citations"]["verified_rate"]["reason"]
     assert body["citations"]["invalid_rate"]["value"] is None
     assert body["citations"]["total"]["value"] == 0
+    for key in ("verified", "discrepancy", "invalid_row"):
+        assert body["citations"][key]["value"] == 0, key  # counts are real zeros, never null
+    # No credibility history yet: every investigator sits at the starting CrS, so the mean is real, n = 3.
+    assert body["mean_crs"]["value"] == pytest.approx(0.5)
+    assert body["mean_crs"]["n"] == 3
     assert body["chain"]["valid"] is True
     assert body["chain"]["entries"]["value"] == 0
     assert body["chain"]["head_seq"]["value"] is None
@@ -159,6 +164,10 @@ def test_every_kpi_matches_a_hand_computed_value(db_session):
     assert body["citations"]["verified_rate"]["value"] == pytest.approx(1 / 3)
     assert body["citations"]["invalid_rate"]["value"] == pytest.approx(2 / 3)
     assert body["citations"]["verified_rate"]["n"] == 3
+    # ddos: one VERIFIED + one DISCREPANCY (wrong value); insider: one INVALID_ROW (row id not in raw_logs).
+    assert body["citations"]["verified"]["value"] == 1
+    assert body["citations"]["discrepancy"]["value"] == 1
+    assert body["citations"]["invalid_row"]["value"] == 1
 
     assert body["chain"]["valid"] is True
     assert body["chain"]["entries"]["value"] == 4

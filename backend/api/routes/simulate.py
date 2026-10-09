@@ -62,7 +62,13 @@ class _Prepared:
     slot: DebateSlot
 
 
-@router.post("/simulate", response_model=None, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/simulate",
+    response_model=None,
+    status_code=status.HTTP_201_CREATED,
+    # wait=false returns 202 with this body; documenting it lets the frontend contract check validate it.
+    responses={status.HTTP_202_ACCEPTED: {"model": SimulateAcceptedOut}},
+)
 async def simulate_scenario(
     payload: SimulateScenarioRequest,
     request: Request,

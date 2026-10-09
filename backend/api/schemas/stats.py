@@ -11,6 +11,9 @@ class CitationStatsOut(BaseModel):
     verified_rate: Metric[float]
     invalid_rate: Metric[float]
     total: Metric[int]
+    verified: Metric[int]
+    discrepancy: Metric[int]
+    invalid_row: Metric[int]
 
 
 class ChainStatsOut(BaseModel):
@@ -53,6 +56,7 @@ class StatsOut(BaseModel):
     by_status: dict[str, Metric[int]]
     by_verdict_class: dict[str, Metric[int]]
     mean_agent_confidence: Metric[float]
+    mean_crs: Metric[float]
     citations: CitationStatsOut
     chain: ChainStatsOut
     watchdog: WatchdogStatsOut

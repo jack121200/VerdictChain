@@ -49,9 +49,9 @@ FE10 ✅ Command palette (Ctrl/Cmd+K and a TopNav button): pages, investigation 
 
 ## D. 70 points — BACKEND
 BE1 ✅ Debate off the request path: 202 at once, the queue worker runs it, progress endpoint (phase queued with place), restart recovery
-BE2 🟡 Multi-worker safe: events fan out over Redis pub/sub (done); atomic CrS update pending
+BE2 ✅ Multi-worker safe: change events fan out over Redis pub/sub, and the CrS update is one atomic Redis transaction (40 threads lost updates before, none now; test mutation-checked)
 BE3 ✅ Continuous mode is real: a simulated live feed (sensor, monitor, automatic investigations); /system/status.continuous_mode is true only while it runs
-BE4 🟡 Gemini quota: daily caps + in-flight slot exist; clear quota-error message + caching pending
+BE4 ✅ Gemini quota: daily caps, the single slot and the queue bound usage, and a debate ended by a quota or rate limit says so in plain words (which provider, daily or not, what to do) in the 502, the error frame and the Debate Room. Response caching is deliberately not built: an answer replayed from a cache would hide whether the provider still works
 BE5 ✅ /stats cached 5 s in Redis, invalidated by every committed change, incremental chain check inside
 BE6 ✅ Audit verify is incremental by default (checkpoint) and says so (mode, verified_from_seq); full=true re-verifies everything
 BE7 ✅ Legacy unauthenticated /ws/scenarios route removed (with its manager code and tests)
@@ -69,7 +69,7 @@ LG6 ✅ Insider scenario mapping derived from the CERT r4.2 answer files (event 
 LG7 ⬜ Noise: separate, clearly labelled adversarial mode
 LG8 ✅ Restore semantics documented in the README and proven end to end (restore resets CrS to 0.50, audited, history stays)
 LG9 ✅ Live isolation path exercised end to end through POST /investigations/simulate: stub fabricate mode -> real Watchdog -> CrS -> quarantine -> next debate without the agent -> audited restore (+ seed_demo --drill, stub --fabricate)
-LG10 ⬜ Analyst feedback actually feeds an adaptive threshold
+LG10 ✅ Analyst feedback feeds an adaptive verdict threshold: newest 20 rows, 10 needed, 30% false positives tighten by 0.02, 5% or fewer relax by 0.01, at most once per 5 new rows, kept in 0.70-0.95, each move an audited settings_changed by adaptive_feedback; GET /settings/adaptive and a Trust page block. Scheduled retraining of the spec is not built: nothing in the system is trained
 
 ## F. 70 points — STRUCTURE
 ST1 ✅ One source of truth for API schemas: no inline route models exist, a guard test keeps it that way
@@ -97,13 +97,13 @@ FM9 🟡 Investigations list and Audit entries stack below 640px; other tables n
 FM10 ✅ color-scheme: dark set (native controls)
 
 ## H. 70 points — SYSTEM DESIGN
-SD1 🟡 WS fan-out over Redis pub/sub done; CrS updates atomic pending
+SD1 ✅ WebSocket fan-out over Redis pub/sub and an atomic CrS update (WATCH/MULTI with retry); the per-investigation socket is the one in-process part (documented: one API worker)
 SD2 ✅ Debates run through a worker queue (backend/api/debate_queue.py, migration 0008): the queue is the investigations table (status queued, queued_at, run_spec with ids only), one worker takes the oldest, a second inject is accepted as queued with its place instead of 409, a restart keeps waiting debates, intake pause holds them; 11 backend tests, frontend queue banner and list
 SD3 ✅ Idempotency-Key on POST /investigations/simulate (same key = same investigation, no second debate; a refused request frees the key)
 SD4 ✅ Limits on waiting debates per analyst and in total (429 with the reason), checked before the daily caps are counted
 SD5 ✅ Boot-time secret/key validation (api/startup_checks.py, 17 tests)
-SD6 🟡 Stats cached; read endpoints are bounded; per-endpoint rate limits on reads not added
-SD7 🟡 Observability: request id + latency log lines done; provider latency/quota counters pending
+SD6 ✅ Reads: /stats cached 5 s, every list bounded, and per-client limits per minute on the heavy reads (evaluation 60, citations / audit / credibility 120, raw logs 240); a Redis outage never refuses a read
+SD7 ✅ Observability: one structured line per request with a request id, and per-provider call time and quota-error counters in /system/status (shown on the Access page)
 SD8 ⬜ Audit: per-investigation sub-chain + global chain
 SD9 ✅ Logical export script (python -m backend.scripts.export_db): JSONL per table + manifest with row counts and chain-valid flag
 SD10 ✅ docker compose --profile app runs backend + frontend (images built and smoke-tested); default compose still starts only the three services
@@ -138,7 +138,7 @@ CT6 ✅ contract-check runs in CI against the stub API (also rehearsed on an emp
 CT7 ✅ Every screen re-verified on the live API after the fixes: all 11 routes render real data, 0 console/page errors, 0 HTTP >= 400 (found + fixed a nested-button bug on Fleet)
 CT8 ✅ Backend /stats gained mean_crs + citation counts the screens needed (+ tests)
 CT9 ✅ Seeded + stub data is honestly labelled: providers read stub-groq / stub-gemini (restored on uninstall, tested); dev DB reseeded: 6 investigations, 70 stub replies, 0 real provider calls
-CT10 ⬜ UI marks investigations produced by the offline stub, so evaluation accuracy on stub data never reads as system accuracy
+CT10 ✅ Offline-stub investigations are marked: data_source (model / stub / mixed) from the stored providers, an 'Offline stub' badge with Proof on the lists, dossier, debate room and ledger; /evaluation counts model runs for its headline and shows stub accuracy separately and labelled
 CT11 ✅ Votes carry counted; aggregator marks an isolated agent 'not counted · isolated'; a quarantined agent's lane says it did not take part
 CT12 ✅ Manual containment re-derives the verdict WITHOUT isolated agents (it counted them: could contain a verdict the engine never reached); regression test, mutation-checked
 CT13 ✅ rounds_complete counts the engine's round_completed audit entries (it was 0 for every debate that had a quarantined agent)

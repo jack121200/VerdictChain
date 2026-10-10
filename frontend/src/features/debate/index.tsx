@@ -43,6 +43,7 @@ import { Proof } from '../../ui/Proof';
 import { Ring } from '../../ui/Ring';
 import { Skeleton } from '../../ui/Skeleton';
 import { Sparkline } from '../../ui/Sparkline';
+import { StubBadge } from '../../ui/StubBadge';
 import { pushToast } from '../../ui/toast-store';
 import {
   applyFrame,
@@ -295,6 +296,7 @@ function DebateRoom({ id }: { id: string }) {
                     {meta.dataset}
                   </span>
                 )}
+                <StubBadge source={meta?.data_source} />
                 {bundle && (
                   <span className="inline-flex items-center gap-1 text-on-surface-variant">
                     bundle <CopyHash value={bundle.bundle_sha256} label="Evidence bundle SHA-256" />

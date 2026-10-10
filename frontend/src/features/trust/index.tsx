@@ -23,6 +23,7 @@ import { AGENT_VISUALS } from '../../lib/agents';
 import { cn } from '../../lib/cn';
 import { cssPercent, formatCount, formatCountNoun, formatMaybeCount, formatNumber, formatPercent, formatSignedPercent, shortId } from '../../lib/format';
 import { CopyHash } from '../../ui/CopyHash';
+import { AdaptiveThreshold } from './AdaptiveThreshold';
 import { HintStrip } from '../../ui/HintStrip';
 import { Icon } from '../../ui/Icon';
 import { Metric } from '../../ui/Metric';
@@ -249,6 +250,9 @@ export default function TrustPage() {
         sandboxViolations={status.data?.sandbox.is_simulated_violations}
         onApplied={settings.reload}
       />
+
+      {/* 6. Adaptive verdict floor */}
+      <AdaptiveThreshold />
     </div>
   );
 }

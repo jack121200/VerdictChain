@@ -81,8 +81,8 @@ const SETTINGS: Settings = {
 const STATUS = {
   api_version: 'v2',
   providers: {
-    groq: { configured: true, model: 'groq-model', temperature: metric(0.2), calls_24h: metric(0) },
-    gemini: { configured: false, model: null, temperature: metric(0.2), calls_24h: metric(0) },
+    groq: { configured: true, model: 'groq-model', temperature: metric(0.2), calls_24h: metric(0), latency_ms: metric(null, 'no calls'), quota_errors_24h: metric(0) },
+    gemini: { configured: false, model: null, temperature: metric(0.2), calls_24h: metric(0), latency_ms: metric(null, 'no calls'), quota_errors_24h: metric(0) },
   },
   sandbox: { is_simulated_violations: metric(0), actions_total: metric(0) },
 } as unknown as SystemStatus;

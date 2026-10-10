@@ -80,6 +80,7 @@ def test_list_shape_filters_and_no_scenario_label(db_session):
         "noise_pct",
         "rounds_complete",
         "containment_count",
+        "data_source",
         "created_at",
     }
     assert first["dataset"] == "CERT r4.2"

@@ -5,10 +5,18 @@ needs edit_settings, and writes a settings_changed audit entry (before and after
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.api.auth import CurrentAnalyst, get_current_analyst, require_capability
-from backend.api.schemas.admin import SettingsOut, SettingsUpdateRequest
+from backend.api.metrics import make_metric
+from backend.api.schemas.admin import (
+    AdaptiveChangeOut,
+    AdaptiveRuleOut,
+    AdaptiveThresholdOut,
+    SettingsOut,
+    SettingsUpdateRequest,
+)
 from backend.db.audit import append_entry
 from backend.db.runtime_settings import RuntimeSettings, load, load_for_update, save
 from backend.db.session import SessionLocal
+from backend.evaluation import adaptive_threshold as adaptive
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -35,6 +43,61 @@ def _out(settings: RuntimeSettings) -> SettingsOut:
 @router.get("", response_model=SettingsOut)
 def get_settings(_: CurrentAnalyst = Depends(get_current_analyst)) -> SettingsOut:
     return _out(load())
+
+
+@router.get("/adaptive", response_model=AdaptiveThresholdOut)
+def get_adaptive_threshold(_: CurrentAnalyst = Depends(get_current_analyst)) -> AdaptiveThresholdOut:
+    """What analyst feedback says about the verdict threshold right now, and the last move it made."""
+    source = "/settings/adaptive"
+    with SessionLocal() as session:
+        assessment, threshold = adaptive.current_assessment(session)
+        previous = adaptive.last_change(session)
+        change = None
+        if previous is not None:
+            detail = previous.detail or {}
+            change = AdaptiveChangeOut(
+                at=previous.created_at,
+                before=detail["before"]["verdict_confidence_threshold"],
+                after=detail["after"]["verdict_confidence_threshold"],
+                reason=detail.get("reason", ""),
+                feedback_count=int(detail.get("feedback_count", 0)),
+            )
+    return AdaptiveThresholdOut(
+        threshold=make_metric(
+            threshold,
+            1,
+            source,
+            "runtime_settings.verdict_confidence_threshold, the value the debate uses now",
+        ),
+        window=make_metric(
+            assessment.window,
+            assessment.window,
+            source,
+            f"the newest analyst feedback rows the rule looks at (at most {adaptive.WINDOW})",
+        ),
+        false_positive_share=make_metric(
+            assessment.share,
+            assessment.window,
+            source,
+            "feedback rows marked false positive / feedback rows in the window",
+            reason=None if assessment.share is not None else "no analyst feedback yet",
+        ),
+        next_step=assessment.action,
+        reason=assessment.reason,
+        new_threshold=assessment.new_threshold,
+        rule=AdaptiveRuleOut(
+            window_size=adaptive.WINDOW,
+            min_feedback=adaptive.MIN_FEEDBACK,
+            adapt_every=adaptive.ADAPT_EVERY,
+            tighten_at=adaptive.TIGHTEN_AT,
+            relax_at=adaptive.RELAX_AT,
+            step_up=adaptive.STEP_UP,
+            step_down=adaptive.STEP_DOWN,
+            floor=adaptive.FLOOR,
+            ceiling=adaptive.CEILING,
+        ),
+        last_change=change,
+    )
 
 
 @router.put("", response_model=SettingsOut)

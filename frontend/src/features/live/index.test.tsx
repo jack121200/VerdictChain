@@ -105,6 +105,7 @@ const PAGE: InvestigationPage = {
       noise_pct: 0,
       rounds_complete: 3,
       containment_count: 0,
+      data_source: 'model',
       trigger_type: 'continuous',
       created_at: '2026-10-09T10:00:01Z',
     },

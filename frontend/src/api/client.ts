@@ -3,6 +3,7 @@
  * per endpoint in plan section 3. Every response is typed in ./types.ts.
  */
 import type {
+  AdaptiveThreshold,
   AuditListParams,
   AuditTrailResponse,
   AuditVerifyResult,
@@ -349,6 +350,11 @@ export function releaseContainment(id: string): Promise<ReleaseResponse> {
   return request<ReleaseResponse>(`/investigations/${encodeURIComponent(id)}/release-containment`, {
     method: 'POST',
   });
+}
+
+/** What analyst feedback says about the verdict floor now, and its last audited move. */
+export function getAdaptiveThreshold(): Promise<AdaptiveThreshold> {
+  return request<AdaptiveThreshold>('/settings/adaptive');
 }
 
 // ---- simulated live feed --------------------------------------------------------------

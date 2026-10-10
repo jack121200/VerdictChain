@@ -23,6 +23,7 @@ function row(over: Partial<InvestigationSummary> = {}): InvestigationSummary {
     noise_pct: 0,
     rounds_complete: 3,
     containment_count: 0,
+    data_source: 'model',
     trigger_type: 'manual',
     created_at: '2026-10-05T12:00:00Z',
     ...over,

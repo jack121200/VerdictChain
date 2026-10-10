@@ -147,6 +147,8 @@ function CitationPin({ investigationId }: { investigationId: string }) {
 
 export default function OverviewPage() {
   const evaluation = useAsync(getEvaluation, undefined, ['investigations']);
+  // Accuracy counts model runs only; the offline stub's scored runs are reported next to it, never inside it.
+  const stubScored = evaluation.data?.by_source?.stub.scored.value ?? 0;
   const stats = useAsync(getStats, 30_000, ['stats', 'investigations', 'actions']);
   const fleet = useAsync(getAgentFleet, 30_000, ['agents', 'credibility']);
   const scenarios = useAsync(listScenarios);
@@ -223,7 +225,15 @@ export default function OverviewPage() {
 
           {/* Telemetry HUD ribbon */}
           <div className="mt-6 grid w-full max-w-5xl grid-cols-2 gap-2 rounded-lg border border-outline-variant/40 bg-surface-container-lowest/80 p-1.5 shadow-xl backdrop-blur-md md:grid-cols-4">
-            <RibbonTile label="Evaluated accuracy" dotClass="bg-secondary" sub="ground-truth labelled only">
+            <RibbonTile
+              label="Evaluated accuracy"
+              dotClass="bg-secondary"
+              sub={
+                stubScored > 0
+                  ? `model runs only · ${stubScored} offline-stub ${stubScored === 1 ? 'run' : 'runs'} not counted`
+                  : 'ground-truth labelled only'
+              }
+            >
               <Figure metric={evaluation.data?.accuracy} tone="text-secondary" format={percent} label="Evaluated accuracy" className="font-headline text-2xl font-bold tracking-tight" />
             </RibbonTile>
             <RibbonTile label="Adjudication latency" dotClass="bg-primary" sub="audit start → verdict">

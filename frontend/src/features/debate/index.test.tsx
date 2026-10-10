@@ -95,8 +95,8 @@ const SYSTEM_STATUS = {
   redis: { ok: true, latency_ms: metric(1) },
   rabbitmq: { ok: true, latency_ms: metric(1) },
   providers: {
-    groq: { configured: true, model: 'provider-model', temperature: metric(0.2), calls_24h: metric(3) },
-    gemini: { configured: false, model: null, temperature: metric(null), calls_24h: metric(0) },
+    groq: { configured: true, model: 'provider-model', temperature: metric(0.2), calls_24h: metric(3), latency_ms: metric(null), quota_errors_24h: metric(0) },
+    gemini: { configured: false, model: null, temperature: metric(null), calls_24h: metric(0), latency_ms: metric(null), quota_errors_24h: metric(0) },
   },
   sandbox: { is_simulated_violations: metric(0), actions_total: metric(0) },
   debate_slot: { state: 'idle', investigation_id: null },
@@ -150,6 +150,7 @@ function detail(over: Partial<InvestigationDetail> = {}): InvestigationDetail {
     primary_agent: 'network_traffic',
     dataset: 'CICIDS2017',
     noise_pct: 0,
+    data_source: 'model',
     effective_noise_pct: 0,
     trigger_type: 'simulate',
     trigger_reason: null,

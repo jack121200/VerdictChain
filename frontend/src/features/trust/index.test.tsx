@@ -11,6 +11,7 @@ import type {
 } from '../../api/types';
 
 const client = vi.hoisted(() => ({
+  getAdaptiveThreshold: vi.fn(),
   getAgentFleet: vi.fn(),
   getCredibilityHistory: vi.fn(),
   getMe: vi.fn(),
@@ -75,6 +76,16 @@ const citation: GlobalCitation = {
 
 function setup(options: { meanCrs?: number | null; capabilities?: Capability[]; history?: CredibilityRow[] } = {}) {
   const { meanCrs = 0.903, capabilities = ['edit_settings'], history = [] } = options;
+  client.getAdaptiveThreshold.mockResolvedValue({
+    threshold: metric(0.8),
+    window: metric(0),
+    false_positive_share: metric(null, 'no analyst feedback yet'),
+    next_step: 'wait',
+    reason: '0 of the 10 feedback rows needed',
+    new_threshold: null,
+    rule: { window_size: 20, min_feedback: 10, adapt_every: 5, tighten_at: 0.3, relax_at: 0.05, step_up: 0.02, step_down: 0.01, floor: 0.7, ceiling: 0.95 },
+    last_change: null,
+  });
   client.getAgentFleet.mockResolvedValue([
     fleetEntry('network_traffic', 0.9),
     fleetEntry('access_log', 0.85),

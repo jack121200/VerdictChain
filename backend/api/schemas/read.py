@@ -79,6 +79,7 @@ class InvestigationSummaryOut(BaseModel):
     noise_pct: int
     rounds_complete: int
     containment_count: int
+    data_source: Literal["model", "stub", "mixed"]  # stub: every answer came from the offline stub
     created_at: datetime
 
 

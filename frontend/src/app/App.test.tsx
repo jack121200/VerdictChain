@@ -28,8 +28,8 @@ const SYSTEM_STATUS = {
   redis: { ok: true, latency_ms: metric(0.8) },
   rabbitmq: { ok: true, latency_ms: metric(2) },
   providers: {
-    groq: { configured: false, model: null, temperature: metric(null, 'not configured'), calls_24h: metric(0) },
-    gemini: { configured: false, model: null, temperature: metric(null, 'not configured'), calls_24h: metric(0) },
+    groq: { configured: false, model: null, temperature: metric(null, 'not configured'), calls_24h: metric(0), latency_ms: metric(null, 'no calls'), quota_errors_24h: metric(0) },
+    gemini: { configured: false, model: null, temperature: metric(null, 'not configured'), calls_24h: metric(0), latency_ms: metric(null, 'no calls'), quota_errors_24h: metric(0) },
   },
   sandbox: { is_simulated_violations: metric(0), actions_total: metric(0) },
   debate_slot: { state: 'idle', investigation_id: null },

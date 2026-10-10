@@ -16,6 +16,7 @@ else the same users / time window, else a recent sample) and why that is recorde
 """
 
 import re
+import time
 import uuid
 from collections.abc import Callable
 from statistics import mean
@@ -29,6 +30,8 @@ from backend.agents.schemas import AgentResponse
 from backend.db.audit import append_entry
 from backend.db.models import AgentQuarantine, DebateTranscript, Investigation, RawLog
 from backend.db.session import SessionLocal
+from backend.debate import provider_stats
+from backend.debate.failure import explain_failure
 from backend.debate.state import assemble_debate_inputs, is_near_duplicate
 
 DEBATE_ROUNDS = 3
@@ -199,18 +202,23 @@ def _respond(
     """One investigator call, plus one retry if the answer repeats the agent's previous theory
     (SKILL-architecture.md Section 3).
     """
-    response, provider = investigators[agent_id](
-        rows, round_no=round_no, peripheral_digest=digest, debate_context=debate_context
-    )
+
+    def timed(context: str | None) -> tuple[AgentResponse, str]:
+        started = time.monotonic()
+        answer, served_by = investigators[agent_id](
+            rows, round_no=round_no, peripheral_digest=digest, debate_context=context
+        )
+        provider_stats.record_call(served_by, (time.monotonic() - started) * 1000)
+        return answer, served_by
+
+    response, provider = timed(debate_context)
     if previous is not None and is_near_duplicate(response.theory, previous.theory):
         nudged_context = (
             (debate_context or "")
             + "\n\nYour previous answer was rejected as too similar to your prior round. "
             "You must meaningfully CHALLENGE, SUPPORT, or REVISE."
         )
-        response, provider = investigators[agent_id](
-            rows, round_no=round_no, peripheral_digest=digest, debate_context=nudged_context
-        )
+        response, provider = timed(nudged_context)
     return response, provider
 
 
@@ -403,10 +411,11 @@ def run_debate(
         # A mid-debate failure (e.g. both LLM providers down at once - observed live) must not leave the
         # Investigation stuck at status='investigating' forever. Mark it and let the caller (the API route)
         # decide how to surface this to the client/WebSocket.
+        reason = explain_failure(failure.original)
         _set_status(investigation_id, "error")
         if on_update:
-            on_update({"type": "error", "investigation_id": str(investigation_id), "detail": str(failure)})
-        raise DebateFailedError(str(investigation_id), str(failure)) from failure.original
+            on_update({"type": "error", "investigation_id": str(investigation_id), "detail": reason})
+        raise DebateFailedError(str(investigation_id), reason) from failure.original
 
     return {
         "investigation_id": str(investigation_id),

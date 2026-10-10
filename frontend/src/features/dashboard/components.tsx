@@ -24,6 +24,7 @@ import { Proof, type ProofInput } from '../../ui/Proof';
 import { Ring } from '../../ui/Ring';
 import { Skeleton } from '../../ui/Skeleton';
 import { Sparkline } from '../../ui/Sparkline';
+import { StubBadge } from '../../ui/StubBadge';
 import { Timestamp } from '../../ui/Timestamp';
 import { citationStatusMeta, verdictClassTone } from './derive';
 
@@ -611,7 +612,12 @@ export function VerdictLedger({ rows, loading, hashFor, debateRounds, headSeq, c
                           <CopyButton value={row.id} label={`investigation id ${shortId(row.id)}`} />
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 text-on-surface">{row.dataset ?? '—'}</td>
+                      <td className="px-3 py-2.5 text-on-surface">
+                        <span className="inline-flex flex-wrap items-center gap-2">
+                          {row.dataset ?? '—'}
+                          <StubBadge source={row.data_source} />
+                        </span>
+                      </td>
                       <td className="px-3 py-2.5 font-semibold text-secondary">
                         {debateRounds !== undefined ? formatOutOf(row.rounds_complete, debateRounds) : formatCount(row.rounds_complete)}
                       </td>

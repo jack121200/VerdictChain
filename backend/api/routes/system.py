@@ -39,6 +39,7 @@ from backend.config import settings
 from backend.db.models import DebateTranscript, ResponseAction
 from backend.db.runtime_settings import load
 from backend.db.session import SessionLocal, engine
+from backend.debate import provider_stats
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -63,11 +64,19 @@ class _Probe:
 
 
 @dataclass(frozen=True)
+class _ProviderStats:
+    latency_ms: float | None  # mean call time in the last 24 h; None without calls
+    calls: int
+    quota_errors: int
+
+
+@dataclass(frozen=True)
 class _DbStats:
     calls_24h: dict[str, int]
     actions_total: int
     sandbox_violations: int
     intake_paused: bool
+    provider_stats: dict[str, _ProviderStats] | None  # None when Redis could not be read
 
 
 _TIMED_OUT = _Probe(False, None, "timeout")
@@ -148,7 +157,19 @@ def _read_db_stats() -> _DbStats:
         actions_total=int(actions_total),
         sandbox_violations=int(violations),
         intake_paused=intake_paused,
+        provider_stats=_read_provider_stats(),
     )
+
+
+def _read_provider_stats() -> dict[str, _ProviderStats] | None:
+    try:
+        stats = {}
+        for name in PROVIDER_NAMES:
+            mean, calls = provider_stats.latency_ms(name)
+            stats[name] = _ProviderStats(mean, calls, provider_stats.quota_errors(name))
+        return stats
+    except redis.RedisError:
+        return None
 
 
 async def _bounded(fn: Callable[[], T], on_timeout: T) -> T:
@@ -201,6 +222,8 @@ def _db_reason(pg: _Probe) -> str:
 
 def _provider(name: str, model: str, configured: bool, db: _DbStats | None, db_reason: str) -> ProviderOut:
     count = db.calls_24h[name] if db is not None else None
+    stats = db.provider_stats[name] if db is not None and db.provider_stats is not None else None
+    stats_reason = db_reason if db is None else "redis could not be read"
     return ProviderOut(
         configured=configured,
         model=model,
@@ -214,6 +237,27 @@ def _provider(name: str, model: str, configured: bool, db: _DbStats | None, db_r
             "debate_transcripts.provider, created_at within 24 h",
             f"debate transcript rows written by {name} in the last 24 h",
             None if db is not None else db_reason,
+        ),
+        latency_ms=_metric(
+            float,
+            stats.latency_ms if stats is not None else None,
+            stats.calls if stats is not None else 0,
+            "debate engine timer, kept in redis for 24 h",
+            f"mean time an investigator waited for {name} to answer in the last 24 h, including the client's "
+            "own spacing between calls and any fallback; n = calls timed",
+            (
+                None
+                if stats is not None and stats.calls
+                else stats_reason if stats is None else f"no {name} calls in 24 h"
+            ),
+        ),
+        quota_errors_24h=_metric(
+            int,
+            stats.quota_errors if stats is not None else None,
+            stats.quota_errors if stats is not None else 0,
+            "debate engine failures, kept in redis for 24 h",
+            f"debates ended by a {name} quota or rate-limit error in the last 24 h",
+            None if stats is not None else stats_reason,
         ),
     )
 

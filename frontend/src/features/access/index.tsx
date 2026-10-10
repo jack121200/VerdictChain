@@ -436,12 +436,24 @@ export default function AccessPage() {
                     <Field label="Temp">
                       <Metric metric={providers?.groq.temperature} size="body" label="Groq temperature" />
                     </Field>
+                    <Field label="Call time">
+                      <Metric metric={providers?.groq.latency_ms} size="body" label="Groq call time" format={formatDuration} />
+                    </Field>
+                    <Field label="Quota errors 24 h">
+                      <Metric metric={providers?.groq.quota_errors_24h} size="body" label="Groq quota errors in 24 hours" />
+                    </Field>
                   </div>
                   <div className="rounded border border-outline-variant/40 bg-background p-2.5">
                     <span className="font-mono text-[10px] uppercase text-outline">Gemini</span>
                     <p className="font-mono text-xs text-on-surface">{providers?.gemini.configured ? (providers.gemini.model ?? 'configured') : 'not configured'}</p>
                     <Field label="Temp">
                       <Metric metric={providers?.gemini.temperature} size="body" label="Gemini temperature" />
+                    </Field>
+                    <Field label="Call time">
+                      <Metric metric={providers?.gemini.latency_ms} size="body" label="Gemini call time" format={formatDuration} />
+                    </Field>
+                    <Field label="Quota errors 24 h">
+                      <Metric metric={providers?.gemini.quota_errors_24h} size="body" label="Gemini quota errors in 24 hours" />
                     </Field>
                   </div>
                 </div>

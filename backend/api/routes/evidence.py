@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from backend.agents.schemas import CitedEvidence
 from backend.api.auth import CurrentAnalyst, get_current_analyst, get_current_user
 from backend.api.metrics import make_metric
+from backend.api.rate_limit import read_limit
 from backend.api.rbac import role_has
 from backend.api.schemas.evidence import (
     CitationItemOut,
@@ -265,7 +266,11 @@ def _signatures(session: Session, investigation_id: uuid.UUID, current_digest: s
     return signatures
 
 
-@router.get("/investigations/{investigation_id}/citations", response_model=InvestigationCitationsOut)
+@router.get(
+    "/investigations/{investigation_id}/citations",
+    response_model=InvestigationCitationsOut,
+    dependencies=[read_limit("citations", 120)],
+)
 def investigation_citations(
     investigation_id: uuid.UUID, username: str = Depends(get_current_user)
 ) -> InvestigationCitationsOut:
@@ -285,7 +290,7 @@ def investigation_citations(
         session.close()
 
 
-@router.get("/citations", response_model=list[GlobalCitationOut])
+@router.get("/citations", response_model=list[GlobalCitationOut], dependencies=[read_limit("citations", 120)])
 def list_citations(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

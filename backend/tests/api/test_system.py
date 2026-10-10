@@ -279,7 +279,8 @@ def test_every_number_in_the_status_sits_inside_a_metric_envelope(db_session):
     body = _get_status(auth_headers("forensic_analyst"))
     assert _numbers_outside_metrics(body) == []
     metrics = _all_metrics(body)
-    assert len(metrics) == 9  # three latencies, two temperatures, two calls_24h, two sandbox counts
+    # three latencies, two temperatures, two calls_24h, two call times, two quota counts, two sandbox counts
+    assert len(metrics) == 13
     for metric in metrics:
         assert metric["n"] >= 0
         assert (metric["value"] is None) == (metric["reason"] is not None), metric

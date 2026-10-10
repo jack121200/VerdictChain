@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from backend.agents.schemas import AgentId
 from backend.api.auth import get_current_user
 from backend.api.debate_queue import queue_position
+from backend.api.provenance import data_source_by_investigation, source_of
 from backend.api.rate_limit import slot_holder
 from backend.api.routes.evidence import (
     citation_summary,
@@ -46,6 +47,7 @@ from backend.db.models import (
 from backend.db.session import SessionLocal
 from backend.debate.engine import DEBATE_ROUNDS
 from backend.debate.verdict import _CLASS_KEYWORDS, classify_theory
+from backend.evaluation.adaptive_threshold import adapt
 
 router = APIRouter(prefix="/investigations", tags=["investigations"])
 
@@ -102,7 +104,7 @@ def containment_by_investigation(session: Session, investigation_ids: list[uuid.
 
 
 def _summary(
-    investigation: Investigation, rounds_complete: int, containment_count: int
+    investigation: Investigation, rounds_complete: int, containment_count: int, data_source: str
 ) -> InvestigationSummaryOut:
     primary = investigation.primary_agent
     return InvestigationSummaryOut(
@@ -116,6 +118,7 @@ def _summary(
         noise_pct=investigation.noise_pct,
         rounds_complete=rounds_complete,
         containment_count=containment_count,
+        data_source=data_source,
         created_at=investigation.created_at,
     )
 
@@ -164,7 +167,16 @@ def list_investigations(
         ids = [r.investigation_id for r in rows]
         rounds = rounds_complete_by_investigation(session, ids)
         containment = containment_by_investigation(session, ids)
-        return [_summary(r, rounds[r.investigation_id], containment[r.investigation_id]) for r in rows]
+        sources = data_source_by_investigation(session, ids)
+        return [
+            _summary(
+                r,
+                rounds[r.investigation_id],
+                containment[r.investigation_id],
+                sources.get(r.investigation_id, "model"),
+            )
+            for r in rows
+        ]
     finally:
         session.close()
 
@@ -257,7 +269,9 @@ def get_investigation(
         )
         checked = load_investigation_citations(session, transcripts)
         rounds = rounds_complete_by_investigation(session, [investigation_id])[investigation_id]
-        summary = _summary(inv, rounds, len(action_rows))
+        summary = _summary(
+            inv, rounds, len(action_rows), source_of(transcript.provider for transcript in transcripts)
+        )
 
         return InvestigationDetailOut(
             **summary.model_dump(),
@@ -371,6 +385,9 @@ def submit_feedback(
                 investigation_id=investigation_id, verdict_was_correct=payload.verdict_was_correct
             )
         )
+        session.commit()
+        # The feedback may move the verdict threshold one small step (LG10). The move is audited.
+        adapt(session)
         session.commit()
     finally:
         session.close()

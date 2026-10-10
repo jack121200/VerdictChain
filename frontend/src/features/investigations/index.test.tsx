@@ -35,6 +35,7 @@ function summary(overrides: Partial<InvestigationSummary> = {}): InvestigationSu
     noise_pct: 0,
     rounds_complete: 3,
     containment_count: 1,
+    data_source: 'model',
     trigger_type: 'traffic_spike',
     created_at: '2026-10-05T12:00:00Z',
     ...overrides,

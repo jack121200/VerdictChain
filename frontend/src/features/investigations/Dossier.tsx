@@ -25,6 +25,7 @@ import { Icon } from '../../ui/Icon';
 import { Metric } from '../../ui/Metric';
 import { Proof } from '../../ui/Proof';
 import { Skeleton } from '../../ui/Skeleton';
+import { StubBadge } from '../../ui/StubBadge';
 import { pushToast } from '../../ui/toast-store';
 import { attributionFromCitations, containmentLatency } from './derive';
 import { STATUS_LABEL, VERDICT_LABEL, verdictIcon, verdictTone } from './labels';
@@ -265,7 +266,10 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
             <span className="text-tertiary">{detail.data?.trigger_type ?? summary?.trigger_type ?? '—'}</span>
           </Row>
           <Row label="Dataset shard">
-            <span className="text-on-surface">{dataset ?? '—'}</span>
+            <span className="inline-flex flex-wrap items-center gap-2">
+              <span className="text-on-surface">{dataset ?? '—'}</span>
+              <StubBadge source={detail.data?.data_source ?? summary?.data_source} />
+            </span>
           </Row>
           <Row label="Debate status">
             <span className="text-secondary">{status === null ? '—' : STATUS_LABEL[status]}</span>

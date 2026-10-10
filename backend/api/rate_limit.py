@@ -8,7 +8,7 @@ runs per analyst and across all analysts, over a 24 hour window.
 import uuid
 
 import redis
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, params, status
 
 from backend.config import settings
 
@@ -57,6 +57,19 @@ def enforce_rate_limit(key_prefix: str, identifier: str, limit: int, window_seco
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def read_limit(name: str, per_minute: int) -> params.Depends:
+    """Route dependency for the heavier read endpoints: at most `per_minute` calls per client address per
+    minute, then 429. A read is never refused because Redis is unavailable (the limiter steps aside)."""
+
+    def check(request: Request) -> None:
+        try:
+            enforce_rate_limit(f"read:{name}", client_ip(request), limit=per_minute, window_seconds=60)
+        except redis.RedisError:
+            return
+
+    return Depends(check)
 
 
 def slot_holder() -> str | None:

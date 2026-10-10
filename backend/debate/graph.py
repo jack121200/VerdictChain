@@ -29,7 +29,8 @@ from langgraph.types import Send
 from backend.agents.schemas import AgentResponse
 from backend.config import settings as app_settings
 from backend.db.models import RawLog
-from backend.debate import engine
+from backend.debate import engine, provider_stats
+from backend.debate.failure import classify
 from backend.debate.state import build_peripheral_digest
 from backend.debate.verdict import aggregate_verdict
 from backend.self_healing.actions import respond_to_verdict
@@ -158,6 +159,7 @@ def investigate_agent(task: dict[str, Any], config: RunnableConfig) -> dict:
                 }
             )
     except Exception as exc:
+        provider_stats.record_failure(classify(exc))
         raise RoundPhaseError(exc) from exc
     return {"turns": [{"agent_id": agent_id, "response": response, "provider": provider, "score": score}]}
 

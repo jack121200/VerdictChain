@@ -241,6 +241,13 @@ mitigations, both required:
 ## 8. Adaptive false-positive handling (human-in-the-loop)
 
 - Dashboard exposes "Confirm as Threat" / "Mark False Positive" on every verdict.
+- **Implemented (`backend/evaluation/adaptive_threshold.py`):** the adaptive filter sensitivity of item 1.
+  After each feedback the newest 20 rows are read (10 are needed): 30 % or more false positives raise
+  `verdict_confidence_threshold` by 0.02, 5 % or fewer lower it by 0.01, at most once per 5 new feedback rows,
+  kept between 0.70 and 0.95. Each move is a `settings_changed` audit entry by `adaptive_feedback` with the rows
+  it saw; `GET /settings/adaptive` reports the assessment and the last move (Trust page). **Not implemented:**
+  item 2 (scheduled retraining) and the version safety below, because nothing in the system is trained: the
+  verdict class comes from a fixed keyword rule and the live monitor from a fixed statistical rule.
 - This feedback is NOT discarded — it's stored and used two ways:
   1. **Adaptive filter sensitivity:** if recent feedback shows a burst of false
      positives, the confirmation threshold tightens slightly; if analysts are

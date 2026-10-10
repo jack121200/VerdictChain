@@ -15,6 +15,7 @@ import { HintStrip } from '../../ui/HintStrip';
 import { Pill } from '../../ui/Pill';
 import { Proof } from '../../ui/Proof';
 import { Skeleton } from '../../ui/Skeleton';
+import { StubBadge } from '../../ui/StubBadge';
 import { Timestamp } from '../../ui/Timestamp';
 
 const HINT = [
@@ -144,6 +145,7 @@ function DebateRow({ row, live = false, place }: { row: InvestigationSummary; li
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        <StubBadge source={row.data_source} />
         {row.verdict_class && <Pill tone="secondary">{row.verdict_class}</Pill>}
         <Pill tone={live ? 'error' : 'neutral'}>{place !== undefined ? `queued · place ${place}` : row.status}</Pill>
         <Icon name="chevron_right" size={16} className="hidden text-on-surface-variant sm:inline" />

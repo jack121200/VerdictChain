@@ -32,6 +32,7 @@ import { HintStrip } from '../../ui/HintStrip';
 import { Icon } from '../../ui/Icon';
 import { Proof } from '../../ui/Proof';
 import { Skeleton } from '../../ui/Skeleton';
+import { StubBadge } from '../../ui/StubBadge';
 import { Timestamp } from '../../ui/Timestamp';
 import { Dossier, type DossierData, type Loaded } from './Dossier';
 import { STATUS_LABEL, VERDICT_LABEL, statusTone, verdictIcon, verdictTone, type PillTone } from './labels';
@@ -440,6 +441,7 @@ export default function InvestigationsPage({ id }: PageProps) {
                             {item.dataset}
                           </span>
                         )}
+                        <StubBadge source={item.data_source} />
                         <Timestamp iso={item.created_at} className="font-mono text-[10px] text-outline" />
                       </div>
                       <h3 className="mt-1 break-words font-headline text-base font-semibold text-on-surface">{item.trigger_type}</h3>

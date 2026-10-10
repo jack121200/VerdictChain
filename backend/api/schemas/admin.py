@@ -34,6 +34,39 @@ class SettingsOut(BaseModel):
     starting_crs: float  # read-only constant (plan section 3.5)
 
 
+class AdaptiveRuleOut(BaseModel):
+    """The constants of the adaptive rule (backend/evaluation/adaptive_threshold.py), shown on the screen."""
+
+    window_size: int
+    min_feedback: int
+    adapt_every: int
+    tighten_at: float
+    relax_at: float
+    step_up: float
+    step_down: float
+    floor: float
+    ceiling: float
+
+
+class AdaptiveChangeOut(BaseModel):
+    at: datetime
+    before: float
+    after: float
+    reason: str
+    feedback_count: int
+
+
+class AdaptiveThresholdOut(BaseModel):
+    threshold: Metric[float]  # the verdict confidence threshold now
+    window: Metric[int]  # feedback rows the rule looks at
+    false_positive_share: Metric[float]  # null without feedback
+    next_step: Literal["tighten", "relax", "hold", "wait"]
+    reason: str
+    new_threshold: float | None
+    rule: AdaptiveRuleOut
+    last_change: AdaptiveChangeOut | None
+
+
 class SettingsUpdateRequest(BaseModel):
     # Full replace: all four fields are required. Ranges match the table CHECK constraints.
     model_config = ConfigDict(extra="forbid")
@@ -55,6 +88,8 @@ class ProviderOut(BaseModel):
     model: str
     temperature: Metric[float]
     calls_24h: Metric[int]
+    latency_ms: Metric[float]
+    quota_errors_24h: Metric[int]
 
 
 class ProvidersOut(BaseModel):

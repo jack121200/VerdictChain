@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.audit_chain import verify_audit_chain
 from backend.api.auth import get_current_user
-from backend.api.rate_limit import enforce_rate_limit
+from backend.api.rate_limit import enforce_rate_limit, read_limit
 from backend.api.schemas.read import AuditChainOut, AuditEntryOut, AuditTrailOut, AuditVerifyOut
 from backend.db.audit import find_first_break, hash_input, is_known_action
 from backend.db.models import AuditTrail
@@ -45,7 +45,7 @@ def _entry_out(entry: AuditTrail) -> AuditEntryOut:
     )
 
 
-@router.get("", response_model=AuditTrailOut)
+@router.get("", response_model=AuditTrailOut, dependencies=[read_limit("audit", 120)])
 def list_audit_trail(
     limit: int = Query(100, ge=1, le=500),
     before_seq: int | None = Query(None, ge=1),

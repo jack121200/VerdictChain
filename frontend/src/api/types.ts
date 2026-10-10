@@ -143,11 +143,45 @@ export interface ServiceHealth {
   latency_ms: Metric<number>;
 }
 
+/** GET /settings/adaptive: what analyst feedback says about the verdict floor right now. */
+export interface AdaptiveRule {
+  window_size: number;
+  min_feedback: number;
+  adapt_every: number;
+  tighten_at: number;
+  relax_at: number;
+  step_up: number;
+  step_down: number;
+  floor: number;
+  ceiling: number;
+}
+
+export interface AdaptiveChange {
+  at: string;
+  before: number;
+  after: number;
+  reason: string;
+  feedback_count: number;
+}
+
+export interface AdaptiveThreshold {
+  threshold: Metric<number>;
+  window: Metric<number>;
+  false_positive_share: Metric<number>;
+  next_step: 'tighten' | 'relax' | 'hold' | 'wait';
+  reason: string;
+  new_threshold: number | null;
+  rule: AdaptiveRule;
+  last_change: AdaptiveChange | null;
+}
+
 export interface ProviderStatus {
   configured: boolean;
   model: string | null;
   temperature: Metric<number>;
   calls_24h: Metric<number>;
+  latency_ms: Metric<number>;
+  quota_errors_24h: Metric<number>;
 }
 
 export interface DebateSlot {
@@ -297,6 +331,9 @@ export interface InvestigationCitations {
 }
 
 /** Row in GET /investigations. Never carries scenario_label. */
+/** Where an investigation's answers came from (backend/api/provenance.py): stub = the offline stub only. */
+export type DataSource = 'model' | 'stub' | 'mixed';
+
 export interface InvestigationSummary {
   id: string;
   status: InvestigationStatus;
@@ -307,6 +344,7 @@ export interface InvestigationSummary {
   noise_pct: NoisePct;
   rounds_complete: number;
   containment_count: number;
+  data_source: DataSource;
   trigger_type: string;
   created_at: string;
 }
@@ -329,6 +367,7 @@ export interface InvestigationDetail {
   dataset: DatasetName | null;
   noise_pct: NoisePct;
   effective_noise_pct: number | null;
+  data_source: DataSource;
   trigger_type: string;
   trigger_reason: string | null;
   rounds: DebateRound[];
@@ -365,6 +404,7 @@ export interface InvestigationSummaryWire {
   noise_pct: NoisePct;
   rounds_complete: number;
   containment_count: number;
+  data_source: DataSource;
   created_at: string;
 }
 
@@ -728,7 +768,16 @@ export interface MappingEntry {
 }
 
 /** GET /evaluation: labelled investigations only. Accuracy comes only from here (R4). */
+/** Scored investigations and exact accuracy for one data source. */
+export interface SourceScore {
+  scored: Metric<number>;
+  accuracy: Metric<number>;
+}
+
 export interface EvaluationResponse {
+  /** Which runs the headline numbers count: model by default, so stub accuracy never reads as system accuracy. */
+  source: string;
+  by_source: Record<DataSource, SourceScore>;
   labelled: Metric<number>;
   scored: Metric<number>;
   accuracy: Metric<number>;

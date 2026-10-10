@@ -19,6 +19,7 @@ from backend.agents import access_log, endpoint_behavior, llm_clients, network_t
 from backend.agents.schemas import AgentId
 from backend.api.auth import get_current_user
 from backend.api.metrics import Metric, make_metric
+from backend.api.rate_limit import read_limit
 from backend.api.routes.evidence import load_investigation_citations
 from backend.api.schemas.read import AgentFleetEntryOut, CredibilityPointOut
 from backend.db.models import AgentQuarantine, CredibilityLog, DebateTranscript, Investigation
@@ -211,7 +212,11 @@ def agent_fleet(username: str = Depends(get_current_user)) -> list[AgentFleetEnt
         session.close()
 
 
-@router.get("/{agent_id}/credibility-history", response_model=list[CredibilityPointOut])
+@router.get(
+    "/{agent_id}/credibility-history",
+    response_model=list[CredibilityPointOut],
+    dependencies=[read_limit("credibility", 120)],
+)
 def credibility_history(
     agent_id: str,
     limit: int = Query(60, ge=1, le=500),

@@ -101,7 +101,16 @@ class MappingEntryOut(BaseModel):
     accepted_classes: list[str]
 
 
+class SourceScoreOut(BaseModel):
+    """Scored investigations and exact accuracy for one data source (model, stub or mixed)."""
+
+    scored: Metric[int]
+    accuracy: Metric[float]
+
+
 class EvaluationOut(BaseModel):
+    source: str  # which runs the headline numbers count: model (default), stub, mixed or all
+    by_source: dict[str, SourceScoreOut]  # always all three, so stub accuracy is visible and labelled
     labelled: Metric[int]
     scored: Metric[int]
     accuracy: Metric[float]

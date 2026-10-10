@@ -185,6 +185,7 @@ export function toInvestigationDetail(wire: InvestigationDetailWire): Investigat
     dataset: wire.dataset,
     noise_pct: wire.noise_pct,
     effective_noise_pct: wire.effective_noise_pct,
+    data_source: wire.data_source,
     trigger_type: wire.trigger_type,
     // The API never exposes trigger_reason (it can name the injected scenario, which agents and the UI
     // must not see), so it is always null here.

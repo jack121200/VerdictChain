@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 
 from backend.api.auth import get_current_user
 from backend.api.metrics import make_metric
+from backend.api.rate_limit import read_limit
 from backend.api.schemas.read import RawLogCountOut, RawLogCountsOut, RawLogOut
 from backend.db.models import RawLog
 from backend.db.session import SessionLocal
@@ -71,7 +72,7 @@ def _out(row: RawLog) -> RawLogOut:
     )
 
 
-@router.get("/recent", response_model=list[RawLogOut])
+@router.get("/recent", response_model=list[RawLogOut], dependencies=[read_limit("raw-logs", 240)])
 def recent_raw_logs(
     limit: int = Query(50, ge=1, le=200),
     source: str | None = Query(None, max_length=64),
@@ -114,7 +115,7 @@ def raw_log_counts(username: str = Depends(get_current_user)) -> RawLogCountsOut
         session.close()
 
 
-@router.get("/{row_id}", response_model=RawLogOut)
+@router.get("/{row_id}", response_model=RawLogOut, dependencies=[read_limit("raw-logs", 240)])
 def get_raw_log(row_id: uuid.UUID, username: str = Depends(get_current_user)) -> RawLogOut:
     session = SessionLocal()
     try:

@@ -26,20 +26,34 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     rabbitmq_url: str = "amqp://guest:guest@127.0.0.1:5672/"
 
-    groq_api_key: str = ""
-    gemini_api_key: str = ""
+    # OpenAI is the only LLM provider, for every debate (manual injections and the live feed) and for the
+    # sentence written with a containment action. Owner's decision of 2026-10-11: Groq and Gemini are gone.
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4.1-mini"  # the owner's choice goes in OPENAI_MODEL (.env)
+    # per call; a model that thinks first needs room, because its thinking counts against this number
+    openai_max_output_tokens: int = 3000
+    # Hard budget: input + output tokens the API may be asked for in any rolling 24 hours. A call that would
+    # start above it is refused before any request leaves the machine (calls in flight may overshoot a bit).
+    # One debate is 30,000 to 55,000 tokens, so this is room for about forty to sixty of them a day.
+    openai_daily_token_limit: int = 2_000_000
 
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
 
-    # Daily caps on debate runs (plan §3.5): per analyst and across all analysts.
-    debate_daily_limit_user: int = 10
-    debate_daily_limit_global: int = 20
+    # Daily caps on debate runs (plan §3.5): per analyst and across all analysts. They are the second guard:
+    # the cost of a day is bounded by openai_daily_token_limit, which a few dozen debates would reach anyway.
+    debate_daily_limit_user: int = 30
+    debate_daily_limit_global: int = 120
     # How many investigators the debate graph runs at once in a round (1 = one after the other). The provider
     # clients space their own calls, so a higher number cannot flood a provider.
     debate_max_parallel_agents: int = 3
-    # Debates waiting for the single worker (backend/api/debate_queue.py): per analyst and in total.
+    # How many debates run at once (backend/api/debate_queue.py, slots in backend/api/rate_limit.py). Each one
+    # runs its three investigators side by side, so 4 debates are about 12 requests in flight: fine for a
+    # funded OpenAI key, far too many for a free-tier one (set 1 there). The credibility scores are updated
+    # atomically, so parallel debates share them safely.
+    debate_max_concurrent: int = 4
+    # Debates waiting for a free slot (backend/api/debate_queue.py): per analyst and in total.
     debate_queue_max_per_user: int = 3
     debate_queue_max_total: int = 10
 
@@ -49,9 +63,12 @@ class Settings(BaseSettings):
     live_feed_attack_share: float = 0.2  # share of replayed segments that are taken from a scenario
     live_feed_queue: str = "live_log_events"  # RabbitMQ queue; give each environment its own
     live_auto_investigate: bool = True  # a flagged window starts an investigation by itself
-    live_min_gap_seconds: int = 60  # between two automatic investigations
-    live_max_queued: int = 1  # automatic investigations that may wait at once
-    live_daily_cap: int = 8  # automatic investigations per 24 hours (they also count in the global cap)
+    live_min_gap_seconds: int = 20  # between two automatic investigations from the same source window
+    live_max_queued: int = 4  # automatic investigations that may wait for a free debate slot at once
+    live_daily_cap: int = 80  # automatic investigations per 24 hours (they also count in the global cap)
+    # The live feed makes no model call before it has streamed this many rows (the monitor's own scoring is
+    # local and free, so it runs from row 1). The Live page chooses the value per run; this is the default.
+    live_llm_after_rows: int = 1500
 
     # First SecOps Lead, created by `python -m backend.scripts.bootstrap_lead` (plan §3.6).
     bootstrap_lead_username: str = ""

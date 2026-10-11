@@ -30,6 +30,10 @@ class AgentVoteOut(BaseModel):
     agent_id: str
     round: int
     vote_class: str
+    # "stated": the agent named the class itself. "keywords": its theory was read with the keyword list
+    # (answers from before the agent stated its class, or one that left it out); matched_keywords is then
+    # the keywords found, and empty for a stated class.
+    class_source: Literal["stated", "keywords"] = "keywords"
     matched_keywords: list[str]
     # False when the Watchdog isolated this agent during the investigation: the engine leaves it out of the
     # verdict, so its last transcript is shown but not counted.
@@ -80,6 +84,7 @@ class InvestigationSummaryOut(BaseModel):
     rounds_complete: int
     containment_count: int
     data_source: Literal["model", "stub", "mixed"]  # stub: every answer came from the offline stub
+    error_reason: str | None  # why the debate stopped, in plain words (only when status is "error")
     created_at: datetime
 
 
@@ -133,6 +138,23 @@ class AuditTrailOut(BaseModel):
     entries: list[AuditEntryOut]
     chain: AuditChainOut
     chain_valid: bool
+
+
+class CaseAuditEntryOut(AuditEntryOut):
+    # How prev_hash relates to this case: "genesis" = the first entry of the whole chain; "case" = the
+    # previous entry of this same case (nothing else was written in between); "other" = an entry of another
+    # case or of the system sits between them. A case's entries are not a separate chain: each still points
+    # at the entry before it in the one global chain.
+    links_to: Literal["genesis", "case", "other"]
+
+
+class CaseAuditChainOut(BaseModel):
+    investigation_id: str
+    entries: list[CaseAuditEntryOut]  # oldest first
+    count: Metric[int]
+    case_digest: str | None  # null when the case has no entries
+    digest_rule: str
+    chain: AuditChainOut  # the global chain this case lives in
 
 
 class AuditVerifyOut(BaseModel):

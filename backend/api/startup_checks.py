@@ -98,9 +98,9 @@ def collect_problems(
     if (error := redis_probe(cfg)) is not None:
         problems.append(f"Redis did not answer PING ({error})")
 
-    llm_keys = (cfg.groq_api_key, cfg.gemini_api_key)
-    if not any(key.strip() and not _is_placeholder(key) for key in llm_keys):
-        problems.append("no LLM provider key is configured: set GROQ_API_KEY and/or GEMINI_API_KEY")
+    key = cfg.openai_api_key
+    if not key.strip() or _is_placeholder(key):
+        problems.append("no LLM provider key is configured: set OPENAI_API_KEY")
     return problems
 
 

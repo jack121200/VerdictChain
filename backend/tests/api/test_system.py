@@ -10,8 +10,9 @@ from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
-from backend.agents.llm_clients import GEMINI_MODEL, GROQ_MODEL, GeminiClient, GroqClient
+from backend.agents.llm_clients import OpenAIClient, model_name
 from backend.api.main import app
+from backend.api.rate_limit import DEBATE_SLOT_KEY, DebateSlot
 from backend.api.routes import system
 from backend.config import settings
 from backend.db import runtime_settings
@@ -78,17 +79,16 @@ def test_the_three_services_report_ok_with_a_measured_latency(db_session):
 
 def test_providers_report_configured_models_and_temperature(db_session):
     body = _get_status(auth_headers("forensic_analyst"))
-    assert body["providers"]["groq"]["model"] == GROQ_MODEL
-    assert body["providers"]["gemini"]["model"] == GEMINI_MODEL
-    assert body["providers"]["groq"]["configured"] is bool(settings.groq_api_key)
-    assert body["providers"]["gemini"]["configured"] is bool(settings.gemini_api_key)
-    assert body["providers"]["groq"]["temperature"]["value"] == 0.2
-    assert GroqClient.name == "groq" and GeminiClient.name == "gemini"
+    assert list(body["providers"]) == ["openai"]  # the one provider
+    assert body["providers"]["openai"]["model"] == model_name()
+    assert body["providers"]["openai"]["configured"] is bool(settings.openai_api_key.strip())
+    assert body["providers"]["openai"]["temperature"]["value"] == 0.2
+    assert OpenAIClient.name == "openai"
 
 
-def test_temperature_constant_matches_both_clients_in_the_source():
+def test_temperature_constant_matches_the_client_in_the_source():
     source = LLM_CLIENTS_SOURCE.read_text(encoding="utf-8")
-    assert source.count('"temperature": 0.2') == 2
+    assert source.count('"temperature": 0.2') == 1
     assert system.LLM_TEMPERATURE == 0.2
 
 
@@ -109,24 +109,23 @@ def test_calls_24h_counts_only_rows_from_the_last_24_hours(db_session):
     with SessionLocal() as session:
         session.add_all(
             [
-                row("groq", now - timedelta(hours=1)),
-                row("groq", now - timedelta(hours=2)),
-                row("gemini", now - timedelta(hours=3)),
-                row("groq", now - timedelta(hours=30)),  # outside the window
+                row("openai", now - timedelta(hours=1)),
+                row("openai", now - timedelta(hours=2)),
+                row("openai", now - timedelta(hours=3)),
+                row("openai", now - timedelta(hours=30)),  # outside the window
+                row("stub-openai", now - timedelta(hours=1)),  # the offline stub is not the provider
                 row(None, now),  # no provider recorded: counted for neither
             ]
         )
         session.commit()
 
     body = _get_status(auth_headers("forensic_analyst"))
-    groq = body["providers"]["groq"]["calls_24h"]
-    gemini = body["providers"]["gemini"]["calls_24h"]
-    assert (groq["value"], groq["n"], groq["reason"]) == (2, 2, None)
-    assert (gemini["value"], gemini["n"], gemini["reason"]) == (1, 1, None)
+    calls = body["providers"]["openai"]["calls_24h"]
+    assert (calls["value"], calls["n"], calls["reason"]) == (3, 3, None)
 
 
 def test_zero_calls_is_a_real_zero_not_a_null(db_session):
-    calls = _get_status(auth_headers("forensic_analyst"))["providers"]["groq"]["calls_24h"]
+    calls = _get_status(auth_headers("forensic_analyst"))["providers"]["openai"]["calls_24h"]
     assert calls["value"] == 0
     assert calls["reason"] is None
 
@@ -145,17 +144,44 @@ def test_sandbox_counts_actions_and_no_action_is_unsimulated(db_session):
     assert (sandbox["is_simulated_violations"]["value"], sandbox["is_simulated_violations"]["n"]) == (0, 2)
 
 
-def test_debate_slot_is_idle_without_the_key_and_running_with_it(db_session):
+def _slot_summary(headers) -> tuple[str, str | None, int | None, int, list[str]]:
+    slot = _get_status(headers)["debate_slot"]
+    return (
+        slot["status"],
+        slot["investigation_id"],
+        slot["running"]["value"],
+        slot["capacity"]["value"],
+        slot["investigation_ids"],
+    )
+
+
+def test_debate_slot_is_idle_with_no_holder_and_running_with_one_or_more(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "debate_max_concurrent", 3)
     headers = auth_headers("forensic_analyst")
     client_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-    client_redis.delete(system.DEBATE_SLOT_KEY)
+    client_redis.delete(DEBATE_SLOT_KEY)
+    slots: list[DebateSlot] = []
     try:
-        assert _get_status(headers)["debate_slot"] == {"status": "idle", "investigation_id": None}
-        investigation = str(uuid.uuid4())
-        client_redis.set(system.DEBATE_SLOT_KEY, investigation, ex=60)
-        assert _get_status(headers)["debate_slot"] == {"status": "running", "investigation_id": investigation}
+        assert _slot_summary(headers) == ("idle", None, 0, 3, [])
+        ids = [str(uuid.uuid4()) for _ in range(2)]
+        for investigation in ids:
+            slot = DebateSlot()
+            assert slot.acquire()
+            slot.bind(investigation)
+            slots.append(slot)
+            time.sleep(0.01)  # slots are ordered by the millisecond they were taken
+        status, first, running, capacity, listed = _slot_summary(headers)
+        assert (status, running, capacity) == ("running", 2, 3)
+        assert listed == ids and first == ids[0]  # longest-running first
+        # A debate that is still starting holds a pending token: it counts as running but has no id yet.
+        starting = DebateSlot()
+        assert starting.acquire()
+        slots.append(starting)
+        assert _slot_summary(headers)[2:] == (3, 3, ids)
     finally:
-        client_redis.delete(system.DEBATE_SLOT_KEY)
+        for slot in slots:
+            slot.release()
+        client_redis.delete(DEBATE_SLOT_KEY)
         client_redis.close()
 
 
@@ -186,9 +212,8 @@ def test_flags_api_version_and_migration_head(db_session):
 
 def test_no_secret_or_connection_string_appears_in_the_response(db_session, monkeypatch):
     headers = auth_headers("forensic_analyst")  # log in before the secrets are swapped for sentinels
-    monkeypatch.setattr(settings, "groq_api_key", "gsk_sentinel_key_000111")
-    monkeypatch.setattr(settings, "gemini_api_key", "AIza_sentinel_key_222333")
-    secrets = [settings.groq_api_key, settings.gemini_api_key, settings.jwt_secret_key]
+    monkeypatch.setattr(settings, "openai_api_key", "sk-sentinel-key-000111222333")
+    secrets = [settings.openai_api_key, settings.jwt_secret_key]
     for url in (
         settings.local_database_url,
         settings.database_url,
@@ -198,11 +223,11 @@ def test_no_secret_or_connection_string_appears_in_the_response(db_session, monk
         password = urlsplit(url).password
         secrets.append(password or "")
     secrets = [value for value in secrets if value and len(value) >= 12]
-    assert "gsk_sentinel_key_000111" in secrets
+    assert "sk-sentinel-key-000111222333" in secrets
 
     resp = client.get("/system/status", headers=headers)
     text = resp.text
-    assert resp.json()["providers"]["groq"]["configured"] is True
+    assert resp.json()["providers"]["openai"]["configured"] is True
     for value in secrets:
         assert value not in text
     assert "://" not in text
@@ -227,7 +252,10 @@ def test_a_redis_failure_marks_the_debate_slot_unavailable(db_session, monkeypat
     body = _get_status(headers)
     assert body["redis"]["ok"] is False
     assert body["redis"]["error_class"] is not None
-    assert body["debate_slot"] == {"status": "unavailable", "investigation_id": None}
+    slot = body["debate_slot"]
+    assert (slot["status"], slot["investigation_id"], slot["investigation_ids"]) == ("unavailable", None, [])
+    assert slot["running"]["value"] is None and slot["running"]["reason"] == "Redis could not be read"
+    assert slot["capacity"]["value"] == settings.debate_max_concurrent
 
 
 def test_a_slow_probe_is_cut_off_at_the_budget(db_session, monkeypatch):
@@ -266,8 +294,7 @@ def test_an_unreadable_database_nulls_the_database_metrics_with_reasons(db_sessi
     body = _get_status(headers)
     assert body["intake_paused"] is None
     for metric in (
-        body["providers"]["groq"]["calls_24h"],
-        body["providers"]["gemini"]["calls_24h"],
+        body["providers"]["openai"]["calls_24h"],
         body["sandbox"]["actions_total"],
         body["sandbox"]["is_simulated_violations"],
     ):
@@ -279,8 +306,10 @@ def test_every_number_in_the_status_sits_inside_a_metric_envelope(db_session):
     body = _get_status(auth_headers("forensic_analyst"))
     assert _numbers_outside_metrics(body) == []
     metrics = _all_metrics(body)
-    # three latencies, two temperatures, two calls_24h, two call times, two quota counts, two sandbox counts
-    assert len(metrics) == 13
+    # three latencies, one temperature, one calls_24h, one call time, one quota count, two sandbox counts,
+    # the four numbers OpenAI itself reports about this key (requests and tokens, left and allowed), and
+    # the two debate-slot numbers (running now, capacity)
+    assert len(metrics) == 15
     for metric in metrics:
         assert metric["n"] >= 0
         assert (metric["value"] is None) == (metric["reason"] is not None), metric

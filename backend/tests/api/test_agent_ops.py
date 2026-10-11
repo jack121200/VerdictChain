@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from backend.api.main import app
-from backend.api.rate_limit import DebateSlot, get_redis
+from backend.api.rate_limit import DEBATE_SLOT_KEY, DebateSlot, get_redis
 from backend.db.models import AgentQuarantine, AuditTrail, CredibilityLog, Investigation, RawLog
 from backend.db.session import SessionLocal
 from backend.tests.fixtures.auth import auth_headers
@@ -28,11 +28,11 @@ def _set_crs(agent_id: str, value: float) -> None:
 def _agent_state_is_clean():
     for agent in ("network_traffic", "access_log", "endpoint_behavior"):
         reset_agent(agent)
-    get_redis().delete("verdictchain:debate:slot")
+    get_redis().delete(DEBATE_SLOT_KEY)
     yield
     for agent in ("network_traffic", "access_log", "endpoint_behavior"):
         reset_agent(agent)
-    get_redis().delete("verdictchain:debate:slot")
+    get_redis().delete(DEBATE_SLOT_KEY)
 
 
 def _count(model) -> int:

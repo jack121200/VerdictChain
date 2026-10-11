@@ -14,7 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import backend.api.websocket as websocket_module
 from backend.api.main import app
-from backend.api.rate_limit import get_redis, slot_holder
+from backend.api.rate_limit import DEBATE_SLOT_KEY, get_redis, slot_holder
 from backend.api.websocket import investigation_key, make_debate_broadcaster
 from backend.api.ws_tickets import TICKET_TTL_SECONDS, consume_ticket, issue_ticket
 from backend.db.models import CredibilityLog, DebateTranscript, Investigation, RawLog, ResponseAction
@@ -29,7 +29,7 @@ def _ws_state_is_clean():
     redis_client = get_redis()
     for key in redis_client.scan_iter("verdictchain:wsticket:*"):
         redis_client.delete(key)
-    redis_client.delete("verdictchain:debate:slot")
+    redis_client.delete(DEBATE_SLOT_KEY)
     for key in redis_client.scan_iter("verdictchain:cap:*"):
         redis_client.delete(key)
     yield
@@ -137,7 +137,8 @@ def test_the_first_frame_is_a_snapshot_built_from_the_database(db_session):
                 cited_evidence=[
                     {"row_id": str(uuid.uuid4()), "field": "event_type", "value": "network_flow"}
                 ],
-                provider="groq",
+                provider="openai",
+                stance="SUPPORT",
             )
         )
         session.add(
@@ -176,8 +177,9 @@ def test_the_first_frame_is_a_snapshot_built_from_the_database(db_session):
         "agent_id": "network_traffic",
         "theory": "ddos flood",
         "confidence": 0.9,
-        "provider": "groq",
+        "provider": "openai",
         "cited_evidence": frame["rounds"][0]["agents"][0]["cited_evidence"],
+        "stance": "SUPPORT",  # the stored stance, so a screen opened mid-debate shows it too
     }
     assert frame["credibility"][0]["crs_after"] == 0.4
     assert frame["actions"][0] == {

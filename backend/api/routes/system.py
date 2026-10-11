@@ -8,6 +8,7 @@ The probes run concurrently, each bounded by PROBE_TIMEOUT_S, so the response ta
 import asyncio
 import socket
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -23,10 +24,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from backend.agents.llm_clients import GEMINI_MODEL, GROQ_MODEL
+from backend.agents.llm_clients import model_name
 from backend.api.auth import CurrentAnalyst, get_current_analyst
 from backend.api.live_runner import runner
 from backend.api.metrics import Metric
+from backend.api.openai_allowance import build_allowance
+from backend.api.rate_limit import slot_capacity, slot_holders
 from backend.api.schemas.admin import (
     DebateSlotOut,
     ProviderOut,
@@ -44,11 +47,10 @@ from backend.debate import provider_stats
 router = APIRouter(prefix="/system", tags=["system"])
 
 API_VERSION = "2.4.0"  # the one place the API version is set (pyproject.toml carries no version)
-# Mirrors the temperature literal that both clients in backend/agents/llm_clients.py send.
+# Mirrors the temperature literal that the client in backend/agents/llm_clients.py sends.
 # test_system.py fails if the source and this value diverge.
 LLM_TEMPERATURE = 0.2
-PROVIDER_NAMES = ("groq", "gemini")  # each client's `name`, as stored in debate_transcripts.provider
-DEBATE_SLOT_KEY = "verdictchain:debate:slot"  # SET NX EX 1800 by the debate runner (plan section 3.5)
+PROVIDER_NAMES = ("openai",)  # the client's `name`, as stored in debate_transcripts.provider
 PROBE_TIMEOUT_S = 2.0
 _AMQP_DEFAULT_PORTS = {"amqp": 5672, "amqps": 5671}
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
@@ -80,7 +82,52 @@ class _DbStats:
 
 
 _TIMED_OUT = _Probe(False, None, "timeout")
-_UNAVAILABLE_SLOT = DebateSlotOut(status="unavailable", investigation_id=None)
+
+
+SLOT_SOURCE = "redis sorted set verdictchain:debate:slots"
+
+
+def _capacity_metric() -> Metric[int]:
+    return _metric(
+        int,
+        slot_capacity(),
+        1,
+        "DEBATE_MAX_CONCURRENT",
+        "how many debates may run at once (setting); a maintenance operation takes every slot",
+    )
+
+
+def _unavailable_slot() -> DebateSlotOut:
+    return DebateSlotOut(
+        status="unavailable",
+        investigation_id=None,
+        running=_metric(int, None, 0, SLOT_SOURCE, "debates holding a slot now", "Redis could not be read"),
+        capacity=_capacity_metric(),
+        investigation_ids=[],
+    )
+
+
+def _slot_state(holders: list[str]) -> DebateSlotOut:
+    """What the slots hold: a pending token counts as running (a debate is starting), only ids are listed."""
+    ids: list[str] = []
+    for holder in holders:
+        try:
+            ids.append(str(uuid.UUID(holder)))
+        except ValueError:
+            continue
+    return DebateSlotOut(
+        status="running" if holders else "idle",
+        investigation_id=ids[0] if ids else (holders[0] if holders else None),
+        running=_metric(
+            int,
+            len(holders),
+            len(holders),
+            SLOT_SOURCE,
+            "debates holding a debate slot now; a debate that is starting counts until it has an id",
+        ),
+        capacity=_capacity_metric(),
+        investigation_ids=ids,
+    )
 
 
 def _elapsed_ms(started: float) -> float:
@@ -98,7 +145,7 @@ def _probe_postgres() -> _Probe:
 
 
 def _probe_redis() -> tuple[_Probe, DebateSlotOut]:
-    """PING, then the debate slot key. The slot is 'unavailable' when Redis cannot be read, never 'idle'."""
+    """PING, then the debate slots. They are 'unavailable' when Redis cannot be read, never 'idle'."""
     started = time.perf_counter()
     client = redis.Redis.from_url(
         settings.redis_url,
@@ -109,15 +156,11 @@ def _probe_redis() -> tuple[_Probe, DebateSlotOut]:
     try:
         client.ping()
         latency = _elapsed_ms(started)
-        slot_value = client.get(DEBATE_SLOT_KEY)
+        holders = slot_holders(client)
     except Exception as exc:
-        return _Probe(False, None, type(exc).__name__), _UNAVAILABLE_SLOT
+        return _Probe(False, None, type(exc).__name__), _unavailable_slot()
     else:
-        if slot_value is None:
-            slot = DebateSlotOut(status="idle", investigation_id=None)
-        else:
-            slot = DebateSlotOut(status="running", investigation_id=str(slot_value))
-        return _Probe(True, latency, None), slot
+        return _Probe(True, latency, None), _slot_state(holders)
     finally:
         client.close()
 
@@ -259,6 +302,7 @@ def _provider(name: str, model: str, configured: bool, db: _DbStats | None, db_r
             f"debates ended by a {name} quota or rate-limit error in the last 24 h",
             None if stats is not None else stats_reason,
         ),
+        allowance=build_allowance(),
     )
 
 
@@ -266,7 +310,7 @@ def _provider(name: str, model: str, configured: bool, db: _DbStats | None, db_r
 async def system_status(_: CurrentAnalyst = Depends(get_current_analyst)) -> SystemStatusOut:
     pg, (redis_probe, slot), rmq, db = await asyncio.gather(
         _bounded(_probe_postgres, _TIMED_OUT),
-        _bounded(_probe_redis, (_TIMED_OUT, _UNAVAILABLE_SLOT)),
+        _bounded(_probe_redis, (_TIMED_OUT, _unavailable_slot())),
         _bounded(_probe_rabbitmq, _TIMED_OUT),
         _db_stats(),
     )
@@ -277,8 +321,7 @@ async def system_status(_: CurrentAnalyst = Depends(get_current_analyst)) -> Sys
         redis=_service(redis_probe, "redis PING"),
         rabbitmq=_service(rmq, "TCP connect to the RABBITMQ_URL host and port (reachability only)"),
         providers=ProvidersOut(
-            groq=_provider("groq", GROQ_MODEL, bool(settings.groq_api_key), db, db_reason),
-            gemini=_provider("gemini", GEMINI_MODEL, bool(settings.gemini_api_key), db, db_reason),
+            openai=_provider("openai", model_name(), bool(settings.openai_api_key.strip()), db, db_reason),
         ),
         sandbox=SandboxOut(
             is_simulated_violations=_metric(

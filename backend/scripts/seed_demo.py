@@ -1,6 +1,6 @@
 """Seed a target database with complete, realistic investigations WITHOUT any LLM call.
 
-Reuses the offline stub (backend.scripts.e2e_server.install) so the real investigator agents,
+Reuses the offline stub (backend.testing.e2e_server.install) so the real investigator agents,
 debate engine, Watchdog, verdict aggregation, self-healing and audit chain all run against real
 raw_logs rows and produce consistent, verifiable data. Zero provider calls, zero quota burn.
 
@@ -25,7 +25,7 @@ from backend.db.session import SessionLocal
 from backend.debate.engine import DebateFailedError, run_debate, start_investigation
 from backend.debate.state import dominant_agent_for_rows
 from backend.pipeline.log_streamer import get_rows_for_scenario
-from backend.scripts.e2e_server import AGENTS, install, set_fabricate, stub_calls, uninstall
+from backend.testing.e2e_server import AGENTS, install, set_fabricate, stub_calls, uninstall
 
 DEFAULT_SCENARIOS = [
     "DDoS",
@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    install()  # deterministic offline agents; no Groq/Gemini calls
+    install()  # deterministic offline agents; no OpenAI calls
     created: list[str] = []
     try:
         print(f"Seeding {len(args.scenarios)} investigation(s) with the offline stub (no provider calls):")

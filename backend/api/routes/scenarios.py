@@ -11,18 +11,16 @@ from typing import get_args
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 
+from backend.agents.registry import CERT, CICIDS, EVENT_TYPE_TO_AGENT, INVESTIGATOR_IDS
 from backend.api.auth import get_current_user
 from backend.api.metrics import make_metric
 from backend.api.schemas.realtime import ScenarioLabel
 from backend.api.schemas.stats import ScenarioOut
 from backend.db.models import RawLog
 from backend.db.session import SessionLocal
-from backend.debate.state import EVENT_TYPE_TO_AGENT
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
-CICIDS = "CICIDS2017"
-CERT = "CERT r4.2"
 # Label -> (dataset, description). The descriptions state what each dataset contains, not measured results.
 SCENARIO_INFO: dict[str, tuple[str, str]] = {
     "DDoS": (CICIDS, "Denial-of-service flood rows from the CICIDS2017 network flows."),
@@ -34,12 +32,11 @@ SCENARIO_INFO: dict[str, tuple[str, str]] = {
     "insider_scenario_2": (CERT, "CERT r4.2 answer-key insider scenario 2 (logon, device and file events)."),
     "insider_scenario_3": (CERT, "CERT r4.2 answer-key insider scenario 3 (logon, device and file events)."),
 }
-AGENT_ORDER: tuple[str, ...] = ("network_traffic", "access_log", "endpoint_behavior")
 
 
 def dominant_agent(event_counts: Counter) -> str | None:
-    """The agent that owns the most rows of a scenario. Ties go to network_traffic, then access_log, then
-    endpoint_behavior. Returns None when no row maps to an agent.
+    """The agent that owns the most rows of a scenario. Ties go to the earliest agent of INVESTIGATOR_IDS.
+    Returns None when no row maps to an agent.
     """
     per_agent: Counter = Counter()
     for event_type, count in event_counts.items():
@@ -49,7 +46,7 @@ def dominant_agent(event_counts: Counter) -> str | None:
     if not per_agent:
         return None
     best = max(per_agent.values())
-    return next(agent for agent in AGENT_ORDER if per_agent.get(agent, 0) == best)
+    return next(agent for agent in INVESTIGATOR_IDS if per_agent.get(agent, 0) == best)
 
 
 @router.get("", response_model=list[ScenarioOut])

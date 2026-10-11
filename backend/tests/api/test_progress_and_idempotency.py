@@ -10,8 +10,8 @@ from sqlalchemy import select
 
 from backend.api.main import app
 from backend.api.rate_limit import DEBATE_SLOT_KEY, DebateSlot, get_redis, slot_holder
-from backend.api.recovery import recover_after_restart
-from backend.db.models import Investigation, RawLog
+from backend.api.recovery import CUT_OFF_REASON, recover_after_restart
+from backend.db.models import AuditTrail, Investigation, RawLog
 from backend.db.session import SessionLocal
 from backend.tests.fixtures.auth import auth_headers
 from backend.tests.fixtures.debate_queue import wait_until_idle
@@ -224,16 +224,29 @@ def test_progress_of_an_investigating_case_nobody_runs_is_unknown(db_session):
 
 
 def test_progress_of_a_failed_debate_and_of_a_missing_one(db_session):
-    inv = add_investigation(db_session, status="error")
+    inv = add_investigation(db_session, status="error", error_reason="The openai account has no credit left.")
     db_session.commit()
     headers = bearer_for("forensic_analyst")
 
-    assert (
-        client.get(f"/investigations/{inv.investigation_id}/progress", headers=headers).json()["phase"]
-        == "error"
-    )
+    failed = client.get(f"/investigations/{inv.investigation_id}/progress", headers=headers).json()
+    assert failed["phase"] == "error"
+    assert failed["error_reason"] == "The openai account has no credit left."  # the page can say why
     assert client.get(f"/investigations/{uuid.uuid4()}/progress", headers=headers).status_code == 404
     assert client.get(f"/investigations/{inv.investigation_id}/progress").status_code == 401
+
+
+def test_a_failed_debate_explains_itself_in_the_list_and_the_detail(db_session):
+    failed = add_investigation(db_session, status="error", error_reason="An investigator failed validation.")
+    fine = add_investigation(db_session, status="verdict_reached")
+    db_session.commit()
+    headers = bearer_for("forensic_analyst")
+
+    listed = {row["investigation_id"]: row for row in client.get("/investigations", headers=headers).json()}
+    detail = client.get(f"/investigations/{failed.investigation_id}", headers=headers).json()
+
+    assert listed[str(failed.investigation_id)]["error_reason"] == "An investigator failed validation."
+    assert listed[str(fine.investigation_id)]["error_reason"] is None
+    assert detail["error_reason"] == "An investigator failed validation."
 
 
 # ---------------------------------------------------------------- recovery after a restart
@@ -252,8 +265,15 @@ def test_start_up_recovery_marks_cut_off_debates_and_frees_the_slot(db_session):
     assert (marked, holder) == (1, str(running.investigation_id))
     assert slot_holder() is None
     with SessionLocal() as session:
-        assert session.get(Investigation, running.investigation_id).status == "error"
+        cut_off = session.get(Investigation, running.investigation_id)
+        assert (cut_off.status, cut_off.error_reason) == ("error", CUT_OFF_REASON)
         assert session.get(Investigation, done.investigation_id).status == "contained"  # untouched
+        assert session.get(Investigation, done.investigation_id).error_reason is None
+        failed = session.execute(
+            select(AuditTrail).where(AuditTrail.action == "investigation_failed")
+        ).scalar_one()
+        assert failed.investigation_id == running.investigation_id
+        assert failed.detail == {"reason": CUT_OFF_REASON}  # the restart is on the record too
 
 
 def test_start_up_recovery_with_nothing_to_do_is_quiet(db_session):

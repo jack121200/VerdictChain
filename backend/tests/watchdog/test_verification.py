@@ -1,6 +1,9 @@
+import pytest
+
 from backend.agents.schemas import CitedEvidence
 from backend.db.models import RawLog
-from backend.watchdog.verification import verify_cited_evidence
+from backend.db.session import SessionLocal
+from backend.watchdog.verification import check_citations, shown_value, value_matches, verify_cited_evidence
 
 
 def _seed_row(db_session, **raw_fields) -> RawLog:
@@ -68,3 +71,74 @@ def test_verify_partial_match_rate(db_session):
         ]
     )
     assert rate == 0.5
+
+
+# ---- what counts as the same value (the investigators read the rows as JSON) ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("cited", "stored"),
+    [
+        ("false", False),  # a boolean as the prompt showed it ...
+        ("False", False),  # ... or as Python prints it
+        ("true", True),
+        ("0.3", 0.3),
+        ("0.30", 0.3),  # the same number written another way
+        ("999999", 999999.0),
+        ("999999.0", 999999.0),
+        ("1e6", 1000000),
+        (" 80 ", 80),
+        ("445", 445),
+        ("SCP0130", "SCP0130"),
+    ],
+)
+def test_a_value_counts_when_it_is_the_stored_one_in_any_of_its_three_forms(cited, stored):
+    assert value_matches(cited, stored)
+
+
+@pytest.mark.parametrize(
+    ("cited", "stored"),
+    [
+        ("true", False),
+        ("1", True),  # a number is not a boolean
+        ("0", False),
+        ("0.31", 0.3),
+        ("445", 446),
+        ("1 / 1 / 1", 1),  # several fields joined into one citation
+        ("false, 1, 1", False),
+        ("nan", 1.0),
+        ("inf", 1.0),
+        ("scp0130", "SCP0130"),  # text is compared as written
+        ("445", "446"),
+        ("", 0),
+    ],
+)
+def test_a_different_value_is_still_a_discrepancy(cited, stored):
+    assert not value_matches(cited, stored)
+
+
+def test_a_value_is_shown_the_way_the_prompt_shows_it():
+    assert shown_value(False) == "false" and shown_value(0.3) == "0.3" and shown_value(80) == "80"
+    assert shown_value("abc") == "abc"
+    assert shown_value(["a", 1]) == '["a", 1]'
+
+
+def test_the_check_reports_the_stored_value_as_it_was_shown(db_session):
+    row = _seed_row(db_session, off_hours=False, logon_count=2)
+    db_session.commit()
+    entries = [
+        CitedEvidence(row_id=str(row.row_id), field="off_hours", value="false"),
+        CitedEvidence(row_id=str(row.row_id), field="logon_count", value="2.0"),
+        CitedEvidence(row_id=str(row.row_id), field="logon_count / off_hours", value="2 / false"),
+        CitedEvidence(row_id=str(row.row_id), field="logon_count", value="3"),
+    ]
+
+    with SessionLocal() as session:
+        checks = check_citations(session, entries)
+
+    assert [(c.status, c.reason, c.expected) for c in checks] == [
+        ("VERIFIED", "ok", "false"),
+        ("VERIFIED", "ok", "2"),
+        ("DISCREPANCY", "field_not_found", None),  # a joined field name is not a field of the row
+        ("DISCREPANCY", "value_mismatch", "2"),
+    ]

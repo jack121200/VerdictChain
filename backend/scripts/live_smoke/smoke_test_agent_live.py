@@ -1,9 +1,9 @@
 """Manual, real-API proof that the Network-Traffic Agent works end-to-end against
-the actual Groq/Gemini services — not part of pytest (see backend/tests/conftest.py
+the actual OpenAI service — not part of pytest (see backend/tests/conftest.py
 note: this is deliberately kept out of the automated suite so CI stays fast,
 deterministic, and free of live network/quota dependencies).
 
-Run: python -m backend.scripts.smoke_test_agent_live
+Run: python -m backend.scripts.live_smoke.smoke_test_agent_live
 """
 
 from backend.agents import network_traffic

@@ -81,6 +81,7 @@ def test_list_shape_filters_and_no_scenario_label(db_session):
         "rounds_complete",
         "containment_count",
         "data_source",
+        "error_reason",
         "created_at",
     }
     assert first["dataset"] == "CERT r4.2"
@@ -207,7 +208,7 @@ def test_detail_has_stance_provider_votes_and_citation_summary(db_session):
         agent_id="network_traffic",
         theory="CHALLENGE: a brute force run with patator logins",
         cited=[cite(row, "Destination Port", "22"), cite(row, "Destination Port", "99")],
-        provider="groq",
+        provider="openai",
     )
     add_transcript(
         db_session,
@@ -216,7 +217,7 @@ def test_detail_has_stance_provider_votes_and_citation_summary(db_session):
         agent_id="network_traffic",
         theory="SUPPORT: brute force persists",
         cited=[cite(row, "Destination Port", "22")],
-        provider="groq",
+        provider="openai",
     )
     add_transcript(
         db_session,
@@ -225,7 +226,7 @@ def test_detail_has_stance_provider_votes_and_citation_summary(db_session):
         agent_id="endpoint_behavior",
         theory="a logon pattern was observed",
         cited=[cite(row, "Destination Port", "22")],
-        provider="gemini",
+        provider="openai",
     )
     db_session.commit()
 
@@ -235,9 +236,9 @@ def test_detail_has_stance_provider_votes_and_citation_summary(db_session):
 
     stances = [(d["round"], d["agent_id"], d["stance"], d["provider"]) for d in detail["debate"]]
     assert stances == [
-        (1, "endpoint_behavior", None, "gemini"),
-        (1, "network_traffic", "CHALLENGE", "groq"),
-        (3, "network_traffic", "SUPPORT", "groq"),
+        (1, "endpoint_behavior", None, "openai"),
+        (1, "network_traffic", "CHALLENGE", "openai"),
+        (3, "network_traffic", "SUPPORT", "openai"),
     ]
     votes = {v["agent_id"]: v for v in detail["votes"]}
     assert votes["network_traffic"]["round"] == 3
@@ -248,6 +249,86 @@ def test_detail_has_stance_provider_votes_and_citation_summary(db_session):
     assert detail["citations"]["verified"] == 3
     assert detail["citations"]["match_rate"]["value"] == 0.75
     assert "scenario_label" not in str(detail)
+
+
+def test_a_stated_stance_and_class_are_returned_and_the_text_is_the_fallback(db_session):
+    inv = add_investigation(db_session, status="verdict_reached", verdict_class="ambiguous", confidence=0.5)
+    row = add_raw(db_session, raw_fields={"Destination Port": 22})
+    hedged = "No clear network attack is evident: weakly consistent with beaconing, nothing more."
+    add_transcript(
+        db_session,
+        inv.investigation_id,
+        round_no=2,
+        agent_id="network_traffic",
+        theory=hedged,  # no stance word in the text: only the stored field can say REVISE
+        cited=[cite(row, "Destination Port", "22")],
+        stance="REVISE",
+        vote_class="benign",
+    )
+    add_transcript(
+        db_session,
+        inv.investigation_id,
+        round_no=2,
+        agent_id="access_log",
+        theory="SUPPORT: the same user shows both",
+        cited=[cite(row, "Destination Port", "22")],
+        vote_class="ambiguous",  # the rows do not decide: an abstention
+    )
+    add_transcript(
+        db_session,
+        inv.investigation_id,
+        round_no=2,
+        agent_id="endpoint_behavior",
+        theory="CHALLENGE: a brute force run with patator logins",  # stored before agents stated a class
+        cited=[cite(row, "Destination Port", "22")],
+    )
+    db_session.commit()
+
+    detail = client.get(
+        f"/investigations/{inv.investigation_id}", headers=bearer_for("forensic_analyst")
+    ).json()
+
+    stances = {d["agent_id"]: d["stance"] for d in detail["debate"]}
+    assert stances == {"network_traffic": "REVISE", "access_log": "SUPPORT", "endpoint_behavior": "CHALLENGE"}
+    votes = {v["agent_id"]: v for v in detail["votes"]}
+    assert (votes["network_traffic"]["vote_class"], votes["network_traffic"]["class_source"]) == (
+        "benign",
+        "stated",
+    )
+    assert (
+        votes["network_traffic"]["matched_keywords"] == []
+    )  # the hedged text mentions beaconing; it did not decide
+    assert (votes["access_log"]["vote_class"], votes["access_log"]["class_source"]) == (
+        "unclassified",
+        "stated",
+    )
+    assert (votes["endpoint_behavior"]["vote_class"], votes["endpoint_behavior"]["class_source"]) == (
+        "brute_force",
+        "keywords",
+    )
+    assert votes["endpoint_behavior"]["matched_keywords"] == ["brute force", "patator"]
+
+
+def test_the_fleet_last_vote_is_the_stated_class_when_there_is_one(db_session):
+    clear_crs_keys()
+    inv = add_investigation(db_session, status="verdict_reached", verdict_class="benign", confidence=0.5)
+    row = add_raw(db_session, raw_fields={"Destination Port": 22})
+    add_transcript(
+        db_session,
+        inv.investigation_id,
+        round_no=3,
+        agent_id="network_traffic",
+        theory="Traffic spike suggests a DDoS flood.",  # the words say ddos
+        cited=[cite(row, "Destination Port", "22")],
+        vote_class="benign",  # the agent says benign
+    )
+    db_session.commit()
+
+    fleet = {
+        a["agent_id"]: a for a in client.get("/agents/fleet", headers=bearer_for("forensic_analyst")).json()
+    }
+
+    assert fleet["network_traffic"]["last_vote"] == "benign"
 
 
 def test_unknown_investigation_detail_is_404(db_session):
@@ -285,11 +366,9 @@ def test_fleet_provider_chain_and_model_come_from_source(db_session):
         a["agent_id"]: a for a in client.get("/agents/fleet", headers=bearer_for("forensic_analyst")).json()
     }
 
-    assert fleet["network_traffic"]["provider_chain"] == ["groq", "gemini"]
-    assert fleet["access_log"]["provider_chain"] == ["groq", "gemini"]
-    assert fleet["endpoint_behavior"]["provider_chain"] == ["gemini", "groq"]
-    assert fleet["network_traffic"]["model"] == llm_clients.GROQ_MODEL
-    assert fleet["endpoint_behavior"]["model"] == llm_clients.GEMINI_MODEL
+    for agent_id in ("network_traffic", "access_log", "endpoint_behavior"):
+        assert fleet[agent_id]["provider_chain"] == ["openai"], agent_id
+        assert fleet[agent_id]["model"] == llm_clients.model_name(), agent_id
 
 
 def test_fleet_temperature_is_read_from_the_client_source(db_session):
@@ -298,7 +377,7 @@ def test_fleet_temperature_is_read_from_the_client_source(db_session):
 
     temperature = fleet[0]["temperature"]
     assert temperature["value"] == 0.2
-    assert temperature["n"] == 2
+    assert temperature["n"] == 1  # one declaration site: the OpenAI client
     assert temperature["reason"] is None
 
 

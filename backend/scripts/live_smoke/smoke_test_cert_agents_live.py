@@ -1,7 +1,7 @@
 """Real-API proof for the two CERT-branch agents, same purpose as
 smoke_test_agent_live.py: manual, deliberately outside pytest.
 
-Run: python -m backend.scripts.smoke_test_cert_agents_live
+Run: python -m backend.scripts.live_smoke.smoke_test_cert_agents_live
 """
 
 from sqlalchemy import select

@@ -14,8 +14,8 @@ def test_new_fields_have_their_documented_defaults(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     settings = Settings(_env_file=None)  # defaults only, independent of the developer's .env
     assert settings.test_database_url == ""
-    assert settings.debate_daily_limit_user == 10
-    assert settings.debate_daily_limit_global == 20
+    assert settings.debate_daily_limit_user == 30
+    assert settings.debate_daily_limit_global == 120
     assert settings.bootstrap_lead_username == ""
     assert settings.bootstrap_lead_password == ""
 

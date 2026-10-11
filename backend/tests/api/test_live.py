@@ -5,12 +5,13 @@ fake (no LLM)."""
 import json
 import time
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from backend.api.debate_queue import build_run_spec
+from backend.api.debate_queue import build_run_spec, worker
 from backend.api.live_runner import LIVE_ACTOR, runner
 from backend.api.main import app
 from backend.api.rate_limit import DEBATE_SLOT_KEY, DebateSlot, get_redis, record_daily_run
@@ -40,6 +41,9 @@ def _live_environment(monkeypatch):
         monkeypatch.setattr(settings, "live_feed_attack_share", 1.0)
         monkeypatch.setattr(settings, "live_min_gap_seconds", 0)
         monkeypatch.setattr(settings, "live_daily_cap", 1)
+        # The live feed asks OpenAI only (after this many rows); these tests never reach a real one.
+        monkeypatch.setattr(settings, "openai_api_key", "test-key-never-sent")
+        monkeypatch.setattr(settings, "live_llm_after_rows", 50)
         yield
         try:
             runner.stop("test")
@@ -61,7 +65,9 @@ def _seed_dataset(db_session) -> None:
 
 
 def _fake_debate(calls: list):
-    def fake(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
+    def fake(
+        primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None, **profile
+    ):
         calls.append(
             {
                 "investigation_id": str(investigation_id),
@@ -69,6 +75,7 @@ def _fake_debate(calls: list):
                 "rows": rows,
                 "max_rows": max_rows_per_agent,
                 "scenario_rows": scenario_rows,
+                "profile": profile,
             }
         )
         return {
@@ -218,9 +225,10 @@ def test_the_daily_cap_stops_a_second_investigation_and_says_why(db_session, mon
 
     client.post("/live/start", json={"events_per_second": 50}, headers=lead)
     wait_until(
-        lambda: _status(lead)["blocked"] is not None and _status(lead)["triggered"]["value"] == 1,
+        lambda: "daily limit" in ((_status(lead)["blocked"] or {}).get("reason") or "")
+        and _status(lead)["triggered"]["value"] == 1,
         timeout=40,
-        what="the second flag to be refused",
+        what="the second flag to be refused because of the cap",
     )
     status = _status(lead)
 
@@ -315,7 +323,9 @@ def test_every_guard_gives_its_own_reason(db_session, monkeypatch):
     monkeypatch.setattr("backend.api.debate_queue.run_debate", _fake_debate([]))
     monkeypatch.setattr(settings, "live_daily_cap", 3)
     monkeypatch.setattr(settings, "live_min_gap_seconds", 60)
+    monkeypatch.setattr(settings, "live_max_queued", 1)
     reason = runner._blocked_reason
+    live_state.incr("consumed", 100)  # past the OpenAI activation threshold (50 rows in these tests)
     assert reason() is None  # nothing in the way
 
     db_session.execute(text("UPDATE runtime_settings SET intake_paused = true WHERE id = 1"))
@@ -332,19 +342,21 @@ def test_every_guard_gives_its_own_reason(db_session, monkeypatch):
     db_session.execute(text("UPDATE agent_quarantine SET active = false"))
     db_session.commit()
 
-    live_state.set_trigger(
-        {"investigation_id": "x", "group": "logon", "reason": "r", "at": "t", "at_epoch": time.time() - 20}
+    live_state.set_group_trigger("logon", time.time() - 20)
+    held = reason("logon")
+    assert held.startswith("cooling down: ") and held.endswith(
+        " s until the next automatic investigation from the logon window"
     )
-    assert reason().startswith("cooling down: ") and reason().endswith(
-        " s until the next automatic investigation"
-    )
+    assert reason("file") is None  # the cooldown is per source window: another one is not held back by it
+    assert reason() is None  # and a check without a window has none to apply
     live_state.reset()
+    live_state.incr("consumed", 100)
 
     slot = DebateSlot()  # keeps the worker from taking the queued investigation while it is checked
     assert slot.acquire()
     try:
         _queue_one_automatic_investigation(db_session)
-        assert reason() == "an automatic investigation is already waiting in the queue"
+        assert reason() == "an automatic investigation is already waiting for a free debate slot"
         db_session.execute(text("UPDATE investigations SET status = 'error'"))
         db_session.commit()
         assert reason().startswith(
@@ -366,6 +378,58 @@ def test_every_guard_gives_its_own_reason(db_session, monkeypatch):
     for _ in range(settings.debate_daily_limit_global):
         record_daily_run("debate_global", "all")
     assert reason() == "the daily debate limit across all analysts is reached"
+
+
+def test_each_source_window_starts_its_own_investigation_and_has_its_own_cooldown(db_session, monkeypatch):
+    from backend.pipeline.live_detector import FILE, LOGON, WindowScore
+    from backend.pipeline.live_monitor import Flag
+
+    calls: list = []
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _fake_debate(calls))
+    monkeypatch.setattr(settings, "live_daily_cap", 10)
+    monkeypatch.setattr(settings, "live_min_gap_seconds", 60)
+    monkeypatch.setattr(settings, "live_max_queued", 5)
+    live_state.incr("consumed", 100)  # past the OpenAI activation threshold
+    logon = logon_rows(20, off_hours=True)
+    files = [
+        RawLog(
+            row_id=uuid.uuid4(),
+            timestamp=T0 + timedelta(minutes=i),
+            source="cert_r4.2_file",
+            event_type="file_access",
+            user_id=f"U{i % 3:03d}",
+            host_id="PC-1",
+            raw_fields={"file_access_count": 40},
+            ground_truth_label="insider_scenario_2",
+        )
+        for i in range(20)
+    ]
+    db_session.add_all(logon + files)
+    db_session.commit()
+
+    def flag(group, rows, feature):
+        score = WindowScore(group, 20, 1.0, 0.2, 5.0, 1.0, True, f"{group} window: test")
+        return Flag(group, score, [row.row_id for row in rows], [feature] * len(rows))
+
+    slot = DebateSlot()  # keeps the worker from starting them, so both stay queued while they are checked
+    assert slot.acquire()
+    try:
+        assert runner.on_flag(flag(LOGON, logon, 1.0)) is True
+        assert runner.on_flag(flag(FILE, files, 40.0)) is True  # another window: not held back by the first
+        assert runner.on_flag(flag(LOGON, logon, 1.0)) is False  # the same window: still cooling down
+        reason = live_state.blocked()["reason"]
+        assert "cooling down" in reason and "from the logon window" in reason
+        assert live_state.counters()["triggered"] == 2
+    finally:
+        slot.release()
+    worker.notify()
+    wait_until_idle()
+
+    with SessionLocal() as session:
+        queued = session.execute(select(Investigation).where(Investigation.trigger_type == "continuous"))
+        agents = sorted(investigation.primary_agent for investigation in queued.scalars())
+    assert agents == ["access_log", "endpoint_behavior"]
+    assert len(calls) == 2
 
 
 def test_a_window_whose_rows_are_gone_starts_nothing(db_session):

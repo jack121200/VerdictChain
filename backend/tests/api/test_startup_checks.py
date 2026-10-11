@@ -22,8 +22,7 @@ def _cfg(**overrides) -> Settings:
     base = {
         "environment": "production",
         "jwt_secret_key": GOOD_SECRET,
-        "groq_api_key": "gsk_live_key_value",
-        "gemini_api_key": "",
+        "openai_api_key": "sk-live-key-value",
         "redis_url": "redis://127.0.0.1:6379/0",
     }
     return Settings(_env_file=None, **{**base, **overrides})
@@ -39,7 +38,7 @@ def _problems(cfg: Settings, *, postgres=_ok, redis_probe=lambda _cfg: None) -> 
 
 def test_a_healthy_configuration_has_no_problems():
     assert _problems(_cfg()) == []
-    assert _problems(_cfg(groq_api_key="", gemini_api_key="AIza_live_key_value")) == []
+    assert _problems(_cfg(openai_api_key="sk-another-live-key")) == []
 
 
 @pytest.mark.parametrize(
@@ -72,27 +71,24 @@ def test_an_unreachable_redis_is_a_problem_named_by_exception_class():
     assert problems == ["Redis did not answer PING (ConnectionError)"]
 
 
-@pytest.mark.parametrize(
-    "keys",
-    [
-        {"groq_api_key": "", "gemini_api_key": ""},
-        {"groq_api_key": "your_groq_api_key_here", "gemini_api_key": "your_gemini_api_key_here"},
-        {"groq_api_key": "  ", "gemini_api_key": ""},
-    ],
-)
-def test_no_usable_llm_key_is_a_problem(keys):
-    problems = _problems(_cfg(**keys))
+@pytest.mark.parametrize("key", ["", "  ", "your_openai_api_key_here", "<paste the key>"])
+def test_no_usable_llm_key_is_a_problem(key):
+    problems = _problems(_cfg(openai_api_key=key))
 
-    assert len(problems) == 1 and "GROQ_API_KEY" in problems[0] and "GEMINI_API_KEY" in problems[0]
+    assert len(problems) == 1 and "OPENAI_API_KEY" in problems[0]
 
 
-def test_one_provider_key_is_enough():
-    assert _problems(_cfg(groq_api_key="your_groq_api_key_here", gemini_api_key="AIza_live_key_value")) == []
+def test_a_stale_groq_or_gemini_setting_is_not_a_provider():
+    """Groq and Gemini are gone: leftover lines in .env are ignored, and they do not stand in for the key."""
+    assert (
+        _problems(_cfg(openai_api_key="", groq_api_key="gsk_left_over", gemini_api_key="AIza_left_over"))
+        != []
+    )
 
 
 def test_every_problem_is_listed_together_in_a_fixed_order():
     problems = _problems(
-        _cfg(jwt_secret_key="", groq_api_key=""),
+        _cfg(jwt_secret_key="", openai_api_key=""),
         postgres=lambda: "OperationalError",
         redis_probe=lambda _cfg: "ConnectionError",
     )
@@ -106,12 +102,12 @@ def test_the_real_probes_report_only_the_exception_class_never_the_url():
     error = startup_checks._probe_redis(unreachable)
 
     assert error is not None and error.isidentifier() and "pw-sentinel-5521" not in error
-    assert startup_checks._probe_redis(_cfg()) is None
+    assert startup_checks._probe_redis(_cfg(redis_url=settings.redis_url)) is None  # the test Redis answers
     assert startup_checks._probe_postgres() is None  # the test database answers
 
 
 def test_no_problem_text_contains_a_secret_value():
-    cfg = _cfg(jwt_secret_key=SENTINEL[:20], groq_api_key="your_" + SENTINEL, gemini_api_key="")
+    cfg = _cfg(jwt_secret_key=SENTINEL[:20], openai_api_key="your_" + SENTINEL)
     problems = _problems(cfg, postgres=lambda: "OperationalError")
 
     assert problems

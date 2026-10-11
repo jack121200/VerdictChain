@@ -1,7 +1,7 @@
 """Where an investigation's answers came from: the real providers, the offline stub, or both (checklist CT10).
 
 The offline stub (the test harness in backend/scripts, also used by seed_demo) labels every answer it serves
-`stub-groq` or `stub-gemini`, and the debate engine stores that label per transcript row
+`stub-openai`, and the debate engine stores that label per transcript row
 (debate_transcripts.provider). An investigation is `stub` when every recorded provider is such a label,
 `mixed` when some are, and `model` otherwise (including one with no transcript yet: nothing marks it as
 stub). Evaluation accuracy is counted over `model` runs by default, so accuracy measured on the stub never

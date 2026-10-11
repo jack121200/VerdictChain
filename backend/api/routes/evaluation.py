@@ -35,7 +35,7 @@ SOURCE = "/evaluation"
 VERDICT_STATUSES = frozenset({"verdict_reached", "contained", "ambiguous"})
 SOURCE_MEANING = {
     "model": "the real model providers (or no offline-stub label recorded)",
-    "stub": "the offline stub only (labels stub-groq / stub-gemini)",
+    "stub": "the offline stub only (label stub-openai)",
     "mixed": "the offline stub and the real providers",
 }
 MAPPING_STATUS = (
@@ -149,8 +149,7 @@ def get_evaluation(
         )
     elsewhere = sum(1 for _, origin in scored_rows if source != "all" and origin != source)
     empty_reason = (
-        f"no {source} runs scored yet; {elsewhere} scored run(s) from other sources are not counted here "
-        "(see by_source)"
+        f"no {source} runs scored yet; {elsewhere} scored run(s) from other sources are not counted here"
         if ev.scored == 0 and elsewhere
         else None
     )

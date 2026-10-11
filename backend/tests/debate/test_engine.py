@@ -350,6 +350,157 @@ def test_run_debate_marks_investigation_error_and_raises_on_provider_failure(db_
     assert len(error_events) == 1
     assert error_events[0]["investigation_id"] == exc_info.value.investigation_id
 
+    # The reason is not only a live event: it is stored on the investigation and written to the audit chain,
+    # so the case still explains itself when it is opened later.
+    assert investigation.error_reason == "all providers exhausted"
+    failed = db_session.execute(
+        select(AuditTrail).where(AuditTrail.action == "investigation_failed")
+    ).scalar_one()
+    assert failed.investigation_id == investigation.investigation_id and failed.actor == "debate_engine"
+    assert failed.detail == {"reason": "all providers exhausted"}
+    assert verify_chain(db_session.execute(select(AuditTrail).order_by(AuditTrail.seq)).scalars().all())
+
+
+def test_fail_investigation_leaves_a_finished_case_alone_when_asked_to(db_session):
+    investigation_id = _start()
+    done = engine.fail_investigation(investigation_id, "x", only_if_unfinished=True)
+    assert done is True  # it was still running
+
+    assert engine.fail_investigation(investigation_id, "again", only_if_unfinished=True) is False
+    inv = db_session.get(Investigation, investigation_id)
+    db_session.refresh(inv)
+    assert (inv.status, inv.error_reason) == ("error", "x")  # the first reason stands
+    assert db_session.query(AuditTrail).filter(AuditTrail.action == "investigation_failed").count() == 1
+
+    inv.status = "verdict_reached"
+    db_session.commit()
+    assert engine.fail_investigation(investigation_id, "late", only_if_unfinished=True) is False
+    db_session.refresh(inv)
+    assert inv.status == "verdict_reached" and inv.error_reason == "x"
+
+
+def test_a_debate_context_withholds_the_row_ids_other_agents_quoted():
+    row = uuid.uuid4()
+    other = AgentResponse(
+        agent_id="endpoint_behavior",
+        theory=f"All logons look normal ({row}); AIP0982 logged on twice ({str(row).upper()}).",
+        confidence=0.4,
+        cited_evidence=[{"row_id": str(row), "field": "off_hours", "value": "False"}],
+        round=1,
+    )
+
+    context = engine._debate_context_for("network_traffic", {"endpoint_behavior": other})
+
+    assert str(row) not in context and str(row).upper() not in context
+    assert context.count(engine.ROW_ID_PLACEHOLDER) == 2
+    assert "AIP0982" in context and "confidence=0.4" in context  # the argument itself stays readable
+    assert engine._debate_context_for("endpoint_behavior", {"endpoint_behavior": other}) == (
+        "(no other agent responses yet)"  # an agent never reads its own entry
+    )
+
+
+def test_a_debate_context_tells_the_class_a_peer_stated_and_says_nothing_when_it_stated_none():
+    def peer(**extra) -> AgentResponse:
+        return AgentResponse(
+            agent_id="access_log",
+            theory="Nine files in one day.",
+            confidence=0.5,
+            cited_evidence=[{"row_id": "r", "field": "f", "value": "v"}],
+            round=1,
+            **extra,
+        )
+
+    stated = engine._debate_context_for("network_traffic", {"access_log": peer(vote_class="benign")})
+    silent = engine._debate_context_for("network_traffic", {"access_log": peer()})
+
+    assert stated.endswith("confidence=0.5 vote_class=benign")
+    assert "vote_class" not in silent  # an answer that stated no class reads exactly as before
+
+
+def _stating_investigator(agent_id: str, stance: str | None, vote_class: str | None, theory: str):
+    def _fake(rows, round_no, peripheral_digest=None, debate_context=None):
+        response = AgentResponse(
+            agent_id=agent_id,
+            theory=theory,
+            confidence=0.7,
+            cited_evidence=[
+                {"row_id": str(rows[0].row_id), "field": "f", "value": str(rows[0].raw_fields["f"])}
+            ],
+            round=round_no,
+            stance=stance if round_no > 1 else None,
+            vote_class=vote_class,
+        )
+        return response, "fake_provider"
+
+    return _fake
+
+
+def test_what_an_agent_states_is_stored_with_its_transcript_and_sent_in_the_round_event(db_session):
+    network_rows = _seed_all_domains(db_session)
+    investigators = _three_agents()
+    # No stance word in the text: the stored stance can only come from the field the agent filled in.
+    investigators["network_traffic"] = _stating_investigator(
+        "network_traffic", "REVISE", "benign", "I now think the slice shows ordinary traffic."
+    )
+    events = []
+
+    result = _debate(network_rows, investigators, on_update=events.append)
+
+    rows = {
+        (t.round, t.agent_id): t
+        for t in db_session.execute(
+            select(DebateTranscript).where(
+                DebateTranscript.investigation_id == uuid.UUID(str(result["investigation_id"]))
+            )
+        ).scalars()
+    }
+    assert (rows[(1, "network_traffic")].stance, rows[(1, "network_traffic")].vote_class) == (None, "benign")
+    assert (rows[(2, "network_traffic")].stance, rows[(3, "network_traffic")].vote_class) == (
+        "REVISE",
+        "benign",
+    )
+    round2 = {a["agent_id"]: a for a in [e for e in events if e["type"] == "round_completed"][1]["agents"]}
+    assert round2["network_traffic"]["stance"] == "REVISE"
+    assert rows[(1, "access_log")].vote_class is None  # an agent that stated no class has none stored
+
+
+def test_the_stance_is_stored_from_the_text_when_the_agent_states_none(db_session):
+    network_rows = _seed_all_domains(db_session)
+
+    result = _debate(network_rows, _three_agents())  # CHALLENGE / SUPPORT are in the text only
+
+    stances = {
+        (t.round, t.agent_id): t.stance
+        for t in db_session.execute(
+            select(DebateTranscript).where(
+                DebateTranscript.investigation_id == uuid.UUID(str(result["investigation_id"]))
+            )
+        ).scalars()
+    }
+    assert stances[(2, "network_traffic")] == "CHALLENGE" and stances[(2, "access_log")] == "SUPPORT"
+    assert stances[(2, "endpoint_behavior")] is None and stances[(1, "network_traffic")] is None
+
+
+def test_a_class_the_agents_state_decides_the_verdict_the_engine_stores(db_session):
+    network_rows = _seed_all_domains(db_session)
+    investigators = {
+        agent_id: _stating_investigator(
+            agent_id, "REVISE", "port_scan", "I will not say more than the class."
+        )
+        for agent_id in DOMAIN_AGENTS
+    }
+    investigators["endpoint_behavior"] = _stating_investigator(
+        "endpoint_behavior", "SUPPORT", "benign", "Ordinary logons."
+    )
+
+    result = _debate(network_rows, investigators)
+
+    inv = db_session.get(Investigation, uuid.UUID(str(result["investigation_id"])))
+    db_session.refresh(inv)
+    assert (
+        inv.verdict_class == "port_scan"
+    )  # no keyword of the class is in any theory: the stated class did it
+
 
 def test_run_debate_requires_an_existing_investigation(db_session):
     network_rows = _seed_all_domains(db_session)
@@ -673,8 +824,8 @@ def test_settings_none_loads_runtime_settings_once(db_session, _fake_runtime_set
 def test_verdict_at_threshold_is_contained_and_status_becomes_contained(db_session, monkeypatch):
     network_rows = _seed_all_domains(db_session)
     monkeypatch.setattr(
-        "backend.self_healing.actions._generate_reason",
-        lambda *a, **kw: "Mocked reason text.",
+        "backend.self_healing.actions._generate_reasons",
+        lambda attack_class, confidence, crs_list, planned: ["Mocked reason text."] * len(planned),
     )
     investigators = {
         agent: _make_fake_investigator(
@@ -722,7 +873,10 @@ def test_a_degraded_agent_cannot_trigger_autonomous_containment(
     """The gate bites between isolation (0.30) and a fresh agent's credibility (0.50): the agent still debates
     and its vote counts, but the verdict is not acted on automatically."""
     network_rows = _seed_all_domains(db_session)
-    monkeypatch.setattr("backend.self_healing.actions._generate_reason", lambda *a, **kw: "Mocked reason.")
+    monkeypatch.setattr(
+        "backend.self_healing.actions._generate_reasons",
+        lambda attack_class, confidence, crs_list, planned: ["Mocked reason."] * len(planned),
+    )
     _client().set(_crs_key("network_traffic"), start_crs)
     investigators = {
         agent: _make_fake_investigator(
@@ -747,8 +901,8 @@ def test_a_degraded_agent_cannot_trigger_autonomous_containment(
 def test_verdict_below_a_higher_threshold_is_not_contained(db_session, monkeypatch):
     network_rows = _seed_all_domains(db_session)
     monkeypatch.setattr(
-        "backend.self_healing.actions._generate_reason",
-        lambda *a, **kw: "Mocked reason text.",
+        "backend.self_healing.actions._generate_reasons",
+        lambda attack_class, confidence, crs_list, planned: ["Mocked reason text."] * len(planned),
     )
     strict = SimpleNamespace(eta=0.15, isolation_threshold=0.30, verdict_confidence_threshold=0.95)
 

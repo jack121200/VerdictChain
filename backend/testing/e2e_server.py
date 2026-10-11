@@ -1,13 +1,13 @@
 """Test-only E2E harness: a deterministic LLM stub plus the real API app.
 
-Test tooling. The application never imports this module. It replaces GroqClient.complete and
-GeminiClient.complete at class level, so the real investigator agents, debate engine and Watchdog run
-unchanged. The stub is offline (no sockets, no provider calls) and scenario-blind: it reads only the
-agent's system prompt and data slice, never a label or a noise setting.
+Test tooling. The application never imports this module. It replaces OpenAIClient.complete and
+OpenAIClient.complete_text at class level, so the real investigator agents, the debate engine and the
+Watchdog run unchanged. The stub is offline (no sockets, no provider calls) and scenario-blind: it reads
+only the agent's system prompt and data slice, never a label or a noise setting.
 
-  python -m backend.scripts.e2e_server --port 8000   serve backend.api.main:app with the stub
-  python -m backend.scripts.e2e_server --selftest    validate the stub's output against AgentResponse
-  python -m backend.scripts.e2e_server --fabricate access_log
+  python -m backend.testing.e2e_server --port 8000   serve backend.api.main:app with the stub
+  python -m backend.testing.e2e_server --selftest    validate the stub's output against AgentResponse
+  python -m backend.testing.e2e_server --fabricate access_log
                                                      serve with a hallucinating agent (see below)
 
 Fabricate mode makes the named agents cite real rows with values that do not match them, like a model that
@@ -25,15 +25,16 @@ import uuid
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 
+import redis
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from backend.agents import access_log, endpoint_behavior, network_traffic
-from backend.agents.llm_clients import GeminiClient, GroqClient
+from backend.agents import access_log, endpoint_behavior, network_traffic, openai_usage
+from backend.agents.llm_clients import OpenAIClient, ProviderRateLimited
 from backend.db.models import RawLog
 
 # Stubbed complete() calls per provider. Served by GET /__e2e/stub-calls.
-CALLS: dict[str, int] = {"groq": 0, "gemini": 0}
+CALLS: dict[str, int] = {"openai": 0}
 _calls_lock = threading.Lock()
 
 AGENTS = {
@@ -49,11 +50,22 @@ _CONFIDENCE = {"network_traffic": 0.88, "access_log": 0.86, "endpoint_behavior":
 _FABRICATED_VALUE = "stub-fabricated-value"
 _fabricate: frozenset[str] = frozenset()
 
+# While on, the investigators' model calls fail the way an account with no quota left fails (a daily 429), so
+# the failure path of a debate can be driven end to end. The wording the analyst reads is the real code's.
+_quota_exhausted = False
+
+# Each agent states its own class, as the prompts ask (network_traffic -> ddos, access_log ->
+# insider_file_exfiltration, endpoint_behavior -> insider_logon_anomaly). With one vote each, the verdict's
+# primary-agent tie-break then resolves to the class of whichever agent actually held the injected
+# scenario's rows. The round-3 wording also reads as the same class to the keyword list in
+# backend/debate/verdict.py, so the stated and the keyword reading agree (a test keeps it so).
+_VOTE_CLASS = {
+    "network_traffic": "ddos",
+    "access_log": "insider_file_exfiltration",
+    "endpoint_behavior": "insider_logon_anomaly",
+}
+
 # Canned theories per domain and round; rounds 2 and 3 open with the stance the prompt requires.
-# Round-3 wording is chosen so classify_theory() (backend/debate/verdict.py) reads each agent as its own
-# domain class (network_traffic -> ddos, access_log -> insider_file_exfiltration, endpoint_behavior ->
-# insider_logon_anomaly). With one vote each, the verdict's primary-agent tie-break then resolves to the
-# class of whichever agent actually held the injected scenario's rows.
 _THEORIES = {
     "network_traffic": {
         1: (
@@ -167,11 +179,15 @@ def fake_reply(system_prompt: str, user_prompt: str) -> str:
     cited = _cited_evidence(_data_slice(user_prompt))
     if agent_id in _fabricate:
         cited = [{**entry, "value": _FABRICATED_VALUE} for entry in cited]
+    theory = _THEORIES[agent_id][min(round_no, 3)]
+    stance = _STANCE.match(theory)
     return json.dumps(
         {
             "agent_id": agent_id,
-            "theory": _THEORIES[agent_id][min(round_no, 3)],
+            "theory": theory,
             "confidence": _CONFIDENCE[agent_id],
+            "stance": stance.group(1) if stance else None,
+            "vote_class": _VOTE_CLASS[agent_id],
             "cited_evidence": cited,
             "round": round_no,
         }
@@ -187,32 +203,60 @@ def _stub_complete(provider: str) -> Callable[..., str]:
     def complete(self: object, system_prompt: str, user_prompt: str) -> str:
         with _calls_lock:
             CALLS[provider] += 1
+        if _quota_exhausted:
+            raise ProviderRateLimited(provider, 429, None, daily=True)
         return fake_reply(system_prompt, user_prompt)
 
     return complete
 
 
-def install() -> None:
-    """Replace complete() on both provider clients at class level. Idempotent.
+def _stub_complete_text(provider: str) -> Callable[..., str]:
+    def complete_text(
+        self: object, system_prompt: str, user_prompt: str, max_output_tokens: int = 120
+    ) -> str:
+        with _calls_lock:
+            CALLS[provider] += 1
+        # The reason prompt lists the actions as numbered lines: answer one numbered sentence for each.
+        actions = len(re.findall(r"^\d+\. ", user_prompt, re.MULTILINE))
+        if actions == 0:
+            return _FALLBACK_TEXT
+        return "\n".join(f"{number}. {_FALLBACK_TEXT}" for number in range(1, actions + 1))
 
-    While installed, each client also reports itself as "stub-groq" / "stub-gemini". The provider name is
-    what the debate engine records on every transcript row and shows in the console, so data produced by
-    this harness is honestly labelled as stub output and can never pass for a real model call.
+    return complete_text
+
+
+_text_original: Callable[..., str] | None = None
+
+
+def install() -> None:
+    """Replace complete() and complete_text() on the OpenAI client at class level. Idempotent.
+
+    While installed, the client reports itself as "stub-openai". The provider name is what the debate engine
+    records on every transcript row and shows in the console, so data produced by this harness is honestly
+    labelled as stub output and can never pass for a real model call. complete_text() is the reason sentence.
     """
-    for cls in (GroqClient, GeminiClient):
-        if cls.__name__ not in _originals:
-            real_name = cls.name
-            _originals[cls.__name__] = (cls, cls.__dict__["complete"], real_name)
-            cls.complete = _stub_complete(real_name)
-            cls.name = f"stub-{real_name}"
+    global _text_original
+    cls = OpenAIClient
+    if cls.__name__ not in _originals:
+        real_name = cls.name
+        _originals[cls.__name__] = (cls, cls.__dict__["complete"], real_name)
+        cls.complete = _stub_complete(real_name)
+        cls.name = f"stub-{real_name}"
+        _text_original = cls.__dict__["complete_text"]
+        cls.complete_text = _stub_complete_text(real_name)
 
 
 def uninstall() -> None:
+    global _text_original
     while _originals:
         _, (cls, original, real_name) = _originals.popitem()
         cls.complete = original
         cls.name = real_name
+        if _text_original is not None:
+            cls.complete_text = _text_original
+            _text_original = None
     set_fabricate(())
+    set_quota_exhausted(False)
 
 
 def set_fabricate(agent_ids: Iterable[str]) -> list[str]:
@@ -226,6 +270,13 @@ def set_fabricate(agent_ids: Iterable[str]) -> list[str]:
     return sorted(chosen)
 
 
+def set_quota_exhausted(on: bool) -> bool:
+    """Makes the investigators' model calls fail with a daily quota 429 from now on (False turns it off)."""
+    global _quota_exhausted
+    _quota_exhausted = on
+    return _quota_exhausted
+
+
 def stub_calls() -> dict[str, int]:
     with _calls_lock:
         return dict(CALLS)
@@ -233,6 +284,18 @@ def stub_calls() -> dict[str, int]:
 
 class FabricateBody(BaseModel):
     agents: list[str]
+
+
+class QuotaBody(BaseModel):
+    exhausted: bool
+
+
+def get_quota() -> dict[str, bool]:
+    return {"exhausted": _quota_exhausted}
+
+
+def post_quota(body: QuotaBody) -> dict[str, bool]:
+    return {"exhausted": set_quota_exhausted(body.exhausted)}
 
 
 def get_fabricate() -> dict[str, list[str]]:
@@ -250,6 +313,8 @@ def add_stub_route(app: FastAPI) -> None:
     app.add_api_route("/__e2e/stub-calls", stub_calls, methods=["GET"])
     app.add_api_route("/__e2e/fabricate", get_fabricate, methods=["GET"])
     app.add_api_route("/__e2e/fabricate", post_fabricate, methods=["POST"])
+    app.add_api_route("/__e2e/quota", get_quota, methods=["GET"])
+    app.add_api_route("/__e2e/quota", post_quota, methods=["POST"])
 
 
 def _row(source: str, event_type: str, user_id: str | None, host_id: str, raw_fields: dict) -> RawLog:
@@ -313,17 +378,29 @@ def selftest() -> None:
     print("OK")
 
 
+def forget_provider_limits() -> None:
+    """The stub never calls OpenAI, so what real runs recorded about the key's limits (a spent allowance, a
+    wait OpenAI asked for) must not stop it: a debate is refused up front while that reading says the key
+    has no room. Clears the reading and the usage list, as a fresh start. Redis being down is no error."""
+    try:
+        openai_usage.reset()
+    except redis.RedisError:
+        pass
+
+
 def serve(host: str, port: int, fabricate: Iterable[str] = ()) -> None:
     import uvicorn
 
     from backend.api.main import app
+    from backend.config import settings as app_settings
 
     install()
+    forget_provider_limits()
     add_stub_route(app)
-    print(
-        "e2e_server: LLM stub installed for GroqClient and GeminiClient; counts at /__e2e/stub-calls",
-        flush=True,
-    )
+    if not app_settings.openai_api_key:
+        # The app refuses to run a debate without a key; the stub never sends it anywhere.
+        app_settings.openai_api_key = "stub-openai-key-never-sent"
+    print("e2e_server: LLM stub installed for OpenAIClient; counts at /__e2e/stub-calls", flush=True)
     chosen = set_fabricate(fabricate)
     if chosen:
         print(

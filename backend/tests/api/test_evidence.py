@@ -4,6 +4,7 @@ and signature staleness.
 
 import hashlib
 import json
+import re
 import uuid
 
 from fastapi.testclient import TestClient
@@ -48,7 +49,7 @@ def _verdict_with_evidence(db_session, status="verdict_reached"):
         agent_id="endpoint_behavior",
         theory="CHALLENGE: off-hours logon anomaly",
         cited=[cite(row, "off_hours", "1")],
-        provider="gemini",
+        provider="openai",
     )
     add_credibility(
         db_session,
@@ -99,7 +100,7 @@ def test_bundle_has_the_expected_sections_and_no_labels(db_session):
     bundle = body["bundle"]
     assert set(bundle) == {"investigation_id", "verdict", "transcript", "credibility", "actions", "citations"}
     assert bundle["verdict"]["verdict_class"] == "insider_logon_anomaly"
-    assert bundle["transcript"][0]["provider"] == "gemini"
+    assert bundle["transcript"][0]["provider"] == "openai"
     assert bundle["citations"]["verified"] == 1
     assert bundle["actions"][0]["is_simulated"] is True
     text = str(body)
@@ -279,5 +280,7 @@ def test_bundle_hash_writes_integral_floats_as_integers(db_session):
     compact = json.dumps(body["bundle"], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert body["bundle"]["verdict"]["verdict_confidence"] == 1
     assert '"verdict_confidence":1}' in compact
-    assert "1.0" not in compact
+    # No JSON number is written as 1.0. The pattern needs a number token, because a plain "1.0" also occurs
+    # inside a timestamp string such as "...:11.078465" (the test used to fail now and then because of that).
+    assert re.search(r"[:\[,]-?\d+\.0(?=[,}\]])", compact) is None
     assert body["bundle_sha256"] == hashlib.sha256(compact.encode("utf-8")).hexdigest()

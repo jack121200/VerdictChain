@@ -2,12 +2,15 @@
 "After each round, for every cited evidence row: look it up directly in the raw
 logs table." No LLM call for this - it's a Postgres lookup, full stop.
 
-Matching is exact: the cited value must equal the stored value as a string. There is no
-numeric tolerance (plan section 9 defers that decision and flags it).
+A citation verifies when the cited text equals the stored value the way the investigators were shown it
+(their prompts carry the rows as JSON, so a stored True is the text "true", a stored 0.3 is "0.3"), or
+equals it as Python prints it ("True"), or is the same number written another way ("0.30" for 0.3). Nothing
+else is forgiven: a different value, a different field or a field that does not exist is a discrepancy.
 """
 
 import hashlib
 import json
+import math
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -32,7 +35,8 @@ _TOP_LEVEL_FIELDS = {"user_id", "host_id", "event_type", "source"}
 
 @dataclass(frozen=True)
 class CitationCheck:
-    """One cited entry checked against raw_logs. expected is the stored value as a string, or None."""
+    """One cited entry checked against raw_logs. expected is the stored value as the agents were shown it
+    (shown_value), or None when the row or the field does not exist."""
 
     row_id: str
     field: str
@@ -62,6 +66,28 @@ def row_fingerprint(row: RawLog) -> str:
     """SHA-256 of the canonical raw row: sorted keys, compact separators, no NaN."""
     payload = json.dumps(canonical_row(row), sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def shown_value(stored: Any) -> str:
+    """A stored value as the investigators read it: strings as they are, everything else as JSON text
+    (true, 80, 0.3), because the prompt carries the rows as JSON."""
+    return stored if isinstance(stored, str) else json.dumps(stored, default=str)
+
+
+def _same_number(cited: str, stored: Any) -> bool:
+    if isinstance(stored, bool) or not isinstance(stored, int | float):
+        return False
+    try:
+        number = float(cited.strip())
+    except ValueError:
+        return False
+    return math.isfinite(number) and math.isclose(number, float(stored), rel_tol=1e-9, abs_tol=1e-12)
+
+
+def value_matches(cited: str, stored: Any) -> bool:
+    """Whether a cited value is the stored value (see the module docstring for the three accepted forms)."""
+    text = str(cited)
+    return text == shown_value(stored) or text == str(stored) or _same_number(text, stored)
 
 
 def _lookup(row: RawLog, field: str) -> tuple[bool, Any]:
@@ -134,17 +160,21 @@ def check_citations(session: Session, entries: Sequence[CitedEvidence]) -> list[
                     row_fingerprint=fingerprint,
                 )
             )
-        elif str(entry.value) == str(actual):
+        elif value_matches(entry.value, actual):
             checks.append(
                 CitationCheck(
-                    **base, expected=str(actual), status="VERIFIED", reason="ok", row_fingerprint=fingerprint
+                    **base,
+                    expected=shown_value(actual),
+                    status="VERIFIED",
+                    reason="ok",
+                    row_fingerprint=fingerprint,
                 )
             )
         else:
             checks.append(
                 CitationCheck(
                     **base,
-                    expected=str(actual),
+                    expected=shown_value(actual),
                     status="DISCREPANCY",
                     reason="value_mismatch",
                     row_fingerprint=fingerprint,

@@ -85,7 +85,7 @@ def _seed(db_session, theories: dict[str, str], *, status: str = "verdict_reache
                         theory=theory,
                         confidence=0.9,
                         cited_evidence=[{"row_id": str(row.row_id), "field": "host_id", "value": HOST}],
-                        provider="groq",
+                        provider="openai",
                     )
                 )
         session.commit()
@@ -279,19 +279,21 @@ def test_the_manual_path_never_calls_an_llm(db_session):
     def _no_http(*args, **kwargs):
         raise AssertionError("httpx called on the manual path")
 
-    failing_httpx = types.SimpleNamespace(post=_no_http, Response=httpx.Response)
+    failing_httpx = types.SimpleNamespace(post=_no_http, Response=httpx.Response, HTTPError=httpx.HTTPError)
     headers = auth_headers("secops_lead")
     with (
         patch.object(llm_clients, "httpx", failing_httpx),
         patch.object(
-            llm_clients.GeminiClient, "complete", side_effect=AssertionError("Gemini called")
-        ) as gemini,
-        patch.object(llm_clients.GroqClient, "complete", side_effect=AssertionError("Groq called")) as groq,
+            llm_clients.OpenAIClient, "complete", side_effect=AssertionError("OpenAI called")
+        ) as complete,
+        patch.object(
+            llm_clients.OpenAIClient, "complete_text", side_effect=AssertionError("OpenAI called")
+        ) as complete_text,
     ):
         assert _contain(investigation_id, headers).status_code == 200
         assert _release(investigation_id, headers).status_code == 200
-    gemini.assert_not_called()
-    groq.assert_not_called()
+    complete.assert_not_called()
+    complete_text.assert_not_called()
     reasons = [a.reason for a in _response_actions(investigation_id)]
     assert reasons and all(
         r.startswith("Manual containment by") or r.startswith("Containment released by") for r in reasons

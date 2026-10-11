@@ -47,6 +47,18 @@ class LatencyStatsOut(BaseModel):
     mean_seconds: Metric[float]
 
 
+class AutomationStatsOut(BaseModel):
+    """What ran without a click in the last 24 hours and how fast detection moved to containment."""
+
+    cases: Metric[int]  # investigations accepted in the window, whoever started them
+    auto_started: Metric[int]  # of those, started by the live monitor (trigger_type continuous)
+    auto_share: Metric[float]
+    # started by the monitor, ended contained, and no analyst emergency containment or release on them
+    hands_free_contained: Metric[int]
+    median_seconds_to_verdict: Metric[float]  # investigation_started to verdict_reached
+    median_seconds_verdict_to_action: Metric[float]  # verdict_reached to the first sandbox action
+
+
 class StatsOut(BaseModel):
     active: Metric[int]
     stale: Metric[int]
@@ -64,6 +76,7 @@ class StatsOut(BaseModel):
     feedback: FeedbackStatsOut
     brier: Metric[float]
     latency: LatencyStatsOut
+    automation: AutomationStatsOut
     generated_at: datetime
 
 

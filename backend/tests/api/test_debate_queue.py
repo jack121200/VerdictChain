@@ -1,10 +1,13 @@
-"""The debate queue (checklist SD2, SD4): a request that arrives while a debate runs waits as 'queued' and the
-single worker runs the accepted debates oldest first. The debate itself is a fake (no LLM)."""
+"""The debate queue (checklist SD2, SD4): a request that arrives while every debate slot is busy waits as
+'queued' and the workers run the accepted debates oldest first as slots free up. The suite pins one slot
+(conftest), so the tests below read as a single worker; the first of them raises it to show debates side
+by side. The debate itself is a fake (no LLM)."""
 
 import json
 import threading
 import time
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -21,6 +24,7 @@ from backend.debate.engine import start_investigation
 from backend.tests.fixtures.auth import auth_headers
 from backend.tests.fixtures.debate_queue import wait_until_idle
 from backend.tests.fixtures.read_seed import bearer_for
+from backend.tests.pipeline.live_support import wait_until
 
 client = TestClient(app)
 SIMULATE = "/investigations/simulate"
@@ -118,6 +122,48 @@ def test_debates_run_one_at_a_time_and_oldest_first(db_session, monkeypatch):
 
     assert order == [first["investigation_id"], second["investigation_id"], third["investigation_id"]]
     assert max(overlap) == 1  # never two at the same time
+
+
+def test_up_to_the_capacity_debates_run_side_by_side_and_the_rest_wait(db_session, monkeypatch):
+    _seed(db_session)
+    monkeypatch.setattr(settings, "debate_max_concurrent", 3)
+    monkeypatch.setattr(settings, "debate_queue_max_per_user", 10)
+    lock = threading.Lock()
+    active = [0]
+    peak = [0]
+    started: list[str] = []
+    release = threading.Event()
+
+    def fake(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+            started.append(str(investigation_id))
+        release.wait(timeout=10)
+        with lock:
+            active[0] -= 1
+        return _result(investigation_id)
+
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", fake)
+    headers = auth_headers("forensic_analyst")
+    ids = [_post(headers).json()["investigation_id"] for _ in range(5)]
+
+    try:
+        wait_until(lambda: len(started) == 3, timeout=10, what="three debates to run at once")
+        time.sleep(0.4)  # long enough for a fourth to start, if the capacity were not respected
+        assert len(started) == 3
+        assert Counter(_statuses()[i] for i in ids) == {"investigating": 3, "queued": 2}
+        phases = {
+            i: client.get(f"/investigations/{i}/progress", headers=headers).json()["phase"] for i in ids
+        }
+        assert Counter(phases[i] for i in started) == {"running": 3}
+        assert Counter(phases[i] for i in ids if i not in started) == {"queued": 2}
+    finally:
+        release.set()
+    wait_until_idle()
+
+    assert sorted(started) == sorted(ids)  # all five ran in the end
+    assert peak[0] == 3  # never more than the capacity side by side
 
 
 def test_progress_of_a_queued_investigation_names_its_place_and_what_it_waits_for(db_session, monkeypatch):
@@ -294,6 +340,52 @@ def test_a_crashing_debate_is_marked_error_and_the_next_one_still_runs(db_sessio
 
     assert calls == [first["investigation_id"], second["investigation_id"]]
     assert _statuses()[first["investigation_id"]] == "error"
+    db_session.expire_all()
+    crashed = db_session.get(Investigation, uuid.UUID(first["investigation_id"]))
+    # The case says why it stopped without printing the exception text (internals stay in the API log).
+    assert "unexpected error (RuntimeError)" in crashed.error_reason and "boom" not in crashed.error_reason
+    failed = db_session.execute(
+        select(AuditTrail).where(
+            AuditTrail.action == "investigation_failed",
+            AuditTrail.investigation_id == crashed.investigation_id,
+        )
+    ).scalar_one()
+    assert failed.detail == {"reason": crashed.error_reason}
+
+
+def test_a_queued_debate_whose_key_ran_out_while_it_waited_fails_at_once_and_says_why(
+    db_session, monkeypatch
+):
+    """The request was accepted when the key still had room; by the time the worker reaches it, OpenAI has
+    asked for a wait. No debate is started (it could only fail after minutes of retries): the case ends in
+    error with the reason, and the next one is not held up."""
+    from backend.agents import openai_usage
+
+    _seed(db_session)
+    ran: list[str] = []
+
+    def fake(primary, rows, *, investigation_id, max_rows_per_agent, on_update, scenario_rows=None):
+        ran.append(str(investigation_id))
+        return _result(investigation_id)
+
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", fake)
+    holder = _hold_slot()
+    try:
+        waiting = _post(auth_headers("forensic_analyst")).json()
+        assert waiting["status"] == "queued"
+        openai_usage.record_limits(
+            {"x-ratelimit-limit-requests": "50", "x-ratelimit-remaining-requests": "0"}, blocked_for_s=1728
+        )
+    finally:
+        holder.release()
+    worker.notify()
+    wait_until_idle()
+
+    assert ran == []  # no debate was started
+    db_session.expire_all()
+    case = db_session.get(Investigation, uuid.UUID(waiting["investigation_id"]))
+    assert case.status == "error"
+    assert case.error_reason.startswith("OpenAI's limit for this key is reached; it frees up in about")
 
 
 def test_wait_true_returns_the_verdict_after_waiting_in_the_queue(db_session, monkeypatch):

@@ -69,6 +69,31 @@ def apply_migrations():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _one_debate_at_a_time(monkeypatch):
+    """The queue, slot and live tests were written for a single debate slot and assert on it. The app now runs
+    several debates at once (DEBATE_MAX_CONCURRENT), so the suite pins one; the tests of parallel debates set
+    their own number inside the test."""
+    monkeypatch.setattr(settings, "debate_max_concurrent", 1)
+
+
+@pytest.fixture(autouse=True)
+def _no_openai_allowance_left_over():
+    """What OpenAI said about the key's limits lives in Redis and gates new debates (openai_usage.py). A test
+    that records one must not leak it into the next test, and a developer's real reading must not leak in."""
+    from backend.agents import openai_usage
+
+    def clear() -> None:
+        try:
+            openai_usage._redis().delete(openai_usage.LIMITS_KEY)
+        except Exception:  # noqa: BLE001 - tests that need no Redis must not fail on this
+            pass
+
+    clear()
+    yield
+    clear()
+
+
 @pytest.fixture()
 def db_session():
     """NOTE: truncates every table in TABLES on each use. This is only ever the test database."""

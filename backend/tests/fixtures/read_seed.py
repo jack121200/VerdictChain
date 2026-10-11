@@ -68,6 +68,7 @@ def add_investigation(
     noise_pct: int = 0,
     created_at: datetime | None = None,
     trigger_type: str = "manual",
+    error_reason: str | None = None,
 ) -> Investigation:
     inv = Investigation(
         trigger_type=trigger_type,
@@ -78,6 +79,7 @@ def add_investigation(
         primary_agent=primary_agent,
         noise_pct=noise_pct,
         effective_noise_pct=float(noise_pct) if noise_pct else None,
+        error_reason=error_reason,
         created_at=created_at or ago(hours=1),
     )
     session.add(inv)
@@ -94,7 +96,9 @@ def add_transcript(
     theory: str,
     confidence: float = 0.8,
     cited: list[dict] | None = None,
-    provider: str | None = "groq",
+    provider: str | None = "openai",
+    stance: str | None = None,
+    vote_class: str | None = None,
 ) -> DebateTranscript:
     row = DebateTranscript(
         investigation_id=investigation_id,
@@ -104,6 +108,8 @@ def add_transcript(
         confidence=confidence,
         cited_evidence=cited or [],
         provider=provider,
+        stance=stance,
+        vote_class=vote_class,
     )
     session.add(row)
     session.flush()

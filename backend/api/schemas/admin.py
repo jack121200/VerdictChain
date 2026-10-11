@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from backend.api.metrics import Metric
+from backend.api.schemas.allowance import AllowanceOut
 
 RoleName = Literal["secops_lead", "forensic_analyst", "red_team_auditor", "watchdog_supervisor"]
 
@@ -90,11 +91,11 @@ class ProviderOut(BaseModel):
     calls_24h: Metric[int]
     latency_ms: Metric[float]
     quota_errors_24h: Metric[int]
+    allowance: AllowanceOut  # what OpenAI itself allows this key
 
 
 class ProvidersOut(BaseModel):
-    groq: ProviderOut
-    gemini: ProviderOut
+    openai: ProviderOut  # the only provider, for every debate and the reason written with an action
 
 
 class SandboxOut(BaseModel):
@@ -103,8 +104,13 @@ class SandboxOut(BaseModel):
 
 
 class DebateSlotOut(BaseModel):
+    """The debate slots: up to `capacity` debates run at once (setting DEBATE_MAX_CONCURRENT)."""
+
     status: Literal["idle", "running", "unavailable"]
-    investigation_id: str | None
+    investigation_id: str | None  # the longest-running debate, null while idle
+    running: Metric[int]  # debates holding a slot now (a debate that is starting counts)
+    capacity: Metric[int]  # DEBATE_MAX_CONCURRENT
+    investigation_ids: list[str]  # every running debate, longest-running first
 
 
 class SystemStatusOut(BaseModel):

@@ -244,6 +244,7 @@ def _final_positions(session: Session, investigation_id: uuid.UUID) -> list[Agen
             confidence=r.confidence,
             cited_evidence=r.cited_evidence,
             round=3,
+            vote_class=r.vote_class,
         )
         for r in rows
         if r.agent_id not in skip

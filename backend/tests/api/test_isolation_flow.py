@@ -1,6 +1,6 @@
 """Isolation end to end through the HTTP API (checklist LG1 and LG9).
 
-Only the LLM call is stubbed: backend/scripts/e2e_server.py in fabricate mode makes one investigator cite
+Only the LLM call is stubbed: backend/testing/e2e_server.py in fabricate mode makes one investigator cite
 real rows with values that do not match them, the way a hallucinating model would. The investigator agents,
 the debate engine, the Watchdog's verification, CrS in Redis, quarantine, self-healing and the audit chain
 are the real code, driven through POST /investigations/simulate.
@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from backend.api.main import app
-from backend.api.rate_limit import get_redis
+from backend.api.rate_limit import DEBATE_SLOT_KEY, get_redis
 from backend.db.audit import verify_chain
 from backend.db.models import AuditTrail
 from backend.db.session import SessionLocal
-from backend.scripts import e2e_server as stub
+from backend.testing import e2e_server as stub
 from backend.tests.fixtures.auth import auth_headers
 from backend.watchdog.credibility import get_crs, reset_agent
 
@@ -27,7 +27,7 @@ HONEST = ("network_traffic", "endpoint_behavior")
 
 def _clear_state() -> None:
     redis_client = get_redis()
-    redis_client.delete("verdictchain:debate:slot")
+    redis_client.delete(DEBATE_SLOT_KEY)
     for key in redis_client.scan_iter("verdictchain:cap:*"):
         redis_client.delete(key)
     for agent in AGENTS:

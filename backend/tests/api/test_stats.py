@@ -65,6 +65,13 @@ def test_empty_database_nulls_rates_with_reasons_and_counts_are_real_zeros(db_se
     assert body["brier"]["reason"] == "no analyst feedback yet"
     assert body["latency"]["mean_seconds"]["value"] is None
     assert body["latency"]["mean_seconds"]["reason"]
+    automation = body["automation"]
+    for key in ("cases", "auto_started", "hands_free_contained"):
+        assert automation[key]["value"] == 0 and automation[key]["reason"] is None, key  # real zeros
+    for key in ("auto_share", "median_seconds_to_verdict", "median_seconds_verdict_to_action"):
+        assert (
+            automation[key]["value"] is None and automation[key]["reason"]
+        ), key  # no cases: no rate, no median
     assert "generated_at" in body
 
 
@@ -224,6 +231,53 @@ def test_latency_is_investigation_started_to_verdict_reached(db_session):
     assert body["latency"]["mean_seconds"]["n"] == 2
     assert "investigation_started" in body["latency"]["definition"]
     assert "verdict_reached" in body["latency"]["definition"]
+
+
+def _case(
+    db_session, *, trigger: str, status: str, verdict_seconds: int, action_seconds: int | None = None, **extra
+):
+    """One investigation with its started and verdict audit entries (and one sandbox action when asked)."""
+    inv = add_investigation(db_session, trigger_type=trigger, status=status, **extra)
+    audit(db_session, "engine", "investigation_started", None, inv.investigation_id, created_at=BASE_TIME)
+    verdict_at = BASE_TIME + timedelta(seconds=verdict_seconds)
+    audit(db_session, "engine", "verdict_reached", None, inv.investigation_id, created_at=verdict_at)
+    if action_seconds is not None:
+        action = add_action(db_session, inv.investigation_id)
+        action.created_at = verdict_at + timedelta(seconds=action_seconds)
+    return inv
+
+
+def test_automation_counts_what_the_monitor_started_and_finished_without_a_click(db_session):
+    _case(db_session, trigger="continuous", status="contained", verdict_seconds=20, action_seconds=2)
+    touched = _case(
+        db_session, trigger="continuous", status="contained", verdict_seconds=40, action_seconds=4
+    )
+    audit(db_session, "analyst_x", "emergency_containment", None, touched.investigation_id)
+    _case(db_session, trigger="manual", status="verdict_reached", verdict_seconds=60)
+    _case(
+        db_session, trigger="continuous", status="verdict_reached", verdict_seconds=10, verdict_class="benign"
+    )
+    # Older than 24 hours: outside every figure below.
+    _case(
+        db_session,
+        trigger="continuous",
+        status="contained",
+        verdict_seconds=5,
+        action_seconds=1,
+        created_at=ago(hours=72),
+    )
+    db_session.commit()
+
+    automation = _stats()["automation"]
+
+    assert (automation["cases"]["value"], automation["auto_started"]["value"]) == (4, 3)
+    assert automation["auto_share"]["value"] == pytest.approx(0.75) and automation["auto_share"]["n"] == 4
+    assert automation["hands_free_contained"]["value"] == 1  # the one an analyst touched is not hands-free
+    assert automation["median_seconds_to_verdict"]["value"] == pytest.approx(30.0)  # 10, 20, 40, 60
+    assert automation["median_seconds_to_verdict"]["n"] == 4
+    assert automation["median_seconds_verdict_to_action"]["value"] == pytest.approx(3.0)  # 2 and 4
+    assert automation["median_seconds_verdict_to_action"]["n"] == 2
+    assert "last 24 hours" in automation["median_seconds_to_verdict"]["definition"]
 
 
 def test_stats_requires_authentication(db_session):

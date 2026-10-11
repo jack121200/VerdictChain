@@ -111,7 +111,7 @@ def replace_settings(
         try:
             after = save(session, payload.model_dump(), updated_by=actor.username)
         except ValueError as exc:  # the model already checks ranges; this is the second line of defence
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         append_entry(
             session,
             actor=actor.username,

@@ -1,8 +1,9 @@
-"""Rate limiting, the single debate slot and the daily debate caps (plan sections 2 and 3.5).
+"""Rate limiting, the debate slots and the daily debate caps (plan sections 2 and 3.5).
 
 Fixed-window INCR+EXPIRE counters back the abuse-prone endpoints (login, simulate, fault injection).
-The debate slot is one Redis key that allows one debate at a time. The daily caps count accepted
-runs per analyst and across all analysts, over a 24 hour window.
+The debate slots are one Redis sorted set that lets up to `debate_max_concurrent` debates run at once; a
+maintenance operation (quarantine, restore) takes it exclusively, so it never overlaps a debate. The daily
+caps count accepted runs per analyst and across all analysts, over a 24 hour window.
 """
 
 import uuid
@@ -12,17 +13,42 @@ from fastapi import Depends, HTTPException, Request, params, status
 
 from backend.config import settings
 
-DEBATE_SLOT_KEY = "verdictchain:debate:slot"
+# One member per debate that holds a slot (a pending token, then the investigation id), scored by the epoch
+# millisecond its hold expires (so the order is the order they were taken). A new name: the single-slot key of
+# earlier versions was a plain string, and a sorted set cannot be created over it.
+DEBATE_SLOT_KEY = "verdictchain:debate:slots"
+LEGACY_SLOT_KEY = "verdictchain:debate:slot"
 DEBATE_SLOT_TTL_SECONDS = 1800
+MAINTENANCE_PREFIX = "maintenance:"
 DAILY_WINDOW_SECONDS = 86400
 GLOBAL_CAP_IDENTIFIER = "all"
 
-# Compare-and-set and compare-and-delete, so a holder never changes or deletes a slot it does not own.
-_CAS_SCRIPT = (
-    "if redis.call('GET', KEYS[1]) == ARGV[1] then "
-    "redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL') return 1 end return 0"
-)
-_CAD_SCRIPT = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0"
+# One atomic step: drop expired holders, refuse while a maintenance operation holds the slots, then take a
+# slot if fewer than `capacity` are held (or, for an exclusive holder, none). The time is Redis' own clock.
+_ACQUIRE_SCRIPT = f"""
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+local held = redis.call('ZRANGE', KEYS[1], 0, -1)
+for _, member in ipairs(held) do
+  if string.sub(member, 1, {len(MAINTENANCE_PREFIX)}) == '{MAINTENANCE_PREFIX}' then return 0 end
+end
+if ARGV[3] == '1' then
+  if #held > 0 then return 0 end
+elseif #held >= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('ZADD', KEYS[1], now + tonumber(ARGV[4]) * 1000, ARGV[1])
+return 1
+"""
+# Rename a holder in place (keeping its expiry), so a late release never frees someone else's slot.
+_BIND_SCRIPT = """
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not score then return 0 end
+redis.call('ZREM', KEYS[1], ARGV[1])
+redis.call('ZADD', KEYS[1], score, ARGV[2])
+return 1
+"""
 
 _redis_client: redis.Redis | None = None
 
@@ -72,29 +98,56 @@ def read_limit(name: str, per_minute: int) -> params.Depends:
     return Depends(check)
 
 
+def slot_capacity() -> int:
+    """How many debates may run at once (setting debate_max_concurrent, at least 1)."""
+    return max(1, settings.debate_max_concurrent)
+
+
+def slot_holders(client: redis.Redis | None = None) -> list[str]:
+    """Who holds a debate slot now, longest-held first: investigation ids, or pending tokens and maintenance
+    labels. Empty when every slot is free. Holds past their expiry are not listed."""
+    redis_client = client or _client()
+    seconds, microseconds = redis_client.time()
+    now = int(seconds) * 1000 + int(microseconds) // 1000
+    return list(redis_client.zrangebyscore(DEBATE_SLOT_KEY, f"({now}", "+inf"))
+
+
 def slot_holder() -> str | None:
-    """The current holder of the debate slot: a pending token, or an investigation id. None if free."""
-    return _client().get(DEBATE_SLOT_KEY)
+    """The longest-held debate slot (a pending token or an investigation id), None while all are free."""
+    holders = slot_holders()
+    return holders[0] if holders else None
 
 
 class DebateSlot:
-    """The single in-flight debate. The key holds this holder's value: a pending token until
-    start_investigation returns, then the investigation id (bind). release() deletes the key only
-    while it still holds this holder's value, so a late release never frees someone else's slot.
+    """One in-flight debate: a member of the slots set. Its value is a pending token until start_investigation
+    returns, then the investigation id (bind). release() removes only this holder's own member, so a late
+    release never frees someone else's slot. exclusive=True is for a maintenance operation: it succeeds only
+    while no debate runs, and nothing else can take a slot while it is held.
     """
 
-    def __init__(self, label: str = "debate") -> None:
-        self._value = f"{label}:pending:{uuid.uuid4()}"
+    def __init__(self, label: str = "debate", *, exclusive: bool = False) -> None:
+        self._exclusive = exclusive
+        self._value = f"{MAINTENANCE_PREFIX if exclusive else label + ':'}pending:{uuid.uuid4()}"
 
     def acquire(self) -> bool:
-        return bool(_client().set(DEBATE_SLOT_KEY, self._value, nx=True, ex=DEBATE_SLOT_TTL_SECONDS))
+        return bool(
+            _client().eval(
+                _ACQUIRE_SCRIPT,
+                1,
+                DEBATE_SLOT_KEY,
+                self._value,
+                slot_capacity(),
+                "1" if self._exclusive else "0",
+                DEBATE_SLOT_TTL_SECONDS,
+            )
+        )
 
     def bind(self, investigation_id: str) -> None:
-        _client().eval(_CAS_SCRIPT, 1, DEBATE_SLOT_KEY, self._value, investigation_id)
+        _client().eval(_BIND_SCRIPT, 1, DEBATE_SLOT_KEY, self._value, investigation_id)
         self._value = investigation_id
 
     def release(self) -> None:
-        _client().eval(_CAD_SCRIPT, 1, DEBATE_SLOT_KEY, self._value)
+        _client().zrem(DEBATE_SLOT_KEY, self._value)
 
 
 IDEMPOTENCY_TTL_SECONDS = 900

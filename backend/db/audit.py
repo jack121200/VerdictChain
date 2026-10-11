@@ -41,6 +41,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "containment_released",
         "byzantine_fault_injected",
         "debate_started",  # the queue worker began a debate that was waiting (backend/api/debate_queue.py)
+        "investigation_failed",  # a debate ended in status 'error'; detail.reason says why
         "live_feed_started",  # the simulated live feed was switched on (backend/api/live_runner.py)
         "live_feed_stopped",
         # The self-healing actions (SKILL-security.md Section 4).

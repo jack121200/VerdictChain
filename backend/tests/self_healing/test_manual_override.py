@@ -58,7 +58,7 @@ def test_releasing_a_target_that_was_never_contained_is_harmless():
 
 
 FORBIDDEN_IMPORTS = {"llm_clients", "httpx", "requests", "urllib", "socket", "subprocess", "http"}
-FORBIDDEN_NAMES = {"GeminiClient", "GroqClient"}
+FORBIDDEN_NAMES = {"OpenAIClient"}
 
 
 def test_the_manual_path_imports_no_llm_or_network_module():

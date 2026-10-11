@@ -69,6 +69,8 @@ class Investigation(Base):
     # Debate queue (migration 0008): when it was accepted, and what the worker needs to run it later.
     queued_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     run_spec: Mapped[dict | None] = mapped_column(JSONB)
+    # Migration 0009: one plain sentence saying why a debate ended in status 'error' (null otherwise).
+    error_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -89,6 +91,9 @@ class DebateTranscript(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     cited_evidence: Mapped[list] = mapped_column(JSONB, nullable=False)
     provider: Mapped[str | None] = mapped_column(Text)
+    # What the agent stated itself (migration 0010); null for older rows and for an answer that left them out.
+    stance: Mapped[str | None] = mapped_column(Text)
+    vote_class: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
 

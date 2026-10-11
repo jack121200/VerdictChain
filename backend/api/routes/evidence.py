@@ -115,7 +115,10 @@ def citation_summary(statuses: list[CitationStatus], source: str) -> CitationSum
             verified / total if total else None,
             total,
             source=source,
-            definition="verified citations / total citations, exact match against raw_logs (no tolerance)",
+            definition=(
+                "verified citations / total citations: the cited value is the stored value as the agents "
+                "read it (JSON text) or the same number, checked against raw_logs"
+            ),
             reason=None if total else "no citations yet",
         ),
     )

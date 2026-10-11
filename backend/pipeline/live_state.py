@@ -19,6 +19,9 @@ WINDOWS = PREFIX + "windows"  # hash: group -> json score of its latest window
 ARRIVALS = PREFIX + "arrivals"  # list, newest first
 SAMPLES = PREFIX + "samples"  # list of "epoch_seconds:consumed", newest first (the measured rate)
 TRIGGER = PREFIX + "last_trigger"
+GROUP_TRIGGERS = (
+    PREFIX + "group_triggers"
+)  # hash: group -> epoch seconds of its latest automatic investigation
 BLOCKED = PREFIX + "blocked"
 CONFIG = PREFIX + "config"
 BACKLOG = PREFIX + "backlog"  # messages waiting in the queue, measured by the feed
@@ -37,7 +40,7 @@ def _redis() -> redis.Redis:
 
 
 def reset() -> None:
-    _redis().delete(COUNTERS, WINDOWS, ARRIVALS, SAMPLES, TRIGGER, BLOCKED, CONFIG, BACKLOG)
+    _redis().delete(COUNTERS, WINDOWS, ARRIVALS, SAMPLES, TRIGGER, GROUP_TRIGGERS, BLOCKED, CONFIG, BACKLOG)
 
 
 def incr(field: str, amount: int = 1) -> None:
@@ -102,6 +105,16 @@ def set_trigger(data: dict[str, Any]) -> None:
 def last_trigger() -> dict[str, Any] | None:
     raw = _redis().get(TRIGGER)
     return json.loads(raw) if raw else None
+
+
+def set_group_trigger(group: str, epoch_seconds: float) -> None:
+    _redis().hset(GROUP_TRIGGERS, group, f"{epoch_seconds:.3f}")
+
+
+def group_trigger_at(group: str) -> float | None:
+    """When this source group last started an automatic investigation (epoch seconds), None if never."""
+    raw = _redis().hget(GROUP_TRIGGERS, group)
+    return float(raw) if raw is not None else None
 
 
 def set_blocked(reason: str | None, at: str | None = None) -> None:

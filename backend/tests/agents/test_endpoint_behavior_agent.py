@@ -33,21 +33,17 @@ def test_build_user_prompt_mixes_logon_and_device_event_types():
 
 
 class FakeProvider:
-    def __init__(self, name, response=None, error=None):
-        self.name = name
+    name = "openai"
+
+    def __init__(self, response):
         self._response = response
-        self._error = error
 
     def complete(self, system_prompt, user_prompt):
-        if self._error:
-            raise self._error
         return self._response
 
 
-def test_investigate_uses_gemini_as_primary_not_groq(monkeypatch):
-    """Per SKILL-agent-prompts.md Section 7, this is the one agent routed to
-    Gemini as primary - reversed order from the other two agents.
-    """
+def test_investigate_asks_openai(monkeypatch):
+    """OpenAI is the only provider, so every agent asks it (the old Groq/Gemini routing is gone)."""
     row = _fake_row("insider_scenario_2", "device_event", connect_count=15)
     payload = {
         "agent_id": "endpoint_behavior",
@@ -56,31 +52,9 @@ def test_investigate_uses_gemini_as_primary_not_groq(monkeypatch):
         "cited_evidence": [{"row_id": str(row.row_id), "field": "connect_count", "value": "15"}],
         "round": 1,
     }
-    monkeypatch.setattr(
-        endpoint_behavior, "GeminiClient", lambda: FakeProvider("gemini", response=json.dumps(payload))
-    )
-    monkeypatch.setattr(endpoint_behavior, "GroqClient", lambda: FakeProvider("groq", response="unused"))
+    monkeypatch.setattr(endpoint_behavior, "OpenAIClient", lambda: FakeProvider(json.dumps(payload)))
 
     response, provider_used = endpoint_behavior.investigate([row], round_no=1)
-    assert provider_used == "gemini"
+    assert provider_used == "openai"
     assert response.agent_id == "endpoint_behavior"
-
-
-def test_investigate_falls_back_to_groq_on_gemini_failure(monkeypatch):
-    row = _fake_row("benign", "logon", off_hours=False)
-    payload = {
-        "agent_id": "endpoint_behavior",
-        "theory": "Normal login pattern.",
-        "confidence": 0.9,
-        "cited_evidence": [{"row_id": str(row.row_id), "field": "off_hours", "value": "False"}],
-        "round": 1,
-    }
-    monkeypatch.setattr(
-        endpoint_behavior, "GeminiClient", lambda: FakeProvider("gemini", error=RuntimeError("down"))
-    )
-    monkeypatch.setattr(
-        endpoint_behavior, "GroqClient", lambda: FakeProvider("groq", response=json.dumps(payload))
-    )
-
-    response, provider_used = endpoint_behavior.investigate([row], round_no=1)
-    assert provider_used == "groq"
+    assert response.cited_evidence[0].field == "connect_count"

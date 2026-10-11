@@ -1,7 +1,10 @@
 import json
 import uuid
 
+import pytest
+
 from backend.agents import access_log
+from backend.agents.base_agent import InvalidAgentResponse
 from backend.db.models import RawLog
 
 
@@ -25,29 +28,53 @@ def test_build_user_prompt_never_contains_ground_truth_label():
 
 
 class FakeProvider:
-    def __init__(self, name, response=None, error=None):
-        self.name = name
+    name = "openai"
+
+    def __init__(self, response):
         self._response = response
-        self._error = error
 
     def complete(self, system_prompt, user_prompt):
-        if self._error:
-            raise self._error
         return self._response
 
 
-def test_investigate_uses_groq_as_primary(monkeypatch):
+def _payload(row, **cited) -> str:
+    return json.dumps(
+        {
+            "agent_id": "access_log",
+            "theory": "Unusually high file access volume.",
+            "confidence": 0.7,
+            "cited_evidence": [
+                {"row_id": str(row.row_id), "field": "file_access_count", "value": "80", **cited}
+            ],
+            "round": 1,
+        }
+    )
+
+
+def test_investigate_asks_openai(monkeypatch):
     row = _fake_row(label="insider_scenario_1", file_count=80)
-    payload = {
-        "agent_id": "access_log",
-        "theory": "Unusually high file access volume.",
-        "confidence": 0.7,
-        "cited_evidence": [{"row_id": str(row.row_id), "field": "file_access_count", "value": "80"}],
-        "round": 1,
-    }
-    monkeypatch.setattr(access_log, "GroqClient", lambda: FakeProvider("groq", response=json.dumps(payload)))
-    monkeypatch.setattr(access_log, "GeminiClient", lambda: FakeProvider("gemini", response="unused"))
+    monkeypatch.setattr(access_log, "OpenAIClient", lambda: FakeProvider(_payload(row)))
 
     response, provider_used = access_log.investigate([row], round_no=1)
-    assert provider_used == "groq"
+    assert provider_used == "openai"
     assert response.agent_id == "access_log"
+
+
+def test_investigate_keeps_a_number_the_model_wrote_as_a_number(monkeypatch):
+    """A model often writes "value": 80 where the schema wants "80"; the Watchdog compares the text."""
+    row = _fake_row(label="insider_scenario_1", file_count=80)
+    raw = json.loads(_payload(row))
+    raw["cited_evidence"][0]["value"] = 80
+    monkeypatch.setattr(access_log, "OpenAIClient", lambda: FakeProvider(json.dumps(raw)))
+
+    response, _ = access_log.investigate([row], round_no=1)
+    assert response.cited_evidence[0].value == "80"
+
+
+def test_investigate_rejects_a_citation_from_outside_the_slice(monkeypatch):
+    row = _fake_row(label="insider_scenario_1", file_count=80)
+    other = _fake_row(label="insider_scenario_1", file_count=5)
+    monkeypatch.setattr(access_log, "OpenAIClient", lambda: FakeProvider(_payload(other)))
+
+    with pytest.raises(InvalidAgentResponse):
+        access_log.investigate([row], round_no=1)

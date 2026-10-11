@@ -56,6 +56,7 @@ class InvestigationProgressOut(BaseModel):
     queue_position: int | None = None
     queue_length: int | None = None
     waiting_for: str | None = None
+    error_reason: str | None = None  # why the debate stopped (only when the phase is "error")
 
 
 class WsTicketOut(BaseModel):
@@ -69,6 +70,7 @@ class SnapshotAgentOut(BaseModel):
     confidence: float
     provider: str | None
     cited_evidence: list[dict[str, Any]]
+    stance: str | None = None  # as stored with the transcript (null for rows written before migration 0010)
 
 
 class SnapshotRoundOut(BaseModel):

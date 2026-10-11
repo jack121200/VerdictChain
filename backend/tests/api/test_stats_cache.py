@@ -13,6 +13,7 @@ from backend.api.rate_limit import _client
 from backend.api.routes import stats as stats_route
 from backend.db import change_events
 from backend.db.audit import append_entry
+from backend.db.models import AnalystFeedback
 from backend.db.session import SessionLocal, engine
 from backend.tests.fixtures.read_seed import add_investigation, audit, bearer_for
 
@@ -98,19 +99,19 @@ def test_a_committed_audit_entry_drops_the_cache(db_session):
 
 
 def test_a_commit_without_an_audit_entry_drops_the_cache_too(db_session):
-    """POST /investigations/{id}/feedback commits an analyst_feedback row and writes no audit entry."""
+    """A bare analyst_feedback row (no audit entry) still changes /stats, so its commit drops the cache."""
     inv = add_investigation(db_session, status="verdict_reached", verdict_class="ddos", confidence=0.9)
     db_session.commit()
     headers = bearer_for("forensic_analyst")
     assert _get(headers)["feedback"]["total"]["value"] == 0
 
-    sent = client.post(
-        f"/investigations/{inv.investigation_id}/feedback",
-        headers=headers,
-        json={"verdict_was_correct": False},
-    )
+    session = SessionLocal()
+    try:
+        session.add(AnalystFeedback(investigation_id=inv.investigation_id, verdict_was_correct=False))
+        session.commit()
+    finally:
+        session.close()
 
-    assert sent.status_code == 204
     body = _get(headers)
     assert body["feedback"]["total"]["value"] == 1
     assert body["feedback"]["false_positive"]["value"] == 1

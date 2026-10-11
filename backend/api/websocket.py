@@ -126,6 +126,7 @@ def build_snapshot(investigation_id: uuid.UUID) -> dict | None:
                     confidence=t.confidence,
                     provider=t.provider,
                     cited_evidence=t.cited_evidence,
+                    stance=t.stance,
                 )
             )
         verdict = (

@@ -11,14 +11,16 @@
 import ast
 import json
 import uuid
+from dataclasses import FrozenInstanceError, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from backend.agents import access_log, endpoint_behavior, network_traffic
+from backend.agents.rows import AgentRow, project
 from backend.agents.schemas import AgentResponse, CitedEvidence
-from backend.api.rate_limit import get_redis
+from backend.api.rate_limit import DEBATE_SLOT_KEY, get_redis
 from backend.db.models import Investigation, RawLog
 from backend.db.session import SessionLocal
 from backend.debate import engine
@@ -36,9 +38,8 @@ SCANNED_DIRS = ("agents", "watchdog", "debate", "pipeline")
 #  - debate/engine.py: start_investigation() writes scenario_label and the noise values to the investigation
 #    row and its audit detail. Nothing else in the module reads them.
 #  - pipeline/: selects rows by label (get_rows_for_scenario) and carries the noise percentage into the
-#    dilution call. No investigator call takes a label. Note: the RawLog objects an investigator is
-#    handed still carry ground_truth_label as an ORM attribute; the agents read only raw_fields, and the
-#    test below serialises the allow-listed view. Passing label-free projections would close this gap.
+#    dilution call. No investigator call takes a label. The rows an investigator is handed are AgentRow
+#    projections (backend/agents/rows.py), which have no label attribute at all (checked below).
 ALLOWED = {
     # start_investigation() writes scenario_label and the noise values to the investigation row and to its
     # audit detail. run_debate() and the agents never read them (checked by the grep in this module's docs).
@@ -163,7 +164,7 @@ def _public_view(row: RawLog) -> dict:
 @pytest.fixture()
 def _clean_state():
     redis_client = get_redis()
-    redis_client.delete("verdictchain:debate:slot")
+    redis_client.delete(DEBATE_SLOT_KEY)
     for agent in ("network_traffic", "access_log", "endpoint_behavior"):
         reset_agent(agent)
     yield
@@ -179,14 +180,16 @@ def test_investigators_receive_no_secret_label_and_no_noise(db_session, monkeypa
     def _no_llm(*args, **kwargs):
         raise AssertionError("an LLM was called in the blind test")
 
-    monkeypatch.setattr("backend.agents.llm_clients.GeminiClient.complete", _no_llm)
-    monkeypatch.setattr("backend.agents.llm_clients.GroqClient.complete", _no_llm)
+    monkeypatch.setattr("backend.agents.llm_clients.OpenAIClient.complete", _no_llm)
+    monkeypatch.setattr("backend.agents.llm_clients.OpenAIClient.complete_text", _no_llm)
 
     captured: list[dict] = []
+    row_kinds: list[tuple[str, bool]] = []
 
     def recorder(agent_id: str):
         def investigate(rows, **kwargs):
             round_no = kwargs["round_no"]
+            row_kinds.extend((type(r).__name__, hasattr(r, "ground_truth_label")) for r in rows)
             captured.append(
                 {
                     "agent": agent_id,
@@ -237,6 +240,8 @@ def test_investigators_receive_no_secret_label_and_no_noise(db_session, monkeypa
     )
 
     assert captured, "the fake investigators were never called"
+    # By construction, not only by convention: the investigators were handed label-free projections.
+    assert row_kinds and set(row_kinds) == {("AgentRow", False)}
     serialised = json.dumps(captured, default=str, sort_keys=True)
     assert SECRET not in serialised
     assert "noise" not in serialised.lower()
@@ -273,3 +278,40 @@ def test_the_real_prompt_builders_never_print_the_label(module, round_no):
 
     assert SECRET not in prompt
     assert str(rows[0].row_id) in prompt  # sanity: the rows are there, only the label is not
+
+
+def test_a_projection_keeps_what_an_investigator_may_see_and_leaves_the_label_behind():
+    row = _row(0, SECRET)
+    row.user_id = "jdoe"
+
+    view = project(row)
+
+    assert isinstance(view, AgentRow) and view.row_id == row.row_id and view.user_id == "jdoe"
+    assert view.raw_fields == row.raw_fields and view.raw_fields is not row.raw_fields  # a copy
+    assert {f.name for f in fields(AgentRow)} == {
+        "row_id",
+        "timestamp",
+        "source",
+        "source_file",
+        "event_type",
+        "user_id",
+        "host_id",
+        "severity",
+        "raw_fields",
+    }
+    assert not hasattr(view, "ground_truth_label") and SECRET not in repr(view)
+    with pytest.raises(FrozenInstanceError):
+        view.event_type = "other"  # type: ignore[misc]
+    with pytest.raises((AttributeError, TypeError)):
+        view.ground_truth_label = SECRET  # type: ignore[attr-defined]  # slots: no room for one
+
+
+@pytest.mark.parametrize("module", [network_traffic, access_log, endpoint_behavior], ids=lambda m: m.AGENT_ID)
+def test_an_investigator_module_does_not_even_import_the_database_models(module):
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    imported = [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("backend.db")
+    ]
+    assert imported == []

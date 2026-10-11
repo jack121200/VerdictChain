@@ -33,7 +33,10 @@ THEORIES = {
 @pytest.fixture(autouse=True)
 def _fresh_crs(monkeypatch):
     # The Self-Healing step writes its reason with an LLM; a test must never reach a real provider.
-    monkeypatch.setattr("backend.self_healing.actions._generate_reason", lambda *a, **kw: "Mocked reason.")
+    monkeypatch.setattr(
+        "backend.self_healing.actions._generate_reasons",
+        lambda attack_class, confidence, crs_list, planned: ["Mocked reason."] * len(planned),
+    )
     for agent in AGENTS:
         reset_agent(agent)
     yield
@@ -75,21 +78,24 @@ class Tracker:
         self.running = 0
         self.peak = 0
         self.finished: list[tuple[str, int]] = []
+        self.windows: list[tuple[int, float, float]] = []  # (round, entered at, left at)
 
-    def enter(self) -> None:
+    def enter(self) -> float:
         with self.lock:
             self.running += 1
             self.peak = max(self.peak, self.running)
+        return time.monotonic()
 
-    def leave(self, agent_id: str, round_no: int) -> None:
+    def leave(self, agent_id: str, round_no: int, entered_at: float) -> None:
         with self.lock:
             self.running -= 1
             self.finished.append((agent_id, round_no))
+            self.windows.append((round_no, entered_at, time.monotonic()))
 
 
 def _investigator(agent_id: str, tracker: Tracker, delay: float, fail_in_round: int | None = None):
     def call(rows, round_no, peripheral_digest=None, debate_context=None):
-        tracker.enter()
+        entered_at = tracker.enter()
         try:
             time.sleep(delay)
             if fail_in_round == round_no:
@@ -105,7 +111,7 @@ def _investigator(agent_id: str, tracker: Tracker, delay: float, fail_in_round: 
             )
             return response, "fake_provider"
         finally:
-            tracker.leave(agent_id, round_no)
+            tracker.leave(agent_id, round_no, entered_at)
 
     return call
 
@@ -158,13 +164,16 @@ def test_the_investigators_of_a_round_run_at_the_same_time(db_session):
     delay = 0.4
     investigators = {agent: _investigator(agent, tracker, delay) for agent in AGENTS}
 
-    started = time.monotonic()
     result = _run(db_session, investigators)
-    elapsed = time.monotonic() - started
 
     assert tracker.peak == 3  # all three were inside a call together
-    # Three rounds of one 0.4 s call each, not nine in a row (3.6 s).
-    assert elapsed < 3 * delay * 2.2
+    # In each round the three calls overlap: from the first one entering to the last one leaving takes about
+    # one delay, not three. Only the calls are timed, so a slow database or a busy machine cannot fail this.
+    for round_no in (1, 2, 3):
+        windows = [(start, end) for r, start, end in tracker.windows if r == round_no]
+        assert len(windows) == 3
+        span = max(end for _, end in windows) - min(start for start, _ in windows)
+        assert span < 2 * delay, f"round {round_no} took {span:.2f} s for three calls of {delay} s"
     assert result["status"] in ("verdict_reached", "contained")
     assert len(db_session.execute(select(DebateTranscript)).scalars().all()) == 9
 
@@ -214,3 +223,16 @@ def test_a_failing_agent_ends_the_debate_as_before(db_session):
     assert [event["type"] for event in events if event["type"] == "error"] == ["error"]
     assert any(event["type"] == "round_completed" and event["round"] == 1 for event in events)
     assert not any(event["type"] == "verdict" for event in events)  # no verdict after a failed debate
+
+
+def test_a_contained_run_stores_the_reason_the_writer_gave_for_every_action(db_session):
+    from backend.db.models import ResponseAction
+
+    tracker = Tracker()
+    investigators = {agent: _investigator(agent, tracker, 0.0) for agent in AGENTS}
+
+    result = _run(db_session, investigators)
+
+    assert result["status"] == "contained"
+    actions = db_session.execute(select(ResponseAction)).scalars().all()
+    assert actions and {action.reason for action in actions} == {"Mocked reason."}

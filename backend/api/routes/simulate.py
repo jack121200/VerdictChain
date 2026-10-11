@@ -1,11 +1,12 @@
 """Manual 'Simulate scenario' trigger (SKILL-architecture.md Section 4, plan section 3.5).
 
-Order: authenticate, capability inject_scenario, rate limit, intake paused (423), rows (404), dominant
+Order: authenticate, capability inject_scenario, rate limit, intake paused (423), the provider's own
+allowance (429), rows (404), dominant
 investigator (422), noise dilution, active investigators (409), queue capacity (429), daily caps (429),
 start_investigation. The accepted investigation goes into the debate queue (backend/api/debate_queue.py):
-one worker runs the debates one at a time, so a request that arrives while another debate runs waits as
-'queued' instead of being refused. wait=true blocks until the debate has finished and returns 201 with the
-verdict; wait=false returns 202 at once.
+the workers run up to DEBATE_MAX_CONCURRENT debates at once, so a request that arrives while every debate slot
+is busy waits as 'queued' instead of being refused. wait=true blocks until the debate has finished and returns
+201 with the verdict; wait=false returns 202 at once.
 """
 
 import asyncio
@@ -16,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 
+from backend.agents import openai_usage
 from backend.api.auth import CurrentAnalyst, require_capability
 from backend.api.debate_queue import (
     active_agent_count,
@@ -40,7 +42,13 @@ from backend.api.schemas.realtime import SimulateAcceptedOut, SimulateScenarioRe
 from backend.config import settings
 from backend.db.models import Investigation
 from backend.db.session import SessionLocal
-from backend.debate.engine import MIN_ACTIVE_AGENTS, DebateFailedError, start_investigation
+from backend.debate.engine import (
+    ESTIMATED_TOKENS_PER_DEBATE,
+    MIN_ACTIVE_AGENTS,
+    REQUESTS_PER_DEBATE,
+    DebateFailedError,
+    start_investigation,
+)
 from backend.debate.state import dominant_agent_for_rows
 from backend.pipeline.log_streamer import get_rows_for_scenario
 from backend.pipeline.noise import dilute_with_benign
@@ -137,7 +145,7 @@ def _idempotency_key(request: Request) -> str | None:
         return None
     if not _IDEMPOTENCY_KEY_RE.fullmatch(raw):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"{IDEMPOTENCY_HEADER} must be 8-100 characters: letters, digits, '_', '.', ':' or '-'.",
         )
     return raw
@@ -174,6 +182,15 @@ def _accept(payload: SimulateScenarioRequest, username: str) -> tuple[uuid.UUID,
             detail="Intake is paused. New investigations are refused until it is resumed in Settings.",
         )
 
+    # What OpenAI itself allows this key (its own answers say so): a debate it would refuse is declined now,
+    # in words, instead of being queued and failing after minutes of retries.
+    if (
+        allowance := openai_usage.allowance_block(
+            needed_requests=REQUESTS_PER_DEBATE, needed_tokens=ESTIMATED_TOKENS_PER_DEBATE
+        )
+    ) is not None:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=allowance)
+
     rows = get_rows_for_scenario(payload.scenario_label)
     if not rows:
         raise HTTPException(
@@ -183,7 +200,7 @@ def _accept(payload: SimulateScenarioRequest, username: str) -> tuple[uuid.UUID,
         primary_agent, primary_rows = dominant_agent_for_rows(rows)
     except ValueError as exc:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Scenario {payload.scenario_label!r} has no rows in any investigator domain: {exc}",
         ) from exc
 

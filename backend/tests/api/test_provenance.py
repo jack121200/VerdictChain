@@ -11,15 +11,15 @@ client = TestClient(app)
 
 
 def test_every_provider_a_stub_label_means_stub_some_means_mixed_none_means_model():
-    assert source_of(["stub-groq", "stub-gemini"]) == "stub"
-    assert source_of(["stub-groq", "groq"]) == "mixed"
-    assert source_of(["groq", "gemini"]) == "model"
+    assert source_of(["stub-openai", "stub-openai"]) == "stub"
+    assert source_of(["stub-openai", "openai"]) == "mixed"
+    assert source_of(["openai", "openai"]) == "model"
     assert source_of([]) == "model"  # no transcript yet: nothing marks it as stub
-    assert source_of([None, "stub-groq"]) == "stub"  # a row without a provider is ignored
+    assert source_of([None, "stub-openai"]) == "stub"  # a row without a provider is ignored
     assert classify_source(total=3, stub=0) == "model"
 
 
-def _stub_run(db_session, *, label: str, verdict: str, providers=("stub-groq", "stub-gemini")):
+def _stub_run(db_session, *, label: str, verdict: str, providers=("stub-openai", "stub-openai")):
     inv = add_investigation(db_session, scenario_label=label, verdict_class=verdict)
     for index, provider in enumerate(providers):
         add_transcript(
@@ -35,8 +35,8 @@ def _stub_run(db_session, *, label: str, verdict: str, providers=("stub-groq", "
 
 def test_the_list_and_the_detail_say_where_the_answers_came_from(db_session):
     stub = _stub_run(db_session, label="DDoS", verdict="ddos")
-    real = _stub_run(db_session, label="DDoS", verdict="ddos", providers=("groq", "gemini"))
-    mixed = _stub_run(db_session, label="DDoS", verdict="ddos", providers=("stub-groq", "gemini"))
+    real = _stub_run(db_session, label="DDoS", verdict="ddos", providers=("openai", "openai"))
+    mixed = _stub_run(db_session, label="DDoS", verdict="ddos", providers=("stub-openai", "openai"))
     db_session.commit()
     headers = bearer_for("forensic_analyst")
 
@@ -57,8 +57,8 @@ def test_the_list_and_the_detail_say_where_the_answers_came_from(db_session):
 def test_default_accuracy_leaves_the_stub_runs_out_and_says_so(db_session):
     _stub_run(db_session, label="DDoS", verdict="ddos")  # correct, but made by the stub
     _stub_run(db_session, label="DDoS", verdict="ddos")
-    real_right = _stub_run(db_session, label="DDoS", verdict="ddos", providers=("groq", "gemini"))
-    real_wrong = _stub_run(db_session, label="DDoS", verdict="port_scan", providers=("groq", "gemini"))
+    real_right = _stub_run(db_session, label="DDoS", verdict="ddos", providers=("openai", "openai"))
+    real_wrong = _stub_run(db_session, label="DDoS", verdict="port_scan", providers=("openai", "openai"))
     db_session.commit()
     del real_right, real_wrong
 
@@ -88,14 +88,14 @@ def test_with_only_stub_runs_the_headline_is_a_dash_with_its_reason_not_the_stub
     assert body["scored"]["value"] == 0
     assert body["accuracy"]["value"] is None
     assert body["accuracy"]["reason"] == (
-        "no model runs scored yet; 1 scored run(s) from other sources are not counted here (see by_source)"
+        "no model runs scored yet; 1 scored run(s) from other sources are not counted here"
     )
     assert body["by_source"]["stub"]["accuracy"]["value"] == 1.0  # visible, and labelled as the stub's
 
 
 def test_the_source_can_be_asked_for_explicitly(db_session):
     _stub_run(db_session, label="DDoS", verdict="ddos")
-    _stub_run(db_session, label="DDoS", verdict="port_scan", providers=("groq", "gemini"))
+    _stub_run(db_session, label="DDoS", verdict="port_scan", providers=("openai", "openai"))
     db_session.commit()
     headers = bearer_for("forensic_analyst")
 

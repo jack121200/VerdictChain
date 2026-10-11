@@ -26,9 +26,9 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
+from backend.agents.rows import AgentRow
 from backend.agents.schemas import AgentResponse
 from backend.config import settings as app_settings
-from backend.db.models import RawLog
 from backend.debate import engine, provider_stats
 from backend.debate.failure import classify
 from backend.debate.state import build_peripheral_digest
@@ -56,7 +56,7 @@ class RunContext:
     primary_agent_id: str
     investigators: dict[str, engine.InvestigatorFn]
     settings: engine.EngineSettings
-    inputs: dict[str, list[RawLog]]
+    inputs: dict[str, list[AgentRow]]
     input_basis: dict[str, dict]
     on_update: Callable[[dict], None] | None = None
 

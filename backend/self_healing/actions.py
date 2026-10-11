@@ -1,16 +1,18 @@
 """Self-Healing Response Agent (SKILL-architecture.md Section 7). The
 containment decision (WHICH actions, on WHAT target) is rule-based - not an
-LLM call. An LLM call (Gemini, per SKILL-agent-prompts.md Section 7) is used
+LLM call. An LLM call (OpenAI, per SKILL-agent-prompts.md Section 7) is used
 only to generate the human-readable justification logged alongside each
-action, exactly as SKILL-agent-prompts.md Section 6 specifies.
+action, as SKILL-agent-prompts.md Section 6 specifies. One call writes the
+sentence of every action of the verdict: the key behind it allows few requests.
 """
 
+import re
 import uuid
 from collections import Counter
 
 from sqlalchemy import select
 
-from backend.agents.llm_clients import GeminiClient
+from backend.agents.llm_clients import OpenAIClient
 from backend.db.audit import append_entry
 from backend.db.models import RawLog, ResponseAction
 from backend.db.session import SessionLocal
@@ -26,10 +28,13 @@ _INSIDER_CLASSES = {"insider_file_exfiltration", "insider_logon_anomaly"}
 
 _REASON_PROMPT_TEMPLATE = (
     'A verdict of "{attack_class}" was reached with confidence {confidence}, verified by\n'
-    "agents with credibility scores {crs_list}. The system is about to take this\n"
-    "sandboxed containment action: {action_name} on target {target}. Write one sentence\n"
-    "(max 30 words) explaining why this action is being taken, for the audit trail."
+    "agents with credibility scores {crs_list}. The system is about to take these\n"
+    "sandboxed containment actions:\n{listed}\n"
+    "For each action write one sentence (max 30 words) explaining why it is being taken, for the\n"
+    "audit trail. Answer with exactly {count} lines, one sentence per line, in the order listed,\n"
+    "each starting with its number and a period."
 )
+_NUMBERED_LINE = re.compile(r"^\s*(\d+)[.)]\s*(\S.*?)\s*$")
 
 
 def should_respond(
@@ -105,31 +110,63 @@ _SANDBOX_FUNCTIONS = {
 }
 
 
-def _generate_reason(
-    attack_class: str, confidence: float, crs_list: list[float], action_name: str, target: str
+REASON_SYSTEM_PROMPT = (
+    "You write concise, factual one-sentence audit-log justifications. No JSON, just the numbered lines."
+)
+
+
+def reasons_prompt(
+    attack_class: str, confidence: float, crs_list: list[float], planned: list[tuple[str, str]]
 ) -> str:
-    prompt = _REASON_PROMPT_TEMPLATE.format(
+    listed = "\n".join(
+        f"{number}. {action_name} on target {target}"
+        for number, (action_name, target) in enumerate(planned, 1)
+    )
+    return _REASON_PROMPT_TEMPLATE.format(
         attack_class=attack_class,
         confidence=confidence,
         crs_list=crs_list,
-        action_name=action_name,
-        target=target,
+        listed=listed,
+        count=len(planned),
     )
+
+
+def parse_reasons(text: str, count: int) -> list[str] | None:
+    """The numbered lines of the answer, in order, or None unless it holds exactly the numbers 1..count."""
+    found: dict[int, str] = {}
+    for line in text.splitlines():
+        match = _NUMBERED_LINE.match(line)
+        if match is not None:
+            found[int(match.group(1))] = match.group(2)
+    if sorted(found) != list(range(1, count + 1)):
+        return None
+    return [found[number] for number in range(1, count + 1)]
+
+
+def fallback_reason(attack_class: str, confidence: float, action_name: str, target: str) -> str:
+    """The sentence used when no model could write one: the facts of the action, nothing invented."""
+    return (
+        f"{action_name} on {target}: {attack_class} verdict at confidence {confidence} "
+        "with credible supporting agents."
+    )
+
+
+def _generate_reasons(
+    attack_class: str, confidence: float, crs_list: list[float], planned: list[tuple[str, str]]
+) -> list[str]:
+    """One sentence per planned action, from one OpenAI call. Whatever goes wrong (no key, a limit, an
+    answer that is not one numbered line per action) the facts-only sentence is used: the reason text is
+    a nice-to-have and must never block containment."""
+    fallbacks = [fallback_reason(attack_class, confidence, action, target) for action, target in planned]
     try:
-        return (
-            GeminiClient()
-            .complete(
-                "You write concise, factual one-sentence audit-log justifications. "
-                "No JSON, just the sentence.",
-                prompt,
-            )
-            .strip()
+        answer = OpenAIClient().complete_text(
+            REASON_SYSTEM_PROMPT,
+            reasons_prompt(attack_class, confidence, crs_list, planned),
+            max_output_tokens=400,
         )
-    except Exception:  # noqa: BLE001 - reason text is a nice-to-have, never block containment on it
-        return (
-            f"{action_name} on {target}: {attack_class} verdict at confidence {confidence} "
-            "with credible supporting agents."
-        )
+    except Exception:  # noqa: BLE001
+        return fallbacks
+    return parse_reasons(answer, len(planned)) or fallbacks
 
 
 def respond_to_verdict(
@@ -155,10 +192,7 @@ def respond_to_verdict(
     crs_list = list(agent_credibilities.values())
     # The LLM reason text is generated before the audit transaction opens, so the
     # advisory lock is never held across a provider call (plan section 3.2).
-    reasons = [
-        _generate_reason(verdict_class, verdict["verdict_confidence"], crs_list, action_type, target)
-        for action_type, target in planned
-    ]
+    reasons = _generate_reasons(verdict_class, verdict["verdict_confidence"], crs_list, planned)
     taken = []
 
     session = SessionLocal()

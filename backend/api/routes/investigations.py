@@ -8,17 +8,16 @@ import re
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
-from typing import get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from backend.agents.schemas import AgentId
+from backend.agents.registry import DATASET_BY_AGENT, INVESTIGATOR_IDS
 from backend.api.auth import get_current_user
 from backend.api.debate_queue import queue_position
 from backend.api.provenance import data_source_by_investigation, source_of
-from backend.api.rate_limit import slot_holder
+from backend.api.rate_limit import slot_holders
 from backend.api.routes.evidence import (
     citation_summary,
     investigation_transcripts,
@@ -36,6 +35,7 @@ from backend.api.schemas.read import (
     ResponseActionOut,
 )
 from backend.api.schemas.realtime import InvestigationProgressOut
+from backend.db.audit import append_entry
 from backend.db.models import (
     AnalystFeedback,
     AuditTrail,
@@ -46,19 +46,10 @@ from backend.db.models import (
 )
 from backend.db.session import SessionLocal
 from backend.debate.engine import DEBATE_ROUNDS
-from backend.debate.verdict import _CLASS_KEYWORDS, classify_theory
+from backend.debate.verdict import _CLASS_KEYWORDS, vote_of
 from backend.evaluation.adaptive_threshold import adapt
 
 router = APIRouter(prefix="/investigations", tags=["investigations"])
-
-INVESTIGATOR_IDS: tuple[str, ...] = get_args(AgentId)
-
-# The dataset each investigator reads (SKILL-architecture.md Section 2).
-DATASET_BY_AGENT: dict[str, str] = {
-    "network_traffic": "CICIDS2017",
-    "access_log": "CERT r4.2",
-    "endpoint_behavior": "CERT r4.2",
-}
 
 _STANCE_RE = re.compile(r"^\s*(CHALLENGE|SUPPORT|REVISE)\b")
 
@@ -119,6 +110,7 @@ def _summary(
         rounds_complete=rounds_complete,
         containment_count=containment_count,
         data_source=data_source,
+        error_reason=investigation.error_reason,
         created_at=investigation.created_at,
     )
 
@@ -225,13 +217,16 @@ def _votes(transcripts: list[DebateTranscript], isolated: set[str]) -> list[Agen
         if agent_id not in latest:
             continue
         transcript = latest[agent_id]
-        vote_class = classify_theory(transcript.theory)
+        vote_class, source = vote_of(transcript.theory, transcript.vote_class)
         votes.append(
             AgentVoteOut(
                 agent_id=agent_id,
                 round=transcript.round,
                 vote_class=vote_class,
-                matched_keywords=matched_keywords(transcript.theory, vote_class),
+                class_source=source,
+                matched_keywords=(
+                    matched_keywords(transcript.theory, vote_class) if source == "keywords" else []
+                ),
                 counted=agent_id not in isolated,
             )
         )
@@ -283,7 +278,7 @@ def get_investigation(
                     agent_id=t.agent_id,
                     theory=t.theory,
                     confidence=t.confidence,
-                    stance=stance_of(t.theory),
+                    stance=t.stance or stance_of(t.theory),
                     provider=t.provider,
                     cited_evidence=[CitedEvidenceOut.model_validate(e) for e in t.cited_evidence],
                     created_at=t.created_at,
@@ -344,17 +339,18 @@ def get_progress(
         if inv is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Investigation not found")
         done = rounds_complete_by_investigation(session, [investigation_id])[investigation_id]
-        current_status, created_at = inv.status, inv.created_at
+        current_status, created_at, error_reason = inv.status, inv.created_at, inv.error_reason
         position = queue_position(session, investigation_id)
 
-    holder = slot_holder()
+    holders = slot_holders()
+    holder = holders[0] if holders else None  # what a queued debate waits for: the longest-running one
     if current_status == "error":
         phase = "error"
     elif current_status in _FINISHED_STATUSES:
         phase = "finished"
     elif current_status == "queued":
         phase = "queued"
-    elif holder == str(investigation_id):
+    elif str(investigation_id) in holders:
         phase = "running"
     else:
         phase = "unknown"
@@ -369,6 +365,7 @@ def get_progress(
         queue_position=position[0] if position else None,
         queue_length=position[1] if position else None,
         waiting_for=_investigation_id_or_none(holder) if phase == "queued" else None,
+        error_reason=error_reason if phase == "error" else None,
     )
 
 
@@ -384,6 +381,13 @@ def submit_feedback(
             AnalystFeedback(
                 investigation_id=investigation_id, verdict_was_correct=payload.verdict_was_correct
             )
+        )
+        append_entry(
+            session,
+            username,
+            "analyst_feedback",
+            {"verdict_was_correct": payload.verdict_was_correct},
+            investigation_id=investigation_id,
         )
         session.commit()
         # The feedback may move the verdict threshold one small step (LG10). The move is audited.

@@ -55,6 +55,7 @@ TOPICS_FOR_ACTION: dict[str, tuple[str, ...]] = {
     "login": ("audit",),
     "byzantine_fault_injected": ("agents", "audit"),
     "debate_started": ("investigations", "stats", "audit"),
+    "investigation_failed": ("investigations", "stats", "audit"),
     "live_feed_started": ("live", "audit"),
     "live_feed_stopped": ("live", "audit"),
     "live_tick": ("live",),  # published by the live monitor about once a second; never audited

@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 
 from backend.api.debate_queue import worker
 from backend.api.main import app
-from backend.api.rate_limit import DebateSlot, get_redis, slot_holder
+from backend.api.rate_limit import DEBATE_SLOT_KEY, DebateSlot, get_redis, slot_holder
 from backend.config import settings
 from backend.db.models import AuditTrail, Investigation, RawLog
 from backend.db.session import SessionLocal
@@ -28,7 +28,7 @@ T0 = datetime(2017, 7, 5, 9, 0, tzinfo=timezone.utc)
 
 def _clear_debate_state() -> None:
     redis_client = get_redis()
-    redis_client.delete("verdictchain:debate:slot")
+    redis_client.delete(DEBATE_SLOT_KEY)
     for key in redis_client.scan_iter("verdictchain:cap:*"):
         redis_client.delete(key)
 
@@ -89,6 +89,74 @@ def test_every_analyst_role_may_inject_a_scenario(db_session, monkeypatch):
     monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
     resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("red_team_auditor"))
     assert resp.status_code == 201
+
+
+def test_a_debate_openai_would_refuse_is_declined_in_words_and_creates_nothing(db_session, monkeypatch):
+    """OpenAI's own answers said the key is out of requests: queueing a debate that must fail after minutes
+    of retries is worse than saying so at once."""
+    from backend.agents import openai_usage
+
+    _seed_scenario(db_session)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
+    openai_usage.record_limits(
+        {"x-ratelimit-limit-requests": "50", "x-ratelimit-remaining-requests": "0"}, blocked_for_s=1728
+    )
+
+    resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
+
+    assert resp.status_code == 429
+    assert resp.json()["detail"].startswith("OpenAI's limit for this key is reached; it frees up in about")
+    assert db_session.query(Investigation).count() == 0
+    assert slot_holder() is None
+
+
+def test_a_key_with_too_few_requests_left_for_a_whole_debate_is_declined_before_it_starts(
+    db_session, monkeypatch
+):
+    from backend.agents import openai_usage
+    from backend.debate.engine import REQUESTS_PER_DEBATE
+
+    _seed_scenario(db_session)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
+    openai_usage.record_limits(
+        {"x-ratelimit-limit-requests": "50", "x-ratelimit-remaining-requests": str(REQUESTS_PER_DEBATE - 1)}
+    )
+
+    resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
+
+    assert resp.status_code == 429
+    assert f"this needs about {REQUESTS_PER_DEBATE}" in resp.json()["detail"]
+
+    openai_usage.record_limits(
+        {"x-ratelimit-limit-requests": "50", "x-ratelimit-remaining-requests": str(REQUESTS_PER_DEBATE)}
+    )
+    ok = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
+    assert ok.status_code == 201
+    _wait_until_slot_free()
+
+
+def test_a_key_with_too_few_tokens_left_for_a_whole_debate_is_declined_before_it_starts(
+    db_session, monkeypatch
+):
+    from backend.agents import openai_usage
+    from backend.debate.engine import ESTIMATED_TOKENS_PER_DEBATE
+
+    _seed_scenario(db_session)
+    monkeypatch.setattr("backend.api.debate_queue.run_debate", _quick_debate)
+    openai_usage.record_limits(
+        {
+            "x-ratelimit-limit-requests": "50",
+            "x-ratelimit-remaining-requests": "40",
+            "x-ratelimit-limit-tokens": "100000",
+            "x-ratelimit-remaining-tokens": str(ESTIMATED_TOKENS_PER_DEBATE - 1),
+        }
+    )
+
+    resp = client.post(SIMULATE, json={"scenario_label": "DDoS"}, headers=auth_headers("forensic_analyst"))
+
+    assert resp.status_code == 429
+    assert "more tokens for now" in resp.json()["detail"]
+    assert db_session.query(Investigation).count() == 0
 
 
 def test_wait_true_runs_inline_and_returns_the_verdict(db_session, monkeypatch):
@@ -328,8 +396,10 @@ def test_the_defaults_are_wait_true_no_noise_and_five_rows(db_session, monkeypat
     assert resp.json()["verdict"]["verdict_class"] == "ddos"
 
 
-def test_the_debate_slot_is_one_redis_key(db_session):
+def test_a_debate_slot_is_one_member_of_the_slots_set(db_session):
     assert DebateSlot().acquire()
-    assert get_redis().get("verdictchain:debate:slot") is not None
-    assert not DebateSlot().acquire()  # a second holder is refused while the first holds the key
+    assert get_redis().zcard(DEBATE_SLOT_KEY) == 1
+    assert (
+        not DebateSlot().acquire()
+    )  # the suite pins one slot, so a second holder is refused while it is held
     _clear_debate_state()

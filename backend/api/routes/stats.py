@@ -9,17 +9,20 @@ the response is computed.
 """
 
 import logging
+import statistics
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.agents.registry import INVESTIGATOR_IDS
 from backend.api.audit_chain import ChainCheck, verify_audit_chain
 from backend.api.auth import get_current_user
 from backend.api.metrics import Metric, make_metric
 from backend.api.routes.evidence import load_investigation_citations
 from backend.api.schemas.stats import (
+    AutomationStatsOut,
     ChainStatsOut,
     CitationStatsOut,
     FeedbackStatsOut,
@@ -47,9 +50,11 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 
 SOURCE = "/stats"
 STATS_CACHE_TTL_SECONDS = 5
-INVESTIGATOR_IDS = ("network_traffic", "access_log", "endpoint_behavior")
 ACTIVE_WINDOW = timedelta(minutes=30)
 THREAT_WINDOW = timedelta(hours=24)
+AUTOMATION_WINDOW = timedelta(hours=24)
+# Audit actions an analyst performs on a case's containment; a case that has one was not contained hands-free.
+ANALYST_CONTAINMENT_ACTIONS = ("emergency_containment", "containment_released")
 THREAT_STATUSES = ("verdict_reached", "contained")
 VERDICT_STATUSES = ("verdict_reached", "contained", "ambiguous")
 KNOWN_STATUSES = ("queued", "investigating", "verdict_reached", "contained", "ambiguous", "error")
@@ -162,7 +167,8 @@ def _citation_block(session: Session) -> tuple[CitationStatsOut, int, int]:
         verified_rate=_share(
             verified,
             total,
-            "verified citations / total citations, exact match against raw_logs, all rounds",
+            "verified citations / total citations against raw_logs (the value as the agents read it, "
+            "or the same number), all rounds",
             "no debate citations yet",
         ),
         invalid_rate=_share(
@@ -172,7 +178,10 @@ def _citation_block(session: Session) -> tuple[CitationStatsOut, int, int]:
             "no debate citations yet",
         ),
         total=_count(total, "cited evidence entries across all debate transcripts"),
-        verified=_count(verified, "citations whose row exists and whose cited value matches it exactly"),
+        verified=_count(
+            verified,
+            "citations whose row exists and whose cited value is the stored value (or the same number)",
+        ),
         discrepancy=_count(
             discrepancy, "citations whose row exists but whose cited field or value does not match"
         ),
@@ -325,6 +334,80 @@ def _latency_block(session: Session) -> LatencyStatsOut:
     )
 
 
+def _automation_block(session: Session, now: datetime) -> AutomationStatsOut:
+    """What the live monitor started and finished by itself in the last 24 hours, and how long it took."""
+    in_window = Investigation.created_at >= now - AUTOMATION_WINDOW
+    automatic = Investigation.trigger_type == "continuous"
+    cases = _investigation_count(session, in_window)
+    auto_started = _investigation_count(session, in_window, automatic)
+    analyst_touched = select(AuditTrail.investigation_id).where(
+        AuditTrail.action.in_(ANALYST_CONTAINMENT_ACTIONS), AuditTrail.investigation_id.is_not(None)
+    )
+    hands_free = _investigation_count(
+        session,
+        in_window,
+        automatic,
+        Investigation.status == "contained",
+        Investigation.investigation_id.not_in(analyst_touched),
+    )
+
+    def first_audit_time(action: str) -> dict:
+        return dict(
+            session.execute(
+                select(AuditTrail.investigation_id, func.min(AuditTrail.created_at))
+                .join(Investigation, Investigation.investigation_id == AuditTrail.investigation_id)
+                .where(AuditTrail.action == action, in_window)
+                .group_by(AuditTrail.investigation_id)
+            ).all()
+        )
+
+    started = first_audit_time("investigation_started")
+    reached = first_audit_time("verdict_reached")
+    first_action = dict(
+        session.execute(
+            select(ResponseAction.investigation_id, func.min(ResponseAction.created_at))
+            .join(Investigation, Investigation.investigation_id == ResponseAction.investigation_id)
+            .where(in_window)
+            .group_by(ResponseAction.investigation_id)
+        ).all()
+    )
+    to_verdict = [(reached[i] - started[i]).total_seconds() for i in started if i in reached]
+    to_action = [(first_action[i] - reached[i]).total_seconds() for i in reached if i in first_action]
+    return AutomationStatsOut(
+        cases=_count(cases, "investigations accepted in the last 24 hours, whoever started them"),
+        auto_started=_count(
+            auto_started, "of those, investigations started by the live monitor (trigger_type = continuous)"
+        ),
+        auto_share=_share(
+            auto_started,
+            cases,
+            "investigations started by the live monitor / all investigations accepted, last 24 hours",
+            "no investigation was accepted in the last 24 hours",
+        ),
+        hands_free_contained=_count(
+            hands_free,
+            "investigations the live monitor started that ended contained with no analyst emergency "
+            "containment or release on them: detection, debate, verdict and containment without a click",
+        ),
+        median_seconds_to_verdict=make_metric(
+            statistics.median(to_verdict) if to_verdict else None,
+            len(to_verdict),
+            SOURCE,
+            "median seconds from the investigation_started audit entry to the verdict_reached audit entry, "
+            "last 24 hours (includes any wait in the debate queue); n = investigations with both",
+            reason=None if to_verdict else "no investigation reached a verdict in the last 24 hours",
+        ),
+        median_seconds_verdict_to_action=make_metric(
+            statistics.median(to_action) if to_action else None,
+            len(to_action),
+            SOURCE,
+            "median seconds from the verdict_reached audit entry to the first sandboxed response action, "
+            "last 24 hours; n = investigations that have both",
+            reason=None if to_action else "no investigation was contained in the last 24 hours",
+        ),
+    )
+
+
 def _compute_stats() -> StatsOut:
     session = SessionLocal()
     try:
@@ -342,6 +425,7 @@ def _compute_stats() -> StatsOut:
             feedback=feedback,
             brier=_brier(scored_feedback),
             latency=_latency_block(session),
+            automation=_automation_block(session, now),
             generated_at=now,
         )
     finally:

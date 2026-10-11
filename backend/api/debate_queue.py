@@ -1,19 +1,20 @@
 """The debate queue (checklist SD2 and SD4).
 
-One debate runs at a time on purpose: the credibility scores are shared state and the LLM quota is global.
-A request that arrives while one is running is no longer refused. It is accepted as an investigation with
-status 'queued', and one worker thread runs the accepted debates one after the other, oldest first.
+Up to `debate_max_concurrent` debates run at once (backend/api/rate_limit.py holds the slots). A request that
+arrives while all slots are busy is not refused: it is accepted as an investigation with status 'queued', and
+the worker threads run the accepted debates oldest first as slots free up. Parallel debates share the
+credibility scores safely (update_crs is one atomic Redis transaction) and the audit chain (one advisory
+lock), and the LLM quota is guarded per call, so more debates in flight do not weaken any of those guards.
 
 The queue is the investigations table itself (status 'queued', queued_at, run_spec; migration 0008), so a
-waiting debate survives an API restart: the worker finds it again when the process starts. run_spec holds
+waiting debate survives an API restart: the workers find it again when the process starts. run_spec holds
 ids and numbers only (see build_run_spec), never a label. The scenario label stays on the investigation row,
 and the worker reads it only to pick the scenario's rows, as the simulate request did before it.
 
-Rules the worker follows: it starts a debate only while it holds the debate slot (a maintenance operation
-holds the same slot), never while intake is paused (the accepted debates wait), and it claims a job with
-FOR UPDATE SKIP LOCKED, so a second API process could share the table without running a debate twice.
-Accepting a debate is limited per analyst and in total (settings debate_queue_max_per_user and
-debate_queue_max_total).
+Rules each worker follows: it starts a debate only while it holds a debate slot (a maintenance operation holds
+all of them), never while intake is paused (the accepted debates wait), and it claims a job with FOR UPDATE
+SKIP LOCKED, so two workers (or a second API process) never run the same debate twice. Accepting a debate is
+limited per analyst and in total (settings debate_queue_max_per_user and debate_queue_max_total).
 """
 
 import asyncio
@@ -30,13 +31,22 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.api.rate_limit import DebateSlot
+from backend.agents import openai_usage
+from backend.api.rate_limit import DebateSlot, slot_capacity
 from backend.api.websocket import make_debate_broadcaster
 from backend.config import settings
 from backend.db.audit import append_entry
 from backend.db.models import AgentQuarantine, Investigation, RawLog
 from backend.db.session import SessionLocal
-from backend.debate.engine import INVESTIGATORS, DebateFailedError, NotEnoughActiveAgents, run_debate
+from backend.debate.engine import (
+    ESTIMATED_TOKENS_PER_DEBATE,
+    INVESTIGATORS,
+    REQUESTS_PER_DEBATE,
+    DebateFailedError,
+    NotEnoughActiveAgents,
+    fail_investigation,
+    run_debate,
+)
 from backend.pipeline.log_streamer import get_rows_for_scenario
 
 logger = logging.getLogger(__name__)
@@ -44,6 +54,10 @@ logger = logging.getLogger(__name__)
 QUEUED = "queued"
 POLL_SECONDS = 2.0  # how often an idle worker looks for a job that was queued by another process
 KEPT_OUTCOMES = 64  # finished runs somebody may still be waiting on (wait=true requests)
+
+
+class NotEnoughAllowance(Exception):
+    """OpenAI's own answers say this key cannot take a debate right now. The text is for the analyst."""
 
 
 @dataclass(frozen=True)
@@ -194,13 +208,16 @@ def active_agent_count() -> int:
 
 
 class DebateWorker:
-    """The one thread that runs queued debates. Started on first use, so a test client without a lifespan
-    works, and by the app's lifespan, so a debate queued before a restart runs again."""
+    """The threads that run queued debates, one per debate slot. Started on first use, so a test client
+    without a lifespan works, and by the app's lifespan, so a debate queued before a restart runs again. The
+    slots (not the thread count) are what limits how many debates run at once, so a lowered
+    debate_max_concurrent takes effect at once and a raised one the next time a thread is asked for."""
 
     def __init__(self) -> None:
         self._start_lock = threading.Lock()
-        self._thread: threading.Thread | None = None
-        self._wake = threading.Event()
+        self._threads: list[threading.Thread] = []
+        self._wake = threading.Condition()
+        self._wakes = 0  # raised by every notify, so one that lands before a thread waits is not lost
         self._loop: asyncio.AbstractEventLoop | None = None
         self._cond = threading.Condition()
         self._outcomes: OrderedDict[str, Outcome] = OrderedDict()
@@ -209,13 +226,17 @@ class DebateWorker:
         if loop is not None:
             self._loop = loop
         with self._start_lock:
-            if self._thread is None or not self._thread.is_alive():
-                self._thread = threading.Thread(target=self._main, name="debate-queue-worker", daemon=True)
-                self._thread.start()
-        self._wake.set()
+            self._threads = [thread for thread in self._threads if thread.is_alive()]
+            for index in range(len(self._threads), slot_capacity()):
+                thread = threading.Thread(target=self._main, name=f"debate-queue-worker-{index}", daemon=True)
+                thread.start()
+                self._threads.append(thread)
+        self.notify()
 
     def notify(self) -> None:
-        self._wake.set()
+        with self._wake:
+            self._wakes += 1
+            self._wake.notify_all()
 
     def wait_for(self, investigation_id: uuid.UUID, timeout: float) -> Outcome:
         """Blocks until the worker has finished this investigation. Raises TimeoutError."""
@@ -238,14 +259,16 @@ class DebateWorker:
 
     def _main(self) -> None:
         while True:
+            seen = self._wakes
             try:
                 ran = self._run_next()
             except Exception:  # noqa: BLE001 - the worker must outlive any single failure
                 logger.exception("debate queue worker iteration failed")
                 ran = False
             if not ran:
-                self._wake.wait(POLL_SECONDS)
-                self._wake.clear()
+                with self._wake:
+                    if self._wakes == seen:  # nothing was announced while this thread looked for a job
+                        self._wake.wait(POLL_SECONDS)
 
     def _run_next(self) -> bool:
         if not _has_queued() or intake_paused():
@@ -275,6 +298,14 @@ class DebateWorker:
 
     def _execute(self, job: QueuedJob) -> Outcome:
         spec = job.run_spec
+        # The key's own allowance may have run out while this waited its turn: say so now, not after retries.
+        if (
+            allowance := openai_usage.allowance_block(
+                needed_requests=REQUESTS_PER_DEBATE, needed_tokens=ESTIMATED_TOKENS_PER_DEBATE
+            )
+        ) is not None:
+            fail_investigation(job.investigation_id, allowance, only_if_unfinished=True)
+            return Outcome(error=NotEnoughAllowance(allowance))
         try:
             primary_rows = _load_rows(spec["row_ids"])
             if spec.get("scenario_row_ids") is not None:
@@ -300,17 +331,13 @@ class DebateWorker:
             return Outcome(error=exc)
         except Exception as exc:  # noqa: BLE001 - run_debate marks its own failures; this covers the rest
             logger.exception("queued debate %s crashed", job.investigation_id)
-            _mark_error(job.investigation_id)
+            fail_investigation(
+                job.investigation_id,
+                "The debate stopped on an unexpected error "
+                f"({type(exc).__name__}); the API log has the details.",
+                only_if_unfinished=True,
+            )
             return Outcome(error=exc)
-
-
-def _mark_error(investigation_id: uuid.UUID) -> None:
-    with SessionLocal() as session:
-        inv = session.get(Investigation, investigation_id)
-        if inv is not None and inv.status == "investigating":
-            inv.status = "error"
-            inv.updated_at = func.now()
-            session.commit()
 
 
 worker = DebateWorker()

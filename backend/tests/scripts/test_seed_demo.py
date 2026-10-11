@@ -4,11 +4,11 @@ hallucination drill that makes the real Watchdog isolate an agent. Runs against 
 import pytest
 from sqlalchemy import func, select
 
-from backend.api.rate_limit import get_redis
+from backend.api.rate_limit import DEBATE_SLOT_KEY, get_redis
 from backend.db.models import AgentQuarantine, AuditTrail, DebateTranscript, Investigation
 from backend.db.session import SessionLocal
-from backend.scripts import e2e_server as stub
 from backend.scripts import seed_demo
+from backend.testing import e2e_server as stub
 from backend.watchdog.credibility import reset_agent
 
 AGENTS = tuple(stub.AGENTS)
@@ -18,7 +18,7 @@ AGENTS = tuple(stub.AGENTS)
 def clean_state():
     for agent in AGENTS:
         reset_agent(agent)
-    get_redis().delete("verdictchain:debate:slot")
+    get_redis().delete(DEBATE_SLOT_KEY)
     yield
     stub.uninstall()
     for agent in AGENTS:
@@ -54,7 +54,7 @@ def test_seeding_creates_a_complete_debate_labelled_as_stub(db_session, capsys):
     assert _count(DebateTranscript) == 9  # three agents, three rounds
     with SessionLocal() as session:
         providers = set(session.execute(select(DebateTranscript.provider)).scalars().all())
-    assert providers == {"stub-groq", "stub-gemini"}
+    assert providers == {"stub-openai"}
     assert "real provider calls: 0" in capsys.readouterr().out
     assert stub.get_fabricate() == {"agents": []}  # the harness is switched off again
 

@@ -12,9 +12,10 @@ from backend.debate.failure import Failure, classify, explain_failure
 class ProviderRateLimited(Exception):
     """Shaped like the client's exception: the message starts with the provider and a daily flag is set."""
 
-    def __init__(self, provider: str, daily: bool):
+    def __init__(self, provider: str, daily: bool, detail: str | None = None):
         super().__init__(f"{provider} returned 429 (retry-after=None, daily_quota={daily})")
         self.daily = daily
+        self.detail = detail
 
 
 class InvalidAgentResponse(Exception):
@@ -28,31 +29,42 @@ def _http_error(url: str, status: int, body: str = "") -> httpx.HTTPStatusError:
     )
 
 
-def test_a_spent_daily_quota_says_so_and_names_the_provider():
-    failure = classify(ProviderRateLimited("gemini", daily=True))
+def test_a_spent_account_says_so_and_names_the_provider():
+    failure = classify(ProviderRateLimited("openai", daily=True))
 
     assert failure == Failure(
         "daily_quota",
-        "gemini",
-        "The gemini daily quota is used up. Try again after it resets, or set another provider key.",
+        "openai",
+        "The openai account has no quota or credit left. Add credit in the OpenAI account, then try again.",
     )
+
+
+def test_a_limit_the_client_already_explained_keeps_its_own_sentence():
+    sentence = (
+        "OpenAI's limit on requests per day (RPD) for this key is reached: 50 allowed. "
+        "It frees up in about 29 minutes."
+    )
+
+    failure = classify(ProviderRateLimited("openai", daily=True, detail=sentence))
+
+    assert failure == Failure("daily_quota", "openai", sentence)  # not the generic "add credit" advice
+    # A burst limit never carries a long-wait sentence, and keeps the short advice:
+    assert classify(ProviderRateLimited("openai", daily=False, detail=sentence)).kind == "rate_limited"
 
 
 def test_a_rate_limit_that_is_not_the_daily_quota_asks_for_a_minute():
-    failure = classify(ProviderRateLimited("groq", daily=False))
+    failure = classify(ProviderRateLimited("openai", daily=False))
 
-    assert failure.kind == "rate_limited" and failure.provider == "groq"
-    assert failure.message == "The groq is rate limiting requests. Try again in a minute."
+    assert failure.kind == "rate_limited" and failure.provider == "openai"
+    assert failure.message == "The openai is rate limiting requests. Try again in a minute."
 
 
 def test_a_plain_http_429_is_read_from_the_response_and_the_host():
-    daily = classify(
-        _http_error("https://generativelanguage.googleapis.com/v1beta/models/x", 429, "RequestsPerDay")
-    )
-    limited = classify(_http_error("https://api.groq.com/openai/v1/chat/completions", 503))
+    daily = classify(_http_error("https://api.openai.com/v1/chat/completions", 429, "RequestsPerDay"))
+    limited = classify(_http_error("https://api.openai.com/v1/chat/completions", 503))
 
-    assert (daily.kind, daily.provider) == ("daily_quota", "gemini")
-    assert (limited.kind, limited.provider) == ("rate_limited", "groq")
+    assert (daily.kind, daily.provider) == ("daily_quota", "openai")
+    assert (limited.kind, limited.provider) == ("rate_limited", "openai")
     assert classify(_http_error("https://example.test/", 429)).message.startswith(
         "The model provider is rate limiting"
     )

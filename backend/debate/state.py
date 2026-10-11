@@ -23,6 +23,7 @@ from typing import Literal
 
 from sqlalchemy import select
 
+from backend.agents.registry import DOMAIN_SOURCES, EVENT_TYPE_TO_AGENT, INVESTIGATOR_IDS
 from backend.db.models import RawLog
 from backend.db.session import SessionLocal
 
@@ -31,19 +32,6 @@ InputBasis = Literal["scenario_rows", "same_user_window", "time_window", "recent
 
 # The window around a scenario's first and last row inside which other domains are searched.
 WINDOW_PAD = timedelta(hours=24)
-
-DOMAIN_SOURCES = {
-    "network_traffic": ["cicids2017"],
-    "access_log": ["cert_r4.2_file"],
-    "endpoint_behavior": ["cert_r4.2_logon", "cert_r4.2_device"],
-}
-
-EVENT_TYPE_TO_AGENT = {
-    "network_flow": "network_traffic",
-    "file_access": "access_log",
-    "logon": "endpoint_behavior",
-    "device_event": "endpoint_behavior",
-}
 
 
 def primary_agent_for_rows(rows: list[RawLog]) -> str:
@@ -54,15 +42,12 @@ def primary_agent_for_rows(rows: list[RawLog]) -> str:
     return next(iter(agents))
 
 
-# Ties on row count go to the earliest agent in this order (plan section 3.3).
-_TIE_BREAK_ORDER = ("network_traffic", "access_log", "endpoint_behavior")
-
-
 def dominant_agent_for_rows(rows: list[RawLog]) -> tuple[str, list[RawLog]]:
     """Returns (agent_id, rows_of_that_domain) for the agent with the most mapped rows.
-    Rows with an unmapped event_type are ignored. No mapped rows raises ValueError.
+    Rows with an unmapped event_type are ignored. No mapped rows raises ValueError. Ties on row count go to
+    the earliest agent of INVESTIGATOR_IDS (plan section 3.3).
     """
-    by_agent: dict[str, list[RawLog]] = {agent: [] for agent in _TIE_BREAK_ORDER}
+    by_agent: dict[str, list[RawLog]] = {agent: [] for agent in INVESTIGATOR_IDS}
     for row in rows:
         agent = EVENT_TYPE_TO_AGENT.get(row.event_type)
         if agent is not None:
@@ -70,7 +55,7 @@ def dominant_agent_for_rows(rows: list[RawLog]) -> tuple[str, list[RawLog]]:
     if not any(by_agent.values()):
         raise ValueError("no rows map to an investigator agent's domain")
     # max() returns the first maximal item in iteration order, which is the tie-break.
-    winner = max(_TIE_BREAK_ORDER, key=lambda agent: len(by_agent[agent]))
+    winner = max(INVESTIGATOR_IDS, key=lambda agent: len(by_agent[agent]))
     return winner, by_agent[winner]
 
 

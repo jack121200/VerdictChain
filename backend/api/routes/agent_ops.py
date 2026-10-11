@@ -170,8 +170,8 @@ def _known_agent(agent_id: str) -> None:
 
 @contextmanager
 def _maintenance_slot() -> Iterator[None]:
-    """Holds the debate slot for one quarantine or restore. A running debate answers 409 instead."""
-    slot = DebateSlot(label="maintenance")
+    """Holds every debate slot for one quarantine or restore. A running debate answers 409 instead."""
+    slot = DebateSlot(exclusive=True)
     if not slot.acquire():
         raise HTTPException(status.HTTP_409_CONFLICT, detail=_slot_busy_detail(slot_holder()))
     try:

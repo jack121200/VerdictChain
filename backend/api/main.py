@@ -105,6 +105,7 @@ app.include_router(simulate.router)
 app.include_router(live.router)
 app.include_router(investigations.router)
 app.include_router(audit.router)
+app.include_router(audit.case_router)
 app.include_router(response_actions.router)
 app.include_router(ws_investigations_router)
 

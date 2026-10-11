@@ -9,9 +9,9 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.agents.registry import DOMAIN_SOURCES
 from backend.agents.schemas import CitedEvidence
 from backend.db.models import RawLog
-from backend.debate.state import DOMAIN_SOURCES
 from backend.watchdog.credibility import compute_crs
 from backend.watchdog.verification import CitationCheck
 

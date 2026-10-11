@@ -8,7 +8,7 @@ import ast
 import inspect
 from datetime import datetime
 from types import ModuleType
-from typing import Any, get_args
+from typing import Any
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.agents import access_log, endpoint_behavior, llm_clients, network_traffic
-from backend.agents.schemas import AgentId
+from backend.agents.registry import INVESTIGATOR_IDS, PROFILES
 from backend.api.auth import get_current_user
 from backend.api.metrics import Metric, make_metric
 from backend.api.rate_limit import read_limit
@@ -24,44 +24,42 @@ from backend.api.routes.evidence import load_investigation_citations
 from backend.api.schemas.read import AgentFleetEntryOut, CredibilityPointOut
 from backend.db.models import AgentQuarantine, CredibilityLog, DebateTranscript, Investigation
 from backend.db.session import SessionLocal
-from backend.debate.verdict import classify_theory
+from backend.debate.verdict import vote_of
 from backend.watchdog.credibility import get_crs
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 SOURCE = "/agents/fleet"
-INVESTIGATOR_IDS: tuple[str, ...] = get_args(AgentId)
 
-# Human-facing identity and data domain. The signal names come from the agent's own prompt (see _signals).
+# Each agent's module and the signal names it is expected to use; they are checked against the agent's own
+# prompt (see _signals). Ids, display names and domains come from the registry.
+_AGENT_MODULE: dict[str, ModuleType] = {
+    network_traffic.AGENT_ID: network_traffic,
+    access_log.AGENT_ID: access_log,
+    endpoint_behavior.AGENT_ID: endpoint_behavior,
+}
+_AGENT_SIGNALS: dict[str, list[str]] = {
+    network_traffic.AGENT_ID: [
+        "Flow Bytes/s",
+        "Flow Packets/s",
+        "SYN/RST/ACK flag ratios",
+        "Flow IAT patterns",
+        "Active/Idle mean-std-max-min",
+    ],
+    access_log.AGENT_ID: ["file_access_count", "distinct_filenames", "user_department"],
+    endpoint_behavior.AGENT_ID: ["off_hours", "connect_count", "distinct_pcs_with_device_activity"],
+}
 AGENT_PROFILE: dict[str, dict] = {
-    "network_traffic": {
-        "display_name": "Network-Traffic Investigator",
-        "domain": "External network traffic (CICIDS2017 flows)",
-        "module": network_traffic,
-        "signals": [
-            "Flow Bytes/s",
-            "Flow Packets/s",
-            "SYN/RST/ACK flag ratios",
-            "Flow IAT patterns",
-            "Active/Idle mean-std-max-min",
-        ],
-    },
-    "access_log": {
-        "display_name": "Access-Log Investigator",
-        "domain": "File access (CERT r4.2 file.csv)",
-        "module": access_log,
-        "signals": ["file_access_count", "distinct_filenames", "user_department"],
-    },
-    "endpoint_behavior": {
-        "display_name": "Endpoint-Behavior Investigator",
-        "domain": "Logon and device activity (CERT r4.2 logon.csv, device.csv)",
-        "module": endpoint_behavior,
-        "signals": ["off_hours", "connect_count", "distinct_pcs_with_device_activity"],
-    },
+    agent_id: {
+        "display_name": profile.display_name,
+        "domain": profile.domain,
+        "module": _AGENT_MODULE[agent_id],
+        "signals": _AGENT_SIGNALS[agent_id],
+    }
+    for agent_id, profile in PROFILES.items()
 }
 
-_PROVIDER_CLASS_NAMES = {"GroqClient": "groq", "GeminiClient": "gemini"}
-_MODEL_BY_PROVIDER = {"groq": llm_clients.GROQ_MODEL, "gemini": llm_clients.GEMINI_MODEL}
+_PROVIDER_CLASS_NAMES = {"OpenAIClient": "openai"}
 
 
 def _signals(agent_id: str) -> list[str]:
@@ -74,21 +72,19 @@ def _signals(agent_id: str) -> list[str]:
 
 
 def _provider_chain(agent_id: str) -> list[str]:
-    """Providers in call order, read from the agent module's call_with_fallback(primary, fallback, ...)."""
+    """Providers in call order, read from the agent module's ask(provider, ...)."""
     tree = ast.parse(inspect.getsource(AGENT_PROFILE[agent_id]["module"]))
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == "call_with_fallback"
+            and node.func.id == "ask"
+            and node.args
         ):
-            chain = []
-            for arg in node.args[:2]:
-                if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
-                    chain.append(_PROVIDER_CLASS_NAMES[arg.func.id])
-            if len(chain) == 2:
-                return chain
-    raise RuntimeError(f"no call_with_fallback(...) found in the source of agent {agent_id!r}")
+            arg = node.args[0]
+            if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
+                return [_PROVIDER_CLASS_NAMES[arg.func.id]]
+    raise RuntimeError(f"no ask(...) found in the source of agent {agent_id!r}")
 
 
 def _declared_temperatures() -> list[float]:
@@ -176,7 +172,7 @@ def _fleet_entry(session: Session, agent_id: str) -> AgentFleetEntryOut:
         domain=profile["domain"],
         signals=_signals(agent_id),
         provider_chain=chain,
-        model=_MODEL_BY_PROVIDER[chain[0]],
+        model=llm_clients.model_name(),
         temperature=_temperature_metric(),
         crs=_crs_metric(agent_id, rounds_scored_n),
         isolated=_is_isolated(session, agent_id),
@@ -199,7 +195,7 @@ def _fleet_entry(session: Session, agent_id: str) -> AgentFleetEntryOut:
             "citations that do not check as VERIFIED / total citations (DISCREPANCY or INVALID_ROW)",
             reason=None if total else "no citations yet",
         ),
-        last_vote=classify_theory(last.theory) if last is not None else None,
+        last_vote=vote_of(last.theory, last.vote_class)[0] if last is not None else None,
     )
 
 

@@ -1,7 +1,7 @@
 """Real-API proof for the full 3-agent, 3-round debate engine. Deliberately
 outside pytest (9 real LLM calls - slow, uses quota, non-deterministic).
 
-Run: python -m backend.scripts.smoke_test_debate_live
+Run: python -m backend.scripts.live_smoke.smoke_test_debate_live
 """
 
 from backend.debate.engine import run_debate, start_investigation

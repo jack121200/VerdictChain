@@ -126,6 +126,48 @@ def test_submit_feedback(db_session):
     assert resp.status_code == 204
 
 
+def test_feedback_is_one_entry_in_the_audit_chain(db_session):
+    """The dossier's Proof says the judgement is audited: the entry names who judged which case."""
+    session = SessionLocal()
+    try:
+        inv = Investigation(trigger_type="manual")
+        session.add(inv)
+        session.commit()
+        session.refresh(inv)
+        inv_id = inv.investigation_id
+    finally:
+        session.close()
+    headers = _auth_headers()
+
+    sent = client.post(
+        f"/investigations/{inv_id}/feedback", json={"verdict_was_correct": False}, headers=headers
+    )
+
+    assert sent.status_code == 204
+    trail = client.get(
+        "/audit-trail",
+        params={"action": "analyst_feedback", "investigation_id": str(inv_id)},
+        headers=headers,
+    ).json()
+    (entry,) = trail["entries"]
+    assert entry["actor"].startswith("test_user_")
+    assert entry["detail"] == {"verdict_was_correct": False}
+    assert entry["investigation_id"] == str(inv_id)
+    assert trail["chain"]["valid"] is True
+
+
+def test_feedback_for_an_unknown_case_writes_nothing(db_session):
+    headers = _auth_headers()
+
+    sent = client.post(
+        f"/investigations/{uuid.uuid4()}/feedback", json={"verdict_was_correct": True}, headers=headers
+    )
+
+    assert sent.status_code == 404
+    trail = client.get("/audit-trail", params={"action": "analyst_feedback"}, headers=headers).json()
+    assert trail["entries"] == []
+
+
 def test_agent_fleet_returns_all_three_agents(db_session):
     headers = _auth_headers()
     resp = client.get("/agents/fleet", headers=headers)

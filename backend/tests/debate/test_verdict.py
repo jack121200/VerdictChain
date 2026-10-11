@@ -1,15 +1,87 @@
 from backend.agents.schemas import AgentResponse
-from backend.debate.verdict import aggregate_verdict, classify_theory
+from backend.debate.verdict import aggregate_verdict, classify_theory, vote_of
 
 
-def _resp(agent_id: str, theory: str, confidence: float) -> AgentResponse:
+def _resp(agent_id: str, theory: str, confidence: float, vote_class: str | None = None) -> AgentResponse:
     return AgentResponse(
         agent_id=agent_id,
         theory=theory,
         confidence=confidence,
         cited_evidence=[{"row_id": "r1", "field": "f", "value": "v"}],
         round=3,
+        vote_class=vote_class,
     )
+
+
+# What the real model wrote in a stored debate (DDoS flows, three rows): it says there is NO clear attack and
+# only weakly mentions a beacon, so the keyword list read it as a botnet vote.
+HEDGED_THEORY = (
+    "No clear network attack is evident in this slice: the three flows are low-volume traffic to port 80, "
+    "with no volume spike; the long idle periods are weakly consistent with beaconing, nothing more."
+)
+
+
+def test_the_keyword_reading_takes_a_hedged_theory_for_a_botnet_vote():
+    assert classify_theory(HEDGED_THEORY) == "botnet_c2"  # the defect the stated class removes
+
+
+def test_a_stated_class_beats_the_keyword_reading_of_the_same_theory():
+    assert vote_of(HEDGED_THEORY, "benign") == ("benign", "stated")
+    assert vote_of(HEDGED_THEORY, "ambiguous") == ("unclassified", "stated")  # an abstention, like no keyword
+    assert vote_of(HEDGED_THEORY, "ddos") == ("ddos", "stated")
+
+
+def test_without_a_stated_class_the_theory_is_read_as_before():
+    assert vote_of("Traffic spike suggests a DDoS flood.", None) == ("ddos", "keywords")
+    assert vote_of("xyz qwerty unrelated text", None) == ("unclassified", "keywords")
+
+
+def test_a_stated_class_decides_the_verdict_over_what_the_words_say():
+    responses = [
+        _resp("network_traffic", HEDGED_THEORY, 0.6, vote_class="benign"),
+        _resp("access_log", "DDoS-like volumetric spike observed too.", 0.7, vote_class="ddos"),
+        _resp("endpoint_behavior", "Clear DDoS flood pattern.", 0.9, vote_class="ddos"),
+    ]
+
+    verdict = aggregate_verdict(responses)
+
+    assert verdict["verdict_class"] == "ddos"
+    assert verdict["contributing_agents"] == ["access_log", "endpoint_behavior"]
+    assert verdict["verdict_confidence"] == 0.8
+
+
+def test_a_hedging_primary_agent_no_longer_decides_a_tie_by_its_keywords():
+    """Before: network_traffic's hedged text read as botnet_c2, and as the primary agent it broke the tie.
+    Now it states 'benign', so it casts no real vote and the tie stays ambiguous."""
+    responses = [
+        _resp("network_traffic", HEDGED_THEORY, 0.6, vote_class="benign"),
+        _resp(
+            "access_log", "Unusual file access and exfiltration.", 0.7, vote_class="insider_file_exfiltration"
+        ),
+        _resp(
+            "endpoint_behavior",
+            "Off-hours logon anomaly, an unusual login.",
+            0.8,
+            vote_class="insider_logon_anomaly",
+        ),
+    ]
+
+    verdict = aggregate_verdict(responses, primary_agent_id="network_traffic")
+
+    assert verdict["verdict_class"] == "ambiguous"
+
+
+def test_a_stated_class_and_a_missing_one_can_vote_together():
+    responses = [
+        _resp("network_traffic", "Clear DDoS flood pattern.", 0.9),  # no stated class: the words are read
+        _resp("access_log", "Something else entirely.", 0.7, vote_class="ddos"),
+        _resp("endpoint_behavior", "No evidence of misuse.", 0.5),
+    ]
+
+    verdict = aggregate_verdict(responses)
+
+    assert verdict["verdict_class"] == "ddos"
+    assert verdict["contributing_agents"] == ["network_traffic", "access_log"]
 
 
 def test_classify_theory_ddos():

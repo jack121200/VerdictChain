@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.agents import access_log, endpoint_behavior, network_traffic
+from backend.agents.rows import project
 from backend.agents.schemas import AgentResponse
 from backend.db.audit import append_entry
 from backend.db.models import AgentQuarantine, DebateTranscript, Investigation, RawLog
@@ -37,6 +38,8 @@ from backend.debate.state import assemble_debate_inputs, is_near_duplicate
 DEBATE_ROUNDS = 3
 MIN_ACTIVE_AGENTS = 2
 _STANCE_RE = re.compile(r"\s*(CHALLENGE|SUPPORT|REVISE)\b")
+_ROW_ID_RE = re.compile(r"\b[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\b")
+ROW_ID_PLACEHOLDER = "[row id withheld]"
 
 
 class DebateFailedError(Exception):
@@ -68,10 +71,15 @@ class EngineSettings(Protocol):
 InvestigatorFn = Callable[..., tuple[AgentResponse, str]]
 
 INVESTIGATORS: dict[str, InvestigatorFn] = {
-    "network_traffic": network_traffic.investigate,
-    "access_log": access_log.investigate,
-    "endpoint_behavior": endpoint_behavior.investigate,
+    network_traffic.AGENT_ID: network_traffic.investigate,
+    access_log.AGENT_ID: access_log.investigate,
+    endpoint_behavior.AGENT_ID: endpoint_behavior.investigate,
 }
+# What one debate asks of the provider: every investigator answers in every round.
+REQUESTS_PER_DEBATE = DEBATE_ROUNDS * len(INVESTIGATORS)
+# Tokens one debate uses (prompts and answers of those requests), measured on real runs and rounded up. Only
+# used to decline a debate when the key's own latest answer shows it cannot cover it; never to count spend.
+ESTIMATED_TOKENS_PER_DEBATE = 30_000
 
 
 def _load_settings(session: Session | None = None) -> EngineSettings:
@@ -174,6 +182,8 @@ def _persist_round(
                 confidence=response.confidence,
                 cited_evidence=[e.model_dump() for e in response.cited_evidence],
                 provider=provider,
+                stance=response.stance or parse_stance(response.theory),
+                vote_class=response.vote_class,
             )
         )
         session.commit()
@@ -182,8 +192,12 @@ def _persist_round(
 
 
 def _debate_context_for(agent_id: str, latest_by_agent: dict[str, AgentResponse]) -> str:
+    """What an agent reads of the others in rounds 2 and 3: their theories and confidences, never their rows.
+    A theory often quotes the row ids its author cited; those are withheld, because an agent that cites a row
+    it was never given makes its answer invalid (backend/agents/base_agent.py)."""
     parts = [
-        f"{other_id}: theory={resp.theory!r} confidence={resp.confidence}"
+        f"{other_id}: theory={_ROW_ID_RE.sub(ROW_ID_PLACEHOLDER, resp.theory)!r} confidence={resp.confidence}"
+        + (f" vote_class={resp.vote_class}" if resp.vote_class else "")
         for other_id, resp in latest_by_agent.items()
         if other_id != agent_id
     ]
@@ -293,6 +307,34 @@ def _set_status(investigation_id: uuid.UUID, status: str) -> None:
         session.close()
 
 
+def fail_investigation(investigation_id: uuid.UUID, reason: str, *, only_if_unfinished: bool = False) -> bool:
+    """Ends an investigation in status 'error' and says why: the sentence is stored on the investigation
+    (error_reason) and appended to the audit trail as investigation_failed, in one transaction. A debate that
+    stops with no word about it looks, on every screen, like a debate that produced nothing.
+
+    With only_if_unfinished, an investigation that already has a verdict or already failed is left alone.
+    Returns whether anything changed."""
+    session = SessionLocal()
+    try:
+        inv = session.get(Investigation, investigation_id)
+        if inv is None or (only_if_unfinished and inv.status not in ("investigating", "queued")):
+            return False
+        inv.status = "error"
+        inv.error_reason = reason
+        inv.updated_at = func.now()
+        append_entry(
+            session,
+            actor="debate_engine",
+            action="investigation_failed",
+            detail={"reason": reason},
+            investigation_id=investigation_id,
+        )
+        session.commit()
+        return True
+    finally:
+        session.close()
+
+
 def _finalize_verdict(investigation_id: uuid.UUID, verdict: dict) -> None:
     """Writes the verdict to the Investigation and audits verdict_reached, in one transaction."""
     session = SessionLocal()
@@ -337,7 +379,7 @@ def _round_entry(agent_id: str, response: AgentResponse, provider: str, score: d
         "agent_id": agent_id,
         "theory": response.theory,
         "confidence": response.confidence,
-        "stance": parse_stance(response.theory),
+        "stance": response.stance or parse_stance(response.theory),
         "provider": provider,
         "cited_evidence": [e.model_dump() for e in response.cited_evidence],
         "credibility": score,
@@ -379,8 +421,8 @@ def run_debate(
     quarantined = _quarantined_agents()
     active = [agent for agent in investigators if agent not in quarantined]
     if len(active) < MIN_ACTIVE_AGENTS:
-        _set_status(investigation_id, "error")
         message = f"{len(active)} investigator(s) active, at least {MIN_ACTIVE_AGENTS} required"
+        fail_investigation(investigation_id, message)
         if on_update:
             on_update({"type": "error", "investigation_id": str(investigation_id), "detail": message})
         raise NotEnoughActiveAgents(message)
@@ -390,7 +432,8 @@ def run_debate(
     assembled, basis = assemble_debate_inputs(
         primary_agent_id, primary_rows, max_rows=max_rows_per_agent, scenario_rows=scenario_rows
     )
-    inputs = {agent: assembled[agent] for agent in active}
+    # The investigators get label-free views of the rows (backend/agents/rows.py), never the ORM rows.
+    inputs = {agent: [project(row) for row in assembled[agent]] for agent in active}
     input_basis = {agent: {"basis": basis[agent], "row_count": len(inputs[agent])} for agent in active}
 
     # Imported at call time: graph.py builds on this module's helpers.
@@ -412,7 +455,7 @@ def run_debate(
         # Investigation stuck at status='investigating' forever. Mark it and let the caller (the API route)
         # decide how to surface this to the client/WebSocket.
         reason = explain_failure(failure.original)
-        _set_status(investigation_id, "error")
+        fail_investigation(investigation_id, reason)
         if on_update:
             on_update({"type": "error", "investigation_id": str(investigation_id), "detail": reason})
         raise DebateFailedError(str(investigation_id), reason) from failure.original

@@ -36,6 +36,7 @@ def test_catalog_is_exactly_the_documented_action_list():
             "containment_released",
             "byzantine_fault_injected",
             "debate_started",
+            "investigation_failed",
             "live_feed_started",
             "live_feed_stopped",
             "lock_account",

@@ -42,6 +42,7 @@ Five added tokens (plan §4). Their values are the reference's own raw hex, now 
 | Critical, threat, isolated, failed | `error` text, `error-container` at 30% tint, `error-strong` solid | threat verdicts, isolated agents, INVALID_ROW citations |
 | Text | `on-surface`, `on-surface-variant`, `outline` | primary, secondary, disabled and tertiary text |
 | Lines | `outline-variant` at 40% (border), 50% (hover) | cards, dividers |
+| Control edge | `outline` at full strength (`CONTROL_BORDER` in `src/ui/classes.ts`) | text inputs, selects, switches: a control with no text of its own is found by its edge, so the edge must reach 3:1 (amendment 2026-10-11; `outline-variant` measures only 1.4 to 1.7:1 there) |
 | Fills and glow | `primary-container` | glows, selection, scrollbar hover |
 
 Gold is not reserved for the verdict. A state with no token maps to the nearest role, and it is flagged for review.
@@ -112,6 +113,7 @@ Three families, one job each. Never substitute.
 ## 10. Implementation rules
 - Tokens and globals live only in `frontend/src/styles/tokens.css`: `@theme`, body, scrollbar, glow and hero shadows, keyframes. No other file may contain a hex, `rgb(a)`, or arbitrary `[...]` colour, shadow or font value. The checker fails on raw hex outside that file.
 - Use utility names: `bg-surface-card`, `text-on-surface-variant`, `border-outline-variant/40`, `shadow-glow-cyan`.
+- Contrast: `pnpm check:contrast` (`frontend/scripts/contrast-check.mjs`, Node built-ins only) reads `tokens.css`, measures every text, accent and filled-button pair the console uses (WCAG 4.5:1) and the edge of every control with no text of its own (3:1), and fails the build below those. Card and panel borders, surface steps and the borders of labelled buttons are listed with their ratio but are decorative: they keep the reference's values (exact ditto). The result is in `docs/fidelity/contrast.md`.
 - Chrome: body `background` with `on-surface` text, Inter, `overscroll-behavior: none`. Selection `primary-container` on `on-primary`. Scrollbar 5px: track `surface`, thumb `surface-container-high`, hover `primary-container`.
 - Fonts load once in `index.html`: Inter 300–700, JetBrains Mono 400–700, Space Grotesk 500–700, Material Symbols Outlined.
 - Not carried over from the reference's `package.json`, because they are outside the locked stack: `lucide-react`, `motion`, `@google/genai`, `express`, `dotenv`.
@@ -126,6 +128,14 @@ Three families, one job each. Never substitute.
 - **R6 and R7:** no claim without a mechanism (no RFC, Merkle, Ed25519, eBPF, container isolation, literature statistics, or "zero-trust"). Only real project entities.
 - **R8 and R9:** every control is a real, RBAC-gated, audited action, or it is removed. The blind test is a checked property, and the UI links to its test.
 - **R10:** `frontend/scripts/no-bluff-check.mjs` fails the build on raw hex outside tokens, `mockData`, `Math.random`, `dangerouslySetInnerHTML`, `fetch(` outside `src/api/`, imports from `src/data/`, and the blacklist in plan §7. The backend contract test (`tests/contract/test_no_bluff_contract.py`) and the Playwright canary cover the rest: null metrics on an empty DB, and seeded API values verbatim in the DOM.
+
+## 11b. Printed documents (added 2026-10-11, owner's request)
+The case report (`#/report/<id>`) and the chain-of-custody record (`#/custody/<id>`) are A4 documents. They are routed outside the console shell (no sidebar, top bar or footer), print through the browser's own dialog (Save as PDF; no PDF library, the stack is locked) and are tested to print to a real PDF with Chromium.
+- **Paper tokens** (in `tokens.css`, the only place for colour values): `paper` (the white page), `paper-tint` (panels and zebra rows), `paper-rule` (lines), `ink` and `ink-muted` (text), and a deeper shade of each accent for white: `paper-primary`, `paper-secondary`, `paper-tertiary`, `paper-error`. The neon accents of §2 are for the dark console only. Every pair used (ink and the four accents on the page and on the tint) is in the contrast check (4.5:1).
+- **Structure:** a dark cover band (`surface` with the brand and the verdict at a glance, the gradient hairline of §8), then light sections: an uppercase section title with an accent bar, facts, tables with a tinted header row, chips in the Label style, one timeline bar. Headings keep with the block after them, rows and cards do not split across pages.
+- **Page:** `@page report { size: A4; margin: 12mm }`, `color-scheme: light` in print, `print-color-adjust: exact` on the sheet. The toolbar above the sheet is `print:hidden`.
+- **Fonts:** the same three families as the console; the PDF carries what the browser had loaded.
+- **Content rule:** the same no-bluff contract: every sentence is a template over API fields (the summary is written from the case's own fields, not by a model), every figure is an API field or a derivation named in its section, a missing part says so, and nothing claims a signature the project does not have.
 
 ## 12. Superseded v1 rules (removed)
 - Token table (#0A0A0F, #14141F, #1E1E2E, #2E2E42, violet #8B5CF6, gold #F0B429, #F04438, #F79009, #12B76A, #36BFFA, white at 100/70/40%) → §2.

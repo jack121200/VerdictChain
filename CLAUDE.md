@@ -5,7 +5,7 @@ VerdictChain is a multi-agent insider-threat & network-intrusion forensics platf
 Three investigator agents analyze different log slices and debate over 3 rounds to
 reach a verdict. A Watchdog agent continuously scores each investigator's credibility
 by cross-checking their cited evidence against raw logs. A Self-Healing agent
-auto-contains confirmed threats in a sandbox. Everything is logged to an immutable
+auto-contains confirmed threats in a sandbox. Everything is logged to a tamper-evident
 audit trail and shown on a live dashboard (React frontend, approved HUD design: SKILL-design-system.md v2).
 
 Read `/.claude/skills/*.md` before touching the matching part of the system. Do not
@@ -14,9 +14,10 @@ already fully specified there.
 
 ## Tech stack — LOCKED. Never substitute or add a library outside this list without asking.
 - Orchestration: LangGraph (Python)
-- LLM backend: Groq (primary/fast path) + Gemini (secondary path, used by specific
-  agents — see SKILL-agent-prompts.md Section 7 for routing). Cloud-only, no Ollama,
-  no offline fallback — internet connectivity is required and guaranteed for dev/demo.
+- LLM backend: OpenAI only (owner's decision of 2026-10-11 — Groq and Gemini are gone;
+  the model id is `OPENAI_MODEL` in `.env`; see SKILL-agent-prompts.md Section 7).
+  Cloud-only, no Ollama, no offline fallback — internet connectivity is required and
+  guaranteed for dev/demo. Spend is capped in code (`OPENAI_DAILY_TOKEN_LIMIT`).
 - Backend API: FastAPI (REST + WebSocket), async, Pydantic models on every endpoint
 - Database: PostgreSQL (Neon/Supabase in prod, local Postgres via Docker in dev)
 - Cache / live credibility scores: Redis

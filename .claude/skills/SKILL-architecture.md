@@ -74,10 +74,13 @@ Each agent:
   the three final positions + their confidences into a single verdict: attack class,
   overall confidence, and the list of evidence rows that support it. Ties or highly
   split verdicts should be flagged as `"status": "ambiguous"` rather than forced to
-  a class.
+  a class. Each agent's vote is the class it states in its answer (`vote_class`, amendment
+  2026-10-11 in SKILL-agent-prompts.md); only an answer that states none is read with the keyword
+  list (`classify_theory`). `benign` and a stated `ambiguous` are not real votes.
 - Full transcript (every round, every agent, every message) is persisted to
   `debate_transcripts` — this is what the dashboard's "Debate Transcript" tab reads.
-  Each row records the provider that answered that call (`debate_transcripts.provider`).
+  Each row records the provider that answered that call (`debate_transcripts.provider`) and the
+  stance and class the agent stated (`stance`, `vote_class`, migration 0010).
 - **Lifecycle (implemented in `backend/debate/engine.py`):** `start_investigation()` creates
   the investigation row and its `investigation_started` audit entry in one transaction. The
   audit detail carries the settings snapshot, the noise values and the injected row ids. The
@@ -104,6 +107,24 @@ Each agent:
   writes `verdict_reached` in the same transaction as the investigation's status update.
 - **Status:** `investigating` → `verdict_reached` or `ambiguous`. A non-empty set of
   self-healing actions makes it `contained`. A failed debate is `error`.
+- **A failed debate says why (migration 0009, amended 2026-10-11):** whatever ends a debate in
+  `error` (a provider with no credit, an investigator whose answer failed validation after its
+  one re-ask, a restart that cut the debate off, an unexpected error) goes through
+  `engine.fail_investigation()`. It stores one plain sentence in `investigations.error_reason`
+  and appends an `investigation_failed` audit entry (`detail.reason`) in the same transaction.
+  The API returns `error_reason` on the list, the detail and the progress; the Debate Room,
+  the Investigations list and the dossier show it. A case that failed before 0009 has none and
+  says so.
+- **What an agent reads of the others (amended 2026-10-11):** in rounds 2 and 3 an agent reads
+  the other agents' theories and confidences, never their rows. A theory often quotes the row
+  ids its author cited; the debate context replaces every row id in it with
+  `[row id withheld]`, because an agent that cites a row outside its own slice makes its answer
+  invalid.
+- **An invalid answer costs one more question, not the debate (amended 2026-10-11):** an answer
+  that is not valid JSON, fails the schema, or cites a row outside the agent's own slice is sent
+  back once with the reason (`base_agent.ask`); a second invalid answer fails the round. The
+  `agent_id` and `round` of an answer are set from what was asked, not from what the model
+  echoed.
 
 ## 4. Hybrid trigger model
 
@@ -119,10 +140,12 @@ Each agent:
   mean of `off_hours`, `connect_count` or `file_access_count` at least 4 standard errors above
   the dataset mean. A flagged window becomes an investigation (`trigger_type = continuous`,
   `started_by = live_monitor`) in the debate queue, if the guards allow it: intake not paused,
-  at least two active investigators, a minimum gap (`LIVE_MIN_GAP_SECONDS`), a limit on waiting
-  automatic investigations (`LIVE_MAX_QUEUED`), a back-off after a failed one, a daily cap
-  (`LIVE_DAILY_CAP`, also counted in the global cap) and the queue limits. The reason a window
-  was refused is kept and shown. The evaluation label of the window is attached to the
+  at least two active investigators, a minimum gap per source window (`LIVE_MIN_GAP_SECONDS`:
+  each of network, logon, device and file has its own, so one window never holds back another),
+  a limit on automatic investigations waiting for a free debate slot (`LIVE_MAX_QUEUED`), a
+  back-off after a failed one, a daily cap (`LIVE_DAILY_CAP`, also counted in the global cap)
+  and the queue limits. Several automatic investigations therefore run side by side as logs
+  arrive. The reason a window was refused is kept and shown. The evaluation label of the window is attached to the
   investigation row on the server afterwards (`backend/evaluation/live_labels.py`) and is never
   part of what an agent reads. `POST /live/start` and `/live/stop` need capability
   `control_live_feed` and are audited (`live_feed_started`, `live_feed_stopped`);
@@ -147,16 +170,28 @@ Each agent:
   `wait=true` blocks until the debate has run and returns 201 with the verdict. `wait=false`
   returns 202 at once with the investigation id, its status and, while it waits, its place in
   the queue (`queue_position`, `queue_length`).
-- **Debate queue (`backend/api/debate_queue.py`, migration 0008):** one debate runs at a time
-  (credibility scores are shared state and the model quota is global), so an accepted request
-  that finds the debate slot busy waits as status `queued`. The queue is the `investigations`
-  table (`queued_at`, `run_spec` with ids and numbers only, never a label), so it survives a
-  restart. One worker thread takes the oldest queued investigation (`FOR UPDATE SKIP LOCKED`),
-  holds the slot (`verdictchain:debate:slot`) while it runs `run_debate`, writes a
-  `debate_started` audit entry and releases the slot when the debate ends. It starts nothing
-  while intake is paused. Waiting debates are limited per analyst and in total
-  (`DEBATE_QUEUE_MAX_PER_USER`, `DEBATE_QUEUE_MAX_TOTAL`); `GET /investigations/{id}/progress`
-  reports phase `queued`, the place and the investigation it waits for.
+- **Debate queue (`backend/api/debate_queue.py`, migration 0008):** up to `DEBATE_MAX_CONCURRENT`
+  debates run side by side (default 4). Parallel debates are safe because the credibility score
+  of an agent is updated in one atomic Redis transaction (WATCH/MULTI, with retry) and every audit
+  entry is appended under one advisory lock, and the model quota is guarded per call (the rolling
+  24-hour token budget and the key's own limits), not per debate. An accepted request that finds
+  every debate slot busy waits as status `queued`. The slots are one Redis sorted set
+  (`verdictchain:debate:slots`, one member per running debate, an atomic acquire script, a hold
+  expires after 30 minutes); a maintenance operation (quarantine, restore) takes the set
+  exclusively, so it never overlaps a debate. The queue is the `investigations` table
+  (`queued_at`, `run_spec` with ids and numbers only, never a label), so it survives a restart.
+  One worker thread per slot takes the oldest queued investigation (`FOR UPDATE SKIP LOCKED`),
+  holds a slot while it runs `run_debate`, writes a `debate_started` audit entry and releases the
+  slot when the debate ends. They start nothing while intake is paused. Waiting debates are
+  limited per analyst and in total (`DEBATE_QUEUE_MAX_PER_USER`, `DEBATE_QUEUE_MAX_TOTAL`);
+  `GET /investigations/{id}/progress` reports phase `queued`, the place and the investigation it
+  waits for; `GET /system/status.debate_slot` reports `running`, `capacity` and the ids of the
+  running debates.
+- **Automation figures (`GET /stats.automation`):** over the last 24 hours, the investigations
+  accepted, how many the live monitor started, how many of those ended contained with no analyst
+  emergency containment or release on them (hands-free), and the median seconds from
+  `investigation_started` to `verdict_reached` and from `verdict_reached` to the first sandbox
+  action. Every one is a Metric with its n; an empty window gives null with a reason.
 - **Noise (`backend/pipeline/noise.py`):** the window the agent reads (the first
   `max_rows_per_agent` rows) loses k = round(n × pct / 100) scenario rows, always keeping at
   least one. Each dropped row is replaced by a benign row of the same source, so no value is
@@ -184,7 +219,11 @@ mitigations, both required:
   in Redis for fast read/write, logged to Postgres (`credibility_log`) on every update.
 - After each round, for every cited evidence row: look it up directly in the raw
   logs table. If the row doesn't exist or the cited values don't match, that's a
-  verification failure.
+  verification failure. A value matches when the cited text equals the stored value as the
+  investigators were shown it (their prompts carry the rows as JSON: `true`, `0.3`), or as Python
+  prints it (`True`), or is the same number written another way (`0.30`, `1e6`). A joined field
+  (`a / b`), a field the row does not have, or any different value is a discrepancy
+  (`backend/watchdog/verification.py`, amended 2026-10-11).
 - Exact update formula (see `SKILL-data-schema.md` Section 5 for the persisted fields):
   `CrS_new = clamp(CrS_old * (1 + η * (2 * verification_match_rate − 1)), 0, 1)`, with
   `η = 0.20` as the default (runtime setting `eta`). A rate of 0.5 leaves CrS unchanged,
@@ -247,7 +286,8 @@ mitigations, both required:
   kept between 0.70 and 0.95. Each move is a `settings_changed` audit entry by `adaptive_feedback` with the rows
   it saw; `GET /settings/adaptive` reports the assessment and the last move (Trust page). **Not implemented:**
   item 2 (scheduled retraining) and the version safety below, because nothing in the system is trained: the
-  verdict class comes from a fixed keyword rule and the live monitor from a fixed statistical rule.
+  verdict is a fixed vote count over the classes the agents state (a fixed keyword rule reads an answer that
+  states none) and the live monitor is a fixed statistical rule.
 - This feedback is NOT discarded — it's stored and used two ways:
   1. **Adaptive filter sensitivity:** if recent feedback shows a burst of false
      positives, the confirmation threshold tightens slightly; if analysts are

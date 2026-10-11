@@ -20,6 +20,9 @@ A multi-agent forensics console for insider threats and network intrusions.
 `CLAUDE.md` and `.claude/skills/*.md` are the source of truth for architecture, agent prompts, schema, security
 and design. This file only says how to run things. Open work is tracked in `CHECKLIST.md`.
 
+`docs/PROJECT_GUIDE.md` is the page-by-page guide: every card of the console with its source and formula, the
+engine's rules, the data model and API map, the test evidence, the honest limits and a 15-minute demo script.
+
 ## Prerequisites
 
 | Tool | Version | Why |
@@ -27,7 +30,7 @@ and design. This file only says how to run things. Open work is tracked in `CHEC
 | Docker + Docker Compose v2 | any recent | Postgres 16, Redis 7, RabbitMQ 3.13, and the optional app containers |
 | Python | **3.12 or newer** | the code uses PEP 695 syntax (`def f[T](...)`), so 3.11 fails at import. CI pins 3.12 |
 | Node + pnpm | Node 22, pnpm 12 (via `corepack enable`) | the frontend. CI and the frontend image pin pnpm 12.3.4 |
-| Groq and Gemini API keys | optional | only for runs that call real models. The offline stub below needs none |
+| OpenAI API key | optional | `OPENAI_API_KEY` (and the model id in `OPENAI_MODEL`), only for runs that call a real model. The offline stub below needs none |
 
 ## Setup
 
@@ -70,23 +73,23 @@ Both ingestion commands can be re-run: each replaces only its own `source` rows 
 ### The API
 
 ```bash
-# real models (needs GROQ_API_KEY and GEMINI_API_KEY in .env; uses provider quota)
+# a real model (needs OPENAI_API_KEY and OPENAI_MODEL in .env; spends tokens, capped by OPENAI_DAILY_TOKEN_LIMIT)
 python -m uvicorn backend.api.main:app --reload --port 8000
 
-# offline stub: the same API and the same agents, debate engine and Watchdog, with the two provider clients
-# replaced by a deterministic stub. No keys, no network, no cost.
-python -m backend.scripts.e2e_server --port 8000
-python -m backend.scripts.e2e_server --port 8000 --fabricate access_log   # that agent cites wrong values, so the
+# offline stub: the same API and the same agents, debate engine and Watchdog, with the OpenAI client
+# replaced by a deterministic stub. No key, no network, no cost.
+python -m backend.testing.e2e_server --port 8000
+python -m backend.testing.e2e_server --port 8000 --fabricate access_log   # that agent cites wrong values, so the
                                                                           # Watchdog scores it 0 and isolates it
-python -m backend.scripts.e2e_server --selftest                           # validate the stub's output, then exit
+python -m backend.testing.e2e_server --selftest                           # validate the stub's output, then exit
 ```
 
 On start-up the API checks `JWT_SECRET_KEY` (set, not a placeholder, at least 32 characters), Postgres, Redis and
-that at least one LLM key is set. With `ENVIRONMENT=production` any failure aborts start-up with one message; in
+that `OPENAI_API_KEY` is set. With `ENVIRONMENT=production` any failure aborts start-up with one message; in
 development each failure is logged as a warning and the API starts anyway (the stub has no keys).
 
 The API listens on http://127.0.0.1:8000 (interactive docs at `/docs`, health at `/health`). Everything the stub
-produces is labelled `stub-groq` / `stub-gemini` in the provider column, and the stub exposes its call counter at
+produces is labelled `stub-openai` in the provider column, and the stub exposes its call counter at
 `/__e2e/stub-calls`. The stub is test tooling: the application has no stub flag.
 
 ### Demo data (zero LLM calls)
@@ -127,7 +130,7 @@ docker compose --profile app down               # stop them
 
 | Service | Address | What it does |
 |---|---|---|
-| backend | http://127.0.0.1:8000 | `alembic upgrade head`, then uvicorn (one worker) |
+| backend | http://127.0.0.1:8000 | `alembic upgrade head`, then uvicorn (one worker; it runs up to `DEBATE_MAX_CONCURRENT` debates on threads) |
 | frontend | http://127.0.0.1:5173 | the built console, served with `vite preview` |
 
 Plain `docker compose up -d` still starts only Postgres, Redis and RabbitMQ. The app containers use the
@@ -171,8 +174,8 @@ python -m black --line-length 110 --check backend
 python -m ruff check backend --line-length 110
 ```
 
-`backend/scripts/smoke_test_*_live.py` call the real providers (quota). They are not collected by pytest; run
-them by hand if you want a live proof.
+`backend/scripts/live_smoke/` holds the checks that call the real model (OpenAI allowance): `smoke_test_*_live.py`
+and `openai_probe.py`. They are not collected by pytest; run them by hand if you want a live proof.
 
 ### Frontend
 
@@ -181,6 +184,7 @@ cd frontend
 pnpm typecheck          # tsc --noEmit
 pnpm build
 pnpm check:no-bluff     # the no-bluff scanner (below)
+pnpm check:contrast     # WCAG contrast of the design tokens: text 4.5:1, control edges 3:1 (docs/fidelity/contrast.md)
 pnpm test               # Vitest
 ```
 
@@ -203,7 +207,7 @@ touches the dev servers or the dev database. Install the browser once with
 
 - **backend**: Postgres, Redis and RabbitMQ service containers, a freshly created `verdictchain_test` database,
   `black --check`, `ruff`, `alembic upgrade head`, then the whole backend suite on Python 3.12.
-- **frontend**: `pnpm typecheck`, `pnpm build`, `pnpm check:no-bluff`, `pnpm test`.
+- **frontend**: `pnpm typecheck`, `pnpm build`, `pnpm check:no-bluff`, `pnpm check:contrast`, `pnpm test`.
 - **contract** (after both): Postgres and Redis, migrations, the stub API in the background, a throwaway analyst
   registered through `POST /auth/register`, then `frontend/scripts/contract-check.mjs`. Any mismatch fails the job.
 - **e2e** (after backend and frontend): Postgres and Redis, the Playwright browser, then `pnpm e2e` on its own
@@ -218,14 +222,15 @@ docker-compose.yml           infra services; backend + frontend under the "app" 
 .env.example                 every setting the app and compose read
 backend/
   pipeline/                  dataset ingestion, normalization, noise, log streaming
-  agents/                    the three investigators and the Groq / Gemini REST clients
+  agents/                    the three investigators and the OpenAI REST client
   debate/                    the 3-round debate (LangGraph graph in graph.py, steps in engine.py) and the verdict
   watchdog/                  citation verification, credibility score, fault injection
   self_healing/              sandboxed containment actions
   evaluation/                ground-truth mapping and accuracy metrics (labelled runs only)
   api/                       FastAPI routes, schemas, auth, RBAC, WebSockets
   db/                        SQLAlchemy models, audit chain, Alembic migrations (alembic.ini is in backend/)
-  scripts/                   e2e_server (stub), seed_demo, bootstrap_lead, live smoke scripts
+  scripts/                   seed_demo, bootstrap_lead, export_db, live_smoke/ (checks that need the real key)
+  testing/                   e2e_server: the offline model stub (test harness; the application never imports it)
   tests/                     pytest suite
 frontend/                    React + TypeScript + Vite console (src/, scripts/, e2e/)
 data/                        datasets and the CICIDS2017 merge script (the data itself is gitignored)
@@ -259,11 +264,24 @@ or `LIVE_FEED_AUTOSTART=true`) starts two threads connected by a RabbitMQ queue:
   standard errors). A flagged window becomes an investigation (`trigger_type = continuous`) by itself.
 
 Automatic investigations go through the same **debate queue** as injected ones (`backend/api/debate_queue.py`):
-one debate runs at a time, a request that arrives while one runs waits as `queued` with a place, in the
-database, so it survives a restart. Limits keep the feed from using the model quota: a minimum gap between two
-automatic investigations (`LIVE_MIN_GAP_SECONDS`), a limit on how many wait (`LIVE_MAX_QUEUED`), a daily cap
-(`LIVE_DAILY_CAP`, also counted in the global debate cap), a back-off after a failed one, the intake pause, and
-the queue limits per analyst and in total (`DEBATE_QUEUE_MAX_PER_USER`, `DEBATE_QUEUE_MAX_TOTAL`).
+up to `DEBATE_MAX_CONCURRENT` debates (default 4) run side by side, one per **debate slot**; a request that
+arrives while every slot is busy waits as `queued` with a place, in the database, so it survives a restart. Each
+source window (network, logon, device, file) can start its own investigation, so several run at once as logs
+arrive. Parallel debates are safe because the credibility scores are updated in one atomic Redis transaction and
+the audit chain is appended under one advisory lock; a quarantine or restore takes every slot, so it never
+overlaps a debate. Limits keep the feed from using the model quota: a minimum gap between two automatic
+investigations from the same source window (`LIVE_MIN_GAP_SECONDS`, default 20), a limit on how many wait for a
+free slot (`LIVE_MAX_QUEUED`, default 4), a daily cap (`LIVE_DAILY_CAP`, also counted in the global debate cap), a
+back-off after a failed one, the intake pause, the queue limits per analyst and in total
+(`DEBATE_QUEUE_MAX_PER_USER`, `DEBATE_QUEUE_MAX_TOTAL`) and, above all, the rolling 24-hour token budget
+(`OPENAI_DAILY_TOKEN_LIMIT`). A free-tier key cannot take four debates at once: set `DEBATE_MAX_CONCURRENT=1` there.
+
+The Investigations page shows this as an **operations board**: what the monitor started and finished by itself in the
+last 24 hours (`GET /stats.automation`: share started by the monitor, cases contained with no analyst action, the
+median time from acceptance to verdict and from verdict to the first sandbox action) and one lane per debate slot
+with its round progress. Every finished case also opens as two printable A4 documents from its dossier, **Report PDF**
+(`#/report/<id>`) and **Custody PDF** (`#/custody/<id>`): the page prints through the browser's own dialog (choose
+Save as PDF), so no PDF library is involved.
 
 `python -m backend.scripts.measure_live_detector` measures the rule on the ingested datasets. On this machine's
 copy (300 trials per line, seed 1) it flagged none of the ordinary windows in any group (0 of 300 each) and
@@ -283,9 +301,9 @@ votes, but its verdict cannot trigger autonomous containment (a human can contai
 
 ## Known limits
 
-- **Stub data is not model data.** Output from `e2e_server` and `seed_demo` carries the provider `stub-groq` /
-  `stub-gemini`. The console does not yet mark stub investigations, so `/evaluation` accuracy computed on them
-  reflects the stub.
+- **Stub data is not model data.** Output from `e2e_server` and `seed_demo` carries the provider `stub-openai`.
+  The console marks those investigations as stub, and `/evaluation` keeps their accuracy apart from the
+  model's, but a number computed on the stub still measures the stub.
 - **WebSockets are single-process.** The per-investigation channel (`/ws/investigations/{id}`) lives in an
   in-process `ConnectionManager`, so run one uvicorn worker. Page-change events (`/ws/events`) go through Redis
   pub/sub and do not have this limit.

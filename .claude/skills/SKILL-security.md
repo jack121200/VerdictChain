@@ -6,7 +6,7 @@ description: Security requirements — auth, secrets, sandbox enforcement, and a
 # VerdictChain — Security Requirements (LOCKED)
 
 ## 1. Secrets
-- All secrets (`GROQ_API_KEY`, `DATABASE_URL`, JWT signing key, etc.) live in `.env`
+- All secrets (`OPENAI_API_KEY`, `DATABASE_URL`, JWT signing key, etc.) live in `.env`
   only, loaded via Pydantic Settings or `python-dotenv`.
 - `.env` is in `.gitignore` from commit #1. Provide `.env.example` with placeholder
   keys and no real values, committed instead.
@@ -23,7 +23,19 @@ description: Security requirements — auth, secrets, sandbox enforcement, and a
   analyst is 401 with `WWW-Authenticate: Bearer`, never 403. A 403 means an
   authenticated analyst lacks a capability: `Missing capability: <name>`.
 - Capabilities are checked by `require_capability(name)` against the deny-by-default
-  matrix in `backend/api/rbac.py`.
+  matrix in `backend/api/rbac.py`. The matrix (a test in `backend/tests/docs/` fails when
+  this table and the code disagree):
+
+  | Capability | Roles |
+  |---|---|
+  | `sign_evidence_bundle` | secops_lead, watchdog_supervisor |
+  | `trigger_emergency_containment` | secops_lead, watchdog_supervisor |
+  | `inject_scenario` | secops_lead, forensic_analyst, red_team_auditor, watchdog_supervisor |
+  | `override_fault_weights` | secops_lead, red_team_auditor, watchdog_supervisor |
+  | `quarantine_agent` | secops_lead, watchdog_supervisor |
+  | `manage_users` | secops_lead |
+  | `edit_settings` | secops_lead |
+  | `control_live_feed` | secops_lead, watchdog_supervisor |
 - Self-registration always creates `forensic_analyst`. Its request model forbids extra
   fields, so a `role` in the body is a 422. Roles change only through
   `PUT /users/{id}/role` (`manage_users`). The last `secops_lead` cannot be demoted (409).
@@ -48,9 +60,12 @@ description: Security requirements — auth, secrets, sandbox enforcement, and a
 - `self_healing/actions.py` functions (`lock_account`, `block_ip_range`,
   `trigger_rate_limiting`, `trigger_audit`) must be structurally incapable of
   reaching a real system:
-  - They write ONLY to the `response_actions` table and to a local
-    Docker-sandboxed mock service (e.g. a fake "directory service" and fake
-    "firewall" container with no real network egress capability).
+  - They write ONLY to the `response_actions` table and to in-process mock services
+    (`backend/self_healing/sandbox.py`: a fake directory service and a fake firewall,
+    plain Python objects). The module imports no networking or process library, and a
+    test (`backend/tests/self_healing/`) reads its imports to keep it that way. There is
+    no container: the isolation is that the code has nothing it could reach a real system
+    with.
   - There is no code path, configuration flag, or environment variable that
     switches these into "real" mode. If real-system integration is ever wanted,
     it requires a deliberate new module, not a flag on the existing one.
@@ -74,7 +89,8 @@ description: Security requirements — auth, secrets, sandbox enforcement, and a
   detector, the shared state, `run_spec`, the audit detail and every API response) carries no label; a test
   scans the monitor-side modules for the label names and others check the stored specs and responses.
 - Account and admin actions are audited: `register`, `login` (successful logins only),
-  `role_changed` and `settings_changed` (with `before` and `after`). Each is written in
+  `role_changed` and `settings_changed` (with `before` and `after`), `analyst_feedback`,
+  and a debate that ends in error (`investigation_failed`, with the reason). Each is written in
   the same transaction as the change it records: the domain row is written first, and
   `append_entry` runs last under the advisory lock (plan section 3.2). A failed audit
   write rolls the change back.

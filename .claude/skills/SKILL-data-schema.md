@@ -46,12 +46,14 @@ CREATE TABLE investigations (
     trigger_type TEXT NOT NULL,          -- 'continuous' | 'manual'
     trigger_reason TEXT,
     scenario_label TEXT,                 -- hidden ground truth if manual; never sent to agents
-    status TEXT NOT NULL DEFAULT 'investigating',  -- investigating | verdict_reached | contained | ambiguous
+    status TEXT NOT NULL DEFAULT 'investigating',  -- queued | investigating | verdict_reached | contained | ambiguous | error
     verdict_class TEXT,
     verdict_confidence FLOAT,
+    error_reason TEXT,                   -- migration 0009: one plain sentence, set when status becomes 'error'
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+-- Later migrations add noise_pct, effective_noise_pct, primary_agent (0005), queued_at and run_spec (0008).
 
 CREATE TABLE debate_transcripts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -61,6 +63,9 @@ CREATE TABLE debate_transcripts (
     theory TEXT NOT NULL,
     confidence FLOAT NOT NULL,
     cited_evidence JSONB NOT NULL,
+    provider TEXT,                       -- migration 0005: which provider answered this call
+    stance TEXT,                         -- migration 0010: CHALLENGE | SUPPORT | REVISE (stated, else read from the text)
+    vote_class TEXT,                     -- migration 0010: the class the agent stated, null when it stated none
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -126,7 +131,7 @@ always has a reason. Counts are real zeros. Nothing returned here includes `scen
 |---|---|---|
 | `GET /stats` | Headline KPIs | Whole audit chain verified per call. Brier from analyst feedback only. |
 | `GET /investigations` | Filtered list | `limit` 1..200, `offset`, `status`, `verdict_class`, `trigger_type`, `primary_agent`, `q` (id prefix, verdict, trigger). |
-| `GET /investigations/{id}` | Detail | `debate` (stance and provider per transcript row), `votes` (`classify_theory` plus matched keywords), `citations`, `credibility`, `actions` (`is_simulated`). |
+| `GET /investigations/{id}` | Detail | `debate` (stance and provider per transcript row), `votes` (the class the agent stated, else `classify_theory`; `class_source` says which, and the matched keywords are listed only for the keyword reading), `citations`, `credibility`, `actions` (`is_simulated`). |
 | `GET /investigations/{id}/citations` | Per-citation re-check | VERIFIED, DISCREPANCY or INVALID_ROW with a reason and `row_fingerprint`. |
 | `GET /citations` | Global ledger | Paged `limit` 1..200 and `offset`; filters `agent_id`, `status`; adds `investigation_id`. |
 | `GET /investigations/{id}/evidence-bundle` | Bundle plus SHA-256 | `bundle`, `bundle_sha256`, `signatures`. See 2.2. |

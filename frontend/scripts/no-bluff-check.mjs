@@ -6,6 +6,10 @@
  *   - raw hex colours, rgb(), rgba(), hsl() or hsla() outside src/styles/tokens.css
  *   - mockData, Math.random, dangerouslySetInnerHTML
  *   - fetch( outside src/api/
+ *   - toFixed(, toLocaleString(, toPrecision( or Intl.NumberFormat outside src/lib/format.ts (one place formats numbers)
+ *   - a {shortId(...)} printed as JSX text with no CopyHash / CopyButton within six lines (the full id must be one click away)
+ *   - the three investigator ids used as object keys (or listed in a row) outside src/lib/agents.ts and src/api/ (one agent table)
+ *   - a page that repeats `data === undefined` with `error === null` (src/features/**): usePageData works the state out once
  *   - any import from src/data/ (the folder must stay empty)
  *   - any blacklisted literal from plan section 7 (case-sensitive, src/** only)
  *
@@ -19,6 +23,9 @@ const FRONTEND = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(FRONTEND, 'src');
 const TOKENS = join(SRC, 'styles', 'tokens.css');
 const API_DIR = join(SRC, 'api') + sep;
+const FORMAT_FILE = join(SRC, 'lib', 'format.ts');
+const AGENTS_FILE = join(SRC, 'lib', 'agents.ts');
+const FEATURES_DIR = join(SRC, 'features') + sep;
 const DATA_DIR = join(SRC, 'data');
 
 /** Plan section 7. Case-sensitive substrings. */
@@ -38,8 +45,37 @@ const PATTERNS = [
   { re: /Math\.random/, message: 'Math.random is not allowed: values come from the API, ids from the server' },
   { re: /dangerouslySetInnerHTML/, message: 'dangerouslySetInnerHTML is not allowed: log text is untrusted' },
   { re: /\bfetch\s*\(/, message: 'fetch( is only allowed in src/api/ (the one API client)', skipDir: API_DIR },
+  {
+    re: /\.(?:toFixed|toLocaleString|toPrecision)\(|\bIntl\.NumberFormat\b/,
+    message: 'format numbers through src/lib/format.ts (formatCount, formatNumber, formatPercent ...), not by hand',
+    skipFile: FORMAT_FILE,
+    skipTests: true,
+  },
+  {
+    // An investigator id as an object key, or the first two ids listed in a row, is a second copy of the table.
+    re: /(?:^|[{,])\s*['"]?(?:network_traffic|access_log|endpoint_behavior)['"]?\s*:|['"]network_traffic['"]\s*,\s*['"]access_log['"]/,
+    message:
+      'the investigators are listed once, in src/lib/agents.ts (INVESTIGATOR_IDS, INVESTIGATOR_VISUALS): read them from there',
+    skipFile: AGENTS_FILE,
+    skipDir: API_DIR,
+    skipTests: true,
+    onlyCode: true,
+  },
+  {
+    // The state of a page's data (loading, failed, ready) is worked out once, in usePageData.
+    re: /===\s*undefined.*\.error\s*[!=]==\s*null|\.error\s*[!=]==\s*null.*===\s*undefined/,
+    message:
+      'read the page state from usePageData (src/app/use-page-data.ts: .status), do not repeat data === undefined with error === null',
+    onlyDir: FEATURES_DIR,
+    skipTests: true,
+  },
   { re: /\bfrom\s*['"](lucide-react|recharts)['"]/, message: 'lucide-react and recharts are outside the locked stack (CLAUDE.md)' },
 ];
+
+// A shortened id printed as JSX text must have its full value one click away: a copy button within a few lines.
+const SHORT_ID_TEXT = /(?:^|>)\s*\{shortId\(/;
+const COPY_BUTTON = /<Copy(?:Hash|Button)\b/;
+const COPY_WINDOW = 6;
 
 const IMPORT_SPECIFIER = [
   /\bfrom\s*['"]([^'"]+)['"]/g,
@@ -118,7 +154,17 @@ for (const file of scanned) {
     for (const pattern of PATTERNS) {
       if (pattern.onlyOutsideTokens && isTokens) continue;
       if (pattern.skipDir && file.startsWith(pattern.skipDir)) continue;
+      if (pattern.skipFile && file === pattern.skipFile) continue;
+      if (pattern.skipTests && /\.test\.[cm]?[jt]sx?$/.test(file)) continue;
+      if (pattern.onlyCode && !/\.[cm]?tsx?$/.test(file)) continue;
+      if (pattern.onlyDir && !file.startsWith(pattern.onlyDir)) continue;
       if (pattern.re.test(text)) report(file, lineNumber, pattern.message, text);
+    }
+    if (inSrc && !/\.test\.[cm]?[jt]sx?$/.test(file) && SHORT_ID_TEXT.test(text)) {
+      const near = lines.slice(Math.max(0, index - COPY_WINDOW), index + COPY_WINDOW + 1).join('\n');
+      if (!COPY_BUTTON.test(near)) {
+        report(file, lineNumber, 'a shortened id shown as text needs a copy button (CopyHash or CopyButton) beside it', text);
+      }
     }
     if (inSrc) {
       for (const specifierRe of IMPORT_SPECIFIER) {

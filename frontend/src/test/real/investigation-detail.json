@@ -33,7 +33,7 @@
     "invalid_row": 0,
     "match_rate": {
       "as_of": "2026-10-09T05:42:48.285155Z",
-      "definition": "verified citations / total citations, exact match against raw_logs (no tolerance)",
+      "definition": "verified citations / total citations: the cited value is the stored value as the agents read it (JSON text) or the same number, checked against raw_logs",
       "n": 18,
       "reason": null,
       "source": "/investigations/5f7158e4-bac2-46ae-9f83-ee725ab21338",
@@ -145,7 +145,7 @@
       ],
       "confidence": 0.86,
       "created_at": "2026-10-09T05:41:28.215797Z",
-      "provider": "stub-groq",
+      "provider": "stub-openai",
       "round": 1,
       "stance": null,
       "theory": "Unusual file access and exfiltration: this user's file-access summaries show many distinct filenames and a file_access_count well above their own usual level."
@@ -166,7 +166,7 @@
       ],
       "confidence": 0.9,
       "created_at": "2026-10-09T05:41:28.235490Z",
-      "provider": "stub-gemini",
+      "provider": "stub-openai",
       "round": 1,
       "stance": null,
       "theory": "Off-hours logon anomaly: logon rows fall outside this user's own historical login hours, and device activity appears on a PC they rarely use."
@@ -187,7 +187,7 @@
       ],
       "confidence": 0.88,
       "created_at": "2026-10-09T05:41:28.197913Z",
-      "provider": "stub-groq",
+      "provider": "stub-openai",
       "round": 1,
       "stance": null,
       "theory": "Volumetric flood pattern: Flow Packets/s and Flow Bytes/s sit far above the window baseline, which fits a traffic flood aimed at one destination."
@@ -208,7 +208,7 @@
       ],
       "confidence": 0.86,
       "created_at": "2026-10-09T05:41:28.284846Z",
-      "provider": "stub-groq",
+      "provider": "stub-openai",
       "round": 2,
       "stance": "SUPPORT",
       "theory": "SUPPORT: Endpoint-Behavior's off-hours logon anomaly matches my file-access burst, since the same user-days also show activity outside working hours."
@@ -229,7 +229,7 @@
       ],
       "confidence": 0.9,
       "created_at": "2026-10-09T05:41:28.306709Z",
-      "provider": "stub-gemini",
+      "provider": "stub-openai",
       "round": 2,
       "stance": "REVISE",
       "theory": "REVISE: I keep the off-hours logon anomaly and now link it to Access-Log's unusual file access, because the same user-days show both timing and file-volume outliers."
@@ -250,7 +250,7 @@
       ],
       "confidence": 0.88,
       "created_at": "2026-10-09T05:41:28.264601Z",
-      "provider": "stub-groq",
+      "provider": "stub-openai",
       "round": 2,
       "stance": "CHALLENGE",
       "theory": "CHALLENGE: Access-Log's file-exfiltration reading does not explain a packet-rate spike at the network layer, so the flood explanation stays on the table."
@@ -271,7 +271,7 @@
       ],
       "confidence": 0.86,
       "created_at": "2026-10-09T05:41:28.356002Z",
-      "provider": "stub-groq",
+      "provider": "stub-openai",
       "round": 3,
       "stance": "SUPPORT",
       "theory": "SUPPORT: I keep the unusual file access and exfiltration theory, and the off-hours logon anomaly from Endpoint-Behavior corroborates the timing of these reads."
@@ -292,7 +292,7 @@
       ],
       "confidence": 0.9,
       "created_at": "2026-10-09T05:41:28.386422Z",
-      "provider": "stub-gemini",
+      "provider": "stub-openai",
       "round": 3,
       "stance": "REVISE",
       "theory": "REVISE: I hold the off-hours logon anomaly reading - the logon rows for these user-days fall outside this user's own historical login hours and an unrecognized device appears, which is an unusual login pattern rather than a file-exfiltration one."
@@ -313,7 +313,7 @@
       ],
       "confidence": 0.88,
       "created_at": "2026-10-09T05:41:28.335179Z",
-      "provider": "stub-groq",
+      "provider": "stub-openai",
       "round": 3,
       "stance": "REVISE",
       "theory": "REVISE: I narrow the volumetric flood theory to the destination with the highest packets-per-second share, because byte totals alone cannot separate a flood from bulk transfer."
@@ -331,6 +331,7 @@
   "votes": [
     {
       "agent_id": "network_traffic",
+      "class_source": "keywords",
       "counted": true,
       "matched_keywords": [
         "flood",
@@ -341,6 +342,7 @@
     },
     {
       "agent_id": "access_log",
+      "class_source": "keywords",
       "counted": false,
       "matched_keywords": [
         "exfiltration",
@@ -351,6 +353,7 @@
     },
     {
       "agent_id": "endpoint_behavior",
+      "class_source": "keywords",
       "counted": true,
       "matched_keywords": [
         "off-hours",

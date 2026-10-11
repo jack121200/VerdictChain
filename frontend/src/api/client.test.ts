@@ -17,6 +17,7 @@ import {
   simulateInvestigation,
   submitFeedback,
   updateSettings,
+  verifyAuditTrail,
 } from './client';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -112,6 +113,20 @@ describe('request URL, method and body', () => {
     const progress = await getInvestigationProgress('a/b');
     expect(firstCall(fetchMock).url).toBe(`${API_BASE}/investigations/a%2Fb/progress`);
     expect(progress.round).toBe(2);
+  });
+
+  it('asks for a full audit-chain pass only when told to', async () => {
+    setToken('tok');
+    const result = { chain_valid: true, entries_checked: 9, first_break_seq: null, reason: 'ok', head_hash: 'h', mode: 'full', verified_from_seq: 1 };
+    fetchMock.mockResolvedValue(jsonResponse(result));
+    await verifyAuditTrail();
+    expect(firstCall(fetchMock)).toMatchObject({ url: `${API_BASE}/audit-trail/verify`, init: { method: 'POST' } });
+
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(jsonResponse(result));
+    const full = await verifyAuditTrail({ full: true });
+    expect(firstCall(fetchMock)).toMatchObject({ url: `${API_BASE}/audit-trail/verify?full=true`, init: { method: 'POST' } });
+    expect(full.mode).toBe('full');
   });
 
   it('encodes path ids so they cannot add segments', async () => {

@@ -14,6 +14,7 @@
     "e2e:headed": "playwright test --headed",
     "typecheck:e2e": "tsc --noEmit -p e2e/tsconfig.json",
     "check:no-bluff": "node scripts/no-bluff-check.mjs",
+    "check:contrast": "node scripts/contrast-check.mjs",
     "format": "oxfmt"
   },
   "dependencies": {

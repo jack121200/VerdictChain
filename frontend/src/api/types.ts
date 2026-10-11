@@ -101,6 +101,7 @@ export const AUDIT_ACTION_NAMES = [
   'containment_released',
   'byzantine_fault_injected',
   'debate_started',
+  'investigation_failed',
   'live_feed_started',
   'live_feed_stopped',
   'lock_account',
@@ -175,6 +176,19 @@ export interface AdaptiveThreshold {
   last_change: AdaptiveChange | null;
 }
 
+/**
+ * What OpenAI itself allows this key (GET /system/status providers.openai.allowance, GET /live/status llm.allowance),
+ * from the x-ratelimit-* headers of its latest answer. Each Metric's as_of is the time of that answer.
+ */
+export interface AllowanceStatus {
+  requests_left: Metric<number>;
+  requests_allowed: Metric<number>;
+  tokens_left: Metric<number>;
+  tokens_allowed: Metric<number>;
+  /** OpenAI asked for a wait that has not passed yet. */
+  held_until: string | null;
+}
+
 export interface ProviderStatus {
   configured: boolean;
   model: string | null;
@@ -182,11 +196,20 @@ export interface ProviderStatus {
   calls_24h: Metric<number>;
   latency_ms: Metric<number>;
   quota_errors_24h: Metric<number>;
+  allowance: AllowanceStatus;
 }
 
+/** The debate slots: up to `capacity` debates run at once (DEBATE_MAX_CONCURRENT). */
 export interface DebateSlot {
   status: 'idle' | 'running' | 'unavailable';
+  /** The longest-running debate, null while idle. */
   investigation_id: string | null;
+  /** Debates holding a slot now; one that is still starting counts. */
+  running: Metric<number>;
+  /** How many debates may run at once. */
+  capacity: Metric<number>;
+  /** Every running debate, longest-running first. */
+  investigation_ids: string[];
 }
 
 /** GET /system/status. Every numeric field is a Metric (plan R10). Never a key. */
@@ -196,7 +219,8 @@ export interface SystemStatus {
   postgres: ServiceHealth;
   redis: ServiceHealth;
   rabbitmq: ServiceHealth;
-  providers: { groq: ProviderStatus; gemini: ProviderStatus };
+  /** OpenAI is the only provider: every debate and the reason sentence of a containment action. */
+  providers: { openai: ProviderStatus };
   sandbox: { is_simulated_violations: Metric<number>; actions_total: Metric<number> };
   debate_slot: DebateSlot;
   intake_paused: boolean;
@@ -265,11 +289,16 @@ export interface DebateRound {
   agents: RoundAgentTurn[];
 }
 
-/** Aggregator vote for one agent (server classify_theory plus matched keywords). */
+/** Where an agent's vote class came from: the agent stated it, or the server read the class from its theory with a keyword list. */
+export type VoteSource = 'stated' | 'keywords';
+
+/** Aggregator vote for one agent: the class it stated, else the server's keyword reading of its theory. */
 export interface Vote {
   agent_id: InvestigatorId;
   verdict_class: VerdictClass | null;
   confidence: number | null;
+  /** Missing means the keyword reading (answers stored before agents stated their class). */
+  class_source?: VoteSource;
   matched_keywords: string[];
   /** false = isolated during this investigation, so not part of the verdict. Missing means counted. */
   counted?: boolean;
@@ -345,6 +374,8 @@ export interface InvestigationSummary {
   rounds_complete: number;
   containment_count: number;
   data_source: DataSource;
+  /** Why the debate stopped, in plain words. Null unless status is 'error' (and for cases that failed before reasons were stored). */
+  error_reason: string | null;
   trigger_type: string;
   created_at: string;
 }
@@ -368,6 +399,7 @@ export interface InvestigationDetail {
   noise_pct: NoisePct;
   effective_noise_pct: number | null;
   data_source: DataSource;
+  error_reason: string | null;
   trigger_type: string;
   trigger_reason: string | null;
   rounds: DebateRound[];
@@ -405,6 +437,7 @@ export interface InvestigationSummaryWire {
   rounds_complete: number;
   containment_count: number;
   data_source: DataSource;
+  error_reason: string | null;
   created_at: string;
 }
 
@@ -422,8 +455,11 @@ export interface DebateRoundWire {
 export interface AgentVoteWire {
   agent_id: InvestigatorId;
   round: number;
-  /** Server classify_theory result. "unclassified" when no keyword matched. */
+  /** The class the agent stated, else the server's keyword reading of its theory. "unclassified" when the agent
+   * abstained (stated "ambiguous") or no keyword matched. */
   vote_class: VerdictClass | 'unclassified';
+  class_source: VoteSource;
+  /** The keywords found when the class was read from the theory; empty for a stated class. */
   matched_keywords: string[];
   /** False when the Watchdog isolated this agent during the investigation: the verdict leaves it out. */
   counted: boolean;
@@ -569,6 +605,8 @@ export interface InvestigationProgress {
   queue_length: number | null;
   /** The investigation that holds the debate slot while this one is queued. */
   waiting_for: string | null;
+  /** Why the debate stopped; set only when the phase is error. */
+  error_reason: string | null;
 }
 
 // ---- simulated live feed (GET /live/status, GET /live/arrivals, POST /live/start and /live/stop) ----
@@ -608,6 +646,26 @@ export interface LiveBlocked {
   at: string | null;
 }
 
+/** off: the feed is not running; not_configured: no OPENAI_API_KEY; warming_up: fewer rows streamed than
+ *  activation_rows, so no OpenAI call has been made; active: the next flagged window may start a debate;
+ *  budget_reached: the token budget of the last 24 hours is used up; allowance_reached: OpenAI itself says this
+ *  key has too few requests left (or asked for a wait) for the next debate. */
+export type LiveLlmState = 'off' | 'not_configured' | 'warming_up' | 'active' | 'budget_reached' | 'allowance_reached';
+
+/** The language model behind the automatic investigations: OpenAI, held back until the feed has streamed enough rows. */
+export interface LiveLlm {
+  provider: 'openai';
+  configured: boolean;
+  model: string | null;
+  state: LiveLlmState;
+  activation_rows: Metric<number>;
+  rows_seen: Metric<number>;
+  tokens_24h: Metric<number>;
+  token_limit: Metric<number>;
+  calls_24h: Metric<number>;
+  allowance: AllowanceStatus;
+}
+
 export interface LiveStatus {
   state: 'running' | 'stopped';
   /** Always true: the feed replays dataset rows, no real network is monitored. */
@@ -625,6 +683,7 @@ export interface LiveStatus {
   triggered: Metric<number>;
   triggers_today: Metric<number>;
   daily_cap: Metric<number>;
+  llm: LiveLlm;
   windows: LiveWindow[];
   last_trigger: LiveTrigger | null;
   blocked: LiveBlocked | null;
@@ -647,6 +706,8 @@ export interface LiveArrival {
 export interface LiveStartRequest {
   events_per_second?: number;
   auto_investigate?: boolean;
+  /** Rows the feed must stream before the first OpenAI call (50 to 20,000). */
+  llm_after_rows?: number;
 }
 
 /** One sandboxed action as the containment endpoints report it. */
@@ -716,7 +777,23 @@ export interface StatsResponse {
   by_verdict_class: Record<string, Metric<number>>;
   chain: { valid: boolean; entries: Metric<number>; head_seq: Metric<number> };
   latency: { definition: string; mean_seconds: Metric<number> };
+  /** What ran without a click in the last 24 hours and how fast detection moved to containment. */
+  automation: AutomationStats;
   generated_at: string;
+}
+
+export interface AutomationStats {
+  /** Investigations accepted in the window, whoever started them. */
+  cases: Metric<number>;
+  /** Of those, started by the live monitor (trigger_type continuous). */
+  auto_started: Metric<number>;
+  auto_share: Metric<number>;
+  /** Started by the monitor and ended contained with no analyst emergency containment or release on them. */
+  hands_free_contained: Metric<number>;
+  /** investigation_started to verdict_reached, includes any wait in the debate queue. */
+  median_seconds_to_verdict: Metric<number>;
+  /** verdict_reached to the first sandboxed response action. */
+  median_seconds_verdict_to_action: Metric<number>;
 }
 
 /** GET /scenarios: the 8 real labels. */
@@ -774,9 +851,12 @@ export interface SourceScore {
   accuracy: Metric<number>;
 }
 
+/** Which runs the headline numbers of GET /evaluation count. */
+export type EvaluationSource = DataSource | 'all';
+
 export interface EvaluationResponse {
   /** Which runs the headline numbers count: model by default, so stub accuracy never reads as system accuracy. */
-  source: string;
+  source: EvaluationSource;
   by_source: Record<DataSource, SourceScore>;
   labelled: Metric<number>;
   scored: Metric<number>;
@@ -861,6 +941,26 @@ export interface AuditTrailResponse {
   chain: AuditChain;
 }
 
+/** How a case entry's prev_hash relates to the case: the chain's first entry, this case's previous entry, or another one. */
+export type CaseLink = 'genesis' | 'case' | 'other';
+
+export interface CaseAuditEntry extends AuditEntry {
+  links_to: CaseLink;
+}
+
+/** GET /investigations/{id}/audit-chain: one case's entries, a view of the global chain (not a second chain). */
+export interface CaseAuditChain {
+  investigation_id: string;
+  /** Oldest first. */
+  entries: CaseAuditEntry[];
+  count: Metric<number>;
+  /** SHA-256 over the entry hashes of this case, oldest first, joined by a newline; null with no entries. */
+  case_digest: string | null;
+  digest_rule: string;
+  /** The global chain this case lives in. */
+  chain: AuditChain;
+}
+
 /** POST /audit-trail/verify (not audited) */
 export interface AuditVerifyResult {
   chain_valid: boolean;
@@ -868,6 +968,10 @@ export interface AuditVerifyResult {
   first_break_seq: number | null;
   reason: string | null;
   head_hash: string | null;
+  /** "full" re-walked every entry; "incremental" walked only the entries after the last verified checkpoint. */
+  mode: 'incremental' | 'full';
+  /** The seq the pass started from (null for an empty chain). */
+  verified_from_seq: number | null;
 }
 
 // ---- agents (quarantine, faults) ----------------------------------------------
@@ -926,7 +1030,7 @@ export interface LiveScoreWire {
   isolated?: boolean;
 }
 
-/** One agent's turn as a live frame carries it. The snapshot omits stance and credibility. */
+/** One agent's turn as a live frame carries it. The snapshot carries the stored stance but no credibility. */
 export interface LiveTurnWire {
   agent_id: InvestigatorId;
   theory: string;

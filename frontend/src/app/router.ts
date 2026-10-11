@@ -19,6 +19,9 @@ export type Route =
   | { name: SimpleRouteName }
   | { name: 'debate'; id?: string }
   | { name: 'investigation'; id: string }
+  /** The printable case report and chain-of-custody documents (outside the console shell). */
+  | { name: 'report'; id: string }
+  | { name: 'custody'; id: string }
   | { name: 'not_found'; path: string };
 
 const SIMPLE_ROUTES: ReadonlySet<string> = new Set<SimpleRouteName>([
@@ -56,10 +59,12 @@ export function parseRoute(hash: string): Route {
   if (rest.length === 0 && head === 'debate') {
     return { name: 'debate' };
   }
-  if (rest.length === 1 && (head === 'debate' || head === 'investigations')) {
+  if (rest.length === 1 && (head === 'debate' || head === 'investigations' || head === 'report' || head === 'custody')) {
     const id = decodeSegment(rest[0]);
     if (id === null) return { name: 'not_found', path };
-    return head === 'debate' ? { name: 'debate', id } : { name: 'investigation', id };
+    if (head === 'debate') return { name: 'debate', id };
+    if (head === 'investigations') return { name: 'investigation', id };
+    return { name: head, id };
   }
   return { name: 'not_found', path };
 }
@@ -71,6 +76,9 @@ export function buildRoute(route: Exclude<Route, { name: 'not_found' }>): string
       return route.id ? `#/debate/${encodeURIComponent(route.id)}` : '#/debate';
     case 'investigation':
       return `#/investigations/${encodeURIComponent(route.id)}`;
+    case 'report':
+    case 'custody':
+      return `#/${route.name}/${encodeURIComponent(route.id)}`;
     default:
       return `#/${route.name}`;
   }

@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { getLiveStatus } from '../api/client';
+import { useAsync } from '../app/use-async';
 import { ROLE_LABEL } from '../lib/labels';
 import { formatCount, formatDuration, shortId } from '../lib/format';
 import { Button } from '../ui/Button';
@@ -85,10 +87,25 @@ function DebateChip() {
   const slot = status.data.debate_slot;
   const queued = stats.data?.by_status?.queued?.value ?? null;
   const waiting = queued !== null && queued > 0 ? ` · ${formatCount(queued)} queued` : '';
-  const queueNote = ' The number of queued investigations is GET /stats.by_status.queued: accepted debates waiting for the slot.';
+  const queueNote = ' The number of queued investigations is GET /stats.by_status.queued: accepted debates waiting for a free slot.';
+  const running = slot.running.value;
+  const capacity = slot.capacity.value;
+  const slots = capacity === null ? '' : ` Up to ${formatCount(capacity)} debates run at once (DEBATE_MAX_CONCURRENT).`;
+  if (slot.status === 'running' && running !== null && running > 1) {
+    return (
+      <Chip
+        tone="primary"
+        icon="sync_alt"
+        proof={{ source: 'GET /system/status.debate_slot', n: running, asOf: status.loadedAt, definition: `${formatCount(running)} investigations hold a debate slot and run side by side.${slots}${queueNote}` }}
+      >
+        {formatCount(running)} debates running{capacity === null ? '' : ` of ${formatCount(capacity)}`}
+        {waiting}
+      </Chip>
+    );
+  }
   if (slot.status === 'running' && slot.investigation_id !== null) {
     return (
-      <Chip tone="primary" icon="sync_alt" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: `The debate slot is held by one running investigation.${queueNote}` }}>
+      <Chip tone="primary" icon="sync_alt" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: `One investigation holds a debate slot.${slots}${queueNote}` }}>
         Debate running ·{' '}
         <CopyHash value={slot.investigation_id} display={shortId(slot.investigation_id)} label="running investigation id" size="inherit" textClassName="text-primary" />
         {waiting}
@@ -96,8 +113,61 @@ function DebateChip() {
     );
   }
   return (
-    <Chip tone="idle" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: `No investigation holds the debate slot.${queueNote}` }}>
+    <Chip tone="idle" proof={{ source: 'GET /system/status.debate_slot', n: 1, asOf: status.loadedAt, definition: `No investigation holds a debate slot.${slots}${queueNote}` }}>
       Debate engine idle{waiting}
+    </Chip>
+  );
+}
+
+/** The simulated live feed on every page: running or off, rows streamed, and where the OpenAI switch-on stands. */
+function LiveChip() {
+  const live = useAsync(getLiveStatus, 2000, ['live']);
+  const data = live.data;
+  if (data === undefined) return <Chip tone="idle">Live feed —</Chip>;
+  if (data.state !== 'running') {
+    return (
+      <Chip
+        tone="idle"
+        proof={{
+          source: 'GET /live/status',
+          n: 1,
+          asOf: live.loadedAt,
+          definition: 'The simulated live feed is stopped. A lead or a supervisor starts it on the Live feed page; no model is called while it is off.',
+        }}
+      >
+        Live feed off
+      </Chip>
+    );
+  }
+  const seen = data.consumed.value ?? 0;
+  const needed = data.llm.activation_rows.value;
+  const note =
+    data.llm.state === 'warming_up'
+      ? ` · OpenAI after ${formatCount(needed ?? 0)}`
+      : data.llm.state === 'active'
+        ? ' · OpenAI on'
+        : data.llm.state === 'budget_reached'
+          ? ' · OpenAI budget used'
+          : data.llm.state === 'allowance_reached'
+            ? ' · OpenAI key limit'
+            : data.llm.state === 'not_configured'
+              ? ' · OpenAI not set'
+              : '';
+  return (
+    <Chip
+      tone="secondary"
+      icon="sensors"
+      proof={{
+        source: 'GET /live/status',
+        n: data.consumed.n,
+        asOf: live.loadedAt,
+        definition:
+          'The simulated live feed is running: dataset rows are replayed through RabbitMQ and scored by the monitor from the first row. OpenAI is called only after the number of rows chosen at start has streamed (state: ' +
+          data.llm.state +
+          ').',
+      }}
+    >
+      Live · {formatCount(seen)} rows{note}
     </Chip>
   );
 }
@@ -187,6 +257,7 @@ export function TopNav({ onMenuToggle, onSignOut }: TopNavProps) {
             <LatencyChip />
             <DebateChip />
             <SandboxChip />
+            <LiveChip />
           </div>
         </div>
 

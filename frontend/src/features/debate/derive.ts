@@ -19,6 +19,7 @@ import type {
 } from '../../api/types';
 import { creditRowFromFrame, toLiveActions, toLiveCredibility, toLiveTurn } from '../../api/adapters';
 import { isVerifiedClaim } from '../../lib/derive/citations';
+import type { Quorum } from '../../lib/derive/verdict';
 import { topByCount } from '../../lib/tally';
 import type { Tone } from '../../ui/classes';
 import type { IconName } from '../../ui/icon-names';
@@ -34,6 +35,8 @@ export interface LiveDebate {
   votes: Vote[];
   /** How each agent's data slice was chosen. Empty for an investigation that predates the record. */
   inputBasis: Record<string, InputBasis>;
+  /** Why the debate stopped (status error): the stored reason, or the live error frame's text. */
+  errorReason: string | null;
 }
 
 export function emptyDebate(): LiveDebate {
@@ -46,6 +49,7 @@ export function emptyDebate(): LiveDebate {
     actions: [],
     votes: [],
     inputBasis: {},
+    errorReason: null,
   };
 }
 
@@ -85,6 +89,7 @@ export function fromDetail(detail: InvestigationDetail): LiveDebate {
     actions: detail.actions,
     votes: detail.votes,
     inputBasis: detail.input_basis ?? {},
+    errorReason: detail.error_reason,
   };
 }
 
@@ -168,18 +173,22 @@ export function applyFrame(state: LiveDebate, frame: LiveFrame): LiveDebate {
       };
     }
     case 'error':
-      return state;
+      // The engine has marked the investigation error: say so now, and keep the reason it gave.
+      return { ...state, status: 'error', errorReason: frame.detail };
   }
 }
 
 // ---- round stepper ---------------------------------------------------------------
 
-export type RoundState = 'complete' | 'active' | 'pending';
+export type RoundState = 'complete' | 'active' | 'pending' | 'stopped';
 
 export interface RoundStep {
   round: number;
   state: RoundState;
   title: string;
+  /** Agents that answered in this round, and how many were expected. */
+  answered: number;
+  expected: number;
 }
 
 const ROUND_TITLES = ['Theory generation & ingestion', 'Cross-examination & refutation', 'Synthesis & consensus'];
@@ -190,7 +199,9 @@ export function roundTitle(round: number): string {
 
 /**
  * Round N is complete when all active agents have a turn in it, or a later round exists, or the
- * debate has finished. The first incomplete round while running is active; the rest are pending.
+ * debate has finished. The first incomplete round while running is active; the rest are pending. When the
+ * debate ended in error, the round that was cut off is stopped (it says how many agents had answered) and
+ * the rounds after it never ran, so they stay pending.
  */
 export function roundSteps(
   rounds: readonly DebateRound[],
@@ -201,18 +212,25 @@ export function roundSteps(
   const present = new Map<number, number>(rounds.map((round) => [round.round, round.agents.length]));
   const maxPresent = rounds.reduce((top, round) => Math.max(top, round.round), 0);
   const running = status === 'investigating' || status === null;
+  const failed = status === 'error';
 
   const steps: RoundStep[] = [];
+  let stoppedAt: number | null = null;
   for (let round = 1; round <= totalRounds; round += 1) {
     const title = roundTitle(round);
     const count = present.get(round);
+    const base = { round, title, answered: count ?? 0, expected: activeAgentCount };
     if (count !== undefined) {
-      const full = count >= activeAgentCount || present.has(round + 1) || !running;
-      steps.push({ round, state: full ? 'complete' : 'active', title });
+      const full = count >= activeAgentCount || present.has(round + 1) || (!running && !failed);
+      if (!full && failed) stoppedAt = round;
+      steps.push({ ...base, state: full ? 'complete' : failed ? 'stopped' : 'active' });
     } else if (running && round === maxPresent + 1) {
-      steps.push({ round, state: 'active', title });
+      steps.push({ ...base, state: 'active' });
+    } else if (failed && round === maxPresent + 1 && stoppedAt === null) {
+      stoppedAt = round;
+      steps.push({ ...base, state: 'stopped' });
     } else {
-      steps.push({ round, state: 'pending', title });
+      steps.push({ ...base, state: 'pending' });
     }
   }
   return steps;
@@ -309,6 +327,16 @@ export function verdictTone(verdict: VerdictClass | null): Tone | 'neutral' {
   if (INSIDER.has(verdict) || EXTERNAL.has(verdict)) return 'error';
   if (verdict === 'benign') return 'secondary';
   return 'tertiary';
+}
+
+/**
+ * The pill beside "Verdict aggregator". A debate that stopped in error never reached a vote, so it must not
+ * claim a quorum: the votes the API lists for it are only each agent's latest answer, classified.
+ */
+export function quorumPill(status: InvestigationStatus | null, quorum: Quorum): { label: string; tone: Tone | 'neutral' } {
+  if (status === 'error') return { label: 'no quorum: the debate stopped', tone: 'error' };
+  const tone = quorum.status === 'agreed' || quorum.status === 'primary_decided' ? 'secondary' : quorum.status === 'no_votes' ? 'neutral' : 'tertiary';
+  return { label: quorum.label, tone };
 }
 
 export interface CitationMeta {

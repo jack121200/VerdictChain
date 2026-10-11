@@ -1,7 +1,7 @@
 // Live feed: nobody injects anything. A lead starts the simulated feed, rows arrive through RabbitMQ, the monitor
 // flags a window, an investigation starts by itself, the debate queue runs it with the offline stub, and the
 // Live page shows every step with the API's own numbers. The ground-truth label never reaches the page.
-import { STORAGE, auditEntries, call, getInvestigation, loadUsers, ok, resetState } from './support/api'
+import { STORAGE, auditEntries, call, getInvestigation, loadUsers, ok, resetState, stubCalls } from './support/api'
 import { seedRows } from './support/stack.mjs'
 import { expect, gotoRoute, test, visibleText, watchHealth } from './support/fixtures'
 
@@ -29,7 +29,9 @@ test('a lead starts the feed and an investigation runs by itself, with the live 
   expect((await ok(lead.token, 'GET', '/system/status')).continuous_mode).toBe(false)
 
   // ---- start it from the page ------------------------------------------------------------------------
+  const callsBefore = await stubCalls()
   await page.getByLabel('Replay speed').selectOption('25')
+  await page.getByLabel('Call OpenAI after').selectOption('300') // the smallest choice: 12 s of rows at this speed
   await page.getByRole('button', { name: 'Start live feed' }).click()
   await expect(page.getByText(/Running/)).toBeVisible()
   expect((await ok(lead.token, 'GET', '/system/status')).continuous_mode).toBe(true)
@@ -41,7 +43,10 @@ test('a lead starts the feed and an investigation runs by itself, with the live 
   const status = await ok(lead.token, 'GET', '/live/status')
   const investigationId = status.last_trigger.investigation_id as string
   expect(status.last_trigger.reason).toContain('logon window')
-  expect(status.consumed.value).toBeGreaterThan(0)
+  expect(status.consumed.value).toBeGreaterThanOrEqual(300) // nothing starts before the chosen rows have streamed
+  expect(status.llm.activation_rows.value).toBe(300)
+  expect(['active', 'budget_reached']).toContain(status.llm.state)
+  await expect(page.getByRole('region', { name: 'Language model' }).getByText('Active')).toBeVisible({ timeout: 15_000 })
 
   const started = page.getByRole('region', { name: 'Automatic investigations' })
   await expect(started.getByRole('link', { name: investigationId.slice(0, 8) })).toBeVisible({ timeout: 30_000 })
@@ -55,6 +60,7 @@ test('a lead starts the feed and an investigation runs by itself, with the live 
   const detail = await getInvestigation(lead.token, investigationId)
   expect(detail.rounds_complete).toBe(3)
   expect(detail.primary_agent).toBe('endpoint_behavior')
+  expect((await stubCalls()).openai, 'the debate asked the model').toBeGreaterThan(callsBefore.openai)
   await expect(started.getByText(/Verdict reached|Contained|Ambiguous/).first()).toBeVisible({ timeout: 30_000 })
 
   // ---- open the debate room: the label of the window is nowhere on screen -------------------------------

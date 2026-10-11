@@ -19,6 +19,13 @@ describe('parseRoute', () => {
     expect(parseRoute('#/investigations/abc%20d')).toEqual({ name: 'investigation', id: 'abc d' });
   });
 
+  it('parses the printable documents of a case: the report and the chain of custody', () => {
+    expect(parseRoute('#/report/9f4d')).toEqual({ name: 'report', id: '9f4d' });
+    expect(parseRoute('#/custody/abc%20d')).toEqual({ name: 'custody', id: 'abc d' });
+    expect(parseRoute('#/report')).toMatchObject({ name: 'not_found' }); // a document needs a case
+    expect(parseRoute('#/custody/a/b')).toMatchObject({ name: 'not_found' });
+  });
+
   it('parses the debate list route (no id, with or without a trailing slash)', () => {
     expect(parseRoute('#/debate')).toEqual({ name: 'debate' });
     expect(parseRoute('#/debate/')).toEqual({ name: 'debate' });
@@ -45,6 +52,8 @@ describe('buildRoute', () => {
       { name: 'overview' },
       { name: 'debate', id: 'id/with slash' },
       { name: 'investigation', id: '9f4d-0001' },
+      { name: 'report', id: '9f4d-0001' },
+      { name: 'custody', id: 'id/with slash' },
     ];
     for (const route of routes) {
       expect(parseRoute(buildRoute(route))).toEqual(route);

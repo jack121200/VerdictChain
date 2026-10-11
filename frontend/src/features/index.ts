@@ -16,7 +16,9 @@ export type PageKey =
   | 'audit'
   | 'access'
   | 'overview'
-  | 'live';
+  | 'live'
+  | 'report'
+  | 'custody';
 
 export const PAGES: Record<PageKey, LazyExoticComponent<ComponentType<PageProps>>> = {
   dashboard: lazy(() => import('./dashboard')),
@@ -29,6 +31,8 @@ export const PAGES: Record<PageKey, LazyExoticComponent<ComponentType<PageProps>
   access: lazy(() => import('./access')),
   overview: lazy(() => import('./overview')),
   live: lazy(() => import('./live')),
+  report: lazy(() => import('./report')),
+  custody: lazy(() => import('./custody')),
 };
 
 /** The scenario injection modal (plan 2.11). Opened from the dashboard, not routed. */

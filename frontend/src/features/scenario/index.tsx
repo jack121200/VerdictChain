@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { describeError, listScenarios, simulateInvestigation } from '../../api/client';
 import type { DatasetName, NoisePct, ScenarioLabel, ScenarioSummary } from '../../api/types';
 import { buildRoute } from '../../app/router';
-import { useAsync } from '../../app/use-async';
+import { usePageData } from '../../app/use-page-data';
 import { shortId } from '../../lib/format';
 import { cn } from '../../lib/cn';
 import { Button } from '../../ui/Button';
@@ -41,7 +41,7 @@ const DEFAULT_MAX_ROWS = 5;
  * the real investigation id. Target-swarm and custom-JSON are dropped; the blind test is a real note.
  */
 export default function ScenarioModal({ open, onClose, canInject, initialScenario = null }: ScenarioModalProps) {
-  const scenariosQ = useAsync(listScenarios);
+  const scenariosQ = usePageData(listScenarios);
   const [selected, setSelected] = useState<ScenarioLabel | null>(initialScenario);
   const [noise, setNoise] = useState<NoisePct>(0);
   const [maxRows, setMaxRows] = useState(DEFAULT_MAX_ROWS);
@@ -164,9 +164,9 @@ export default function ScenarioModal({ open, onClose, canInject, initialScenari
             />
           </legend>
 
-          {scenariosQ.error !== null && scenarios === undefined ? (
-            <EmptyState title="Scenarios unavailable" description={scenariosQ.error} icon="warning" />
-          ) : scenarios === undefined ? (
+          {scenariosQ.status === 'failed' ? (
+            <EmptyState title="Scenarios unavailable" description={scenariosQ.error ?? ''} icon="warning" />
+          ) : scenariosQ.status === 'loading' ? (
             <div className="flex flex-col gap-2">
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />

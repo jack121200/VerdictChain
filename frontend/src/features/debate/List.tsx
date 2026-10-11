@@ -1,7 +1,7 @@
 import { listInvestigations } from '../../api/client';
 import type { InvestigationSummary } from '../../api/types';
 import { buildRoute } from '../../app/router';
-import { useAsync } from '../../app/use-async';
+import { usePageData } from '../../app/use-page-data';
 import { cn } from '../../lib/cn';
 import { formatCount, shortId } from '../../lib/format';
 import { RunScenarioAction } from '../../shell/RunScenarioAction';
@@ -17,6 +17,7 @@ import { Proof } from '../../ui/Proof';
 import { Skeleton } from '../../ui/Skeleton';
 import { StubBadge } from '../../ui/StubBadge';
 import { Timestamp } from '../../ui/Timestamp';
+import { statusIcon, verdictIcon } from '../investigations/labels';
 
 const HINT = [
   'Debates that are running now are listed first, then the most recent finished cases; open a row to follow it live or to replay it.',
@@ -27,7 +28,7 @@ const HINT = [
 /** Live debates first, then the most recent closed ones. Refreshes every 4s so a running
  *  debate appears without a manual reload. Every row links to its debate room. */
 export function DebateList() {
-  const investigations = useAsync(() => listInvestigations({ limit: 50 }), 4000, ['investigations']);
+  const investigations = usePageData(() => listInvestigations({ limit: 50 }), 4000, ['investigations']);
   const rows = investigations.data?.items ?? [];
   const live = rows.filter((row) => row.status === 'investigating');
   // Waiting cases in the order the worker takes them: oldest first (the queue is first in, first out).
@@ -45,20 +46,20 @@ export function DebateList() {
 
       <HintStrip pageId="debate-list" sentences={HINT} className="mt-4" />
 
-      {investigations.data === undefined && investigations.error === null && (
+      {investigations.status === 'loading' && (
         <div className="mt-6 space-y-2">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
         </div>
       )}
 
-      {investigations.error !== null && investigations.data === undefined && (
+      {investigations.status === 'failed' && (
         <Card className="mt-6">
           <span className="text-caption text-error">{investigations.error}</span>
         </Card>
       )}
 
-      {investigations.data !== undefined && rows.length === 0 && (
+      {investigations.status === 'ready' && rows.length === 0 && (
         <div className="mt-6">
           <EmptyState
             icon="forum"
@@ -69,7 +70,7 @@ export function DebateList() {
         </div>
       )}
 
-      {investigations.data !== undefined && rows.length > 0 && (
+      {investigations.status === 'ready' && rows.length > 0 && (
         <div className="mt-6 space-y-6">
           <section className="space-y-2">
             <div className="flex items-center gap-2">
@@ -102,7 +103,7 @@ export function DebateList() {
                   n={waiting.length}
                   asOf={investigations.loadedAt}
                   label="Queue place"
-                  definition="Place = the row's rank among investigations with status queued, ordered by created_at (oldest first). The worker takes them in that order, one at a time."
+                  definition="Place = the row's rank among investigations with status queued, ordered by created_at (oldest first). The workers take them in that order as debate slots free up."
                 />
               </div>
               {waiting.map((row, index) => (
@@ -142,12 +143,21 @@ function DebateRow({ row, live = false, place }: { row: InvestigationSummary; li
         <div className="flex min-w-0 flex-col">
           <CopyHash value={row.id} display={shortId(row.id)} label="investigation id" size="inherit" className="text-caption" textClassName="text-primary" />
           <Timestamp iso={row.created_at} className="text-caption text-on-surface-variant" />
+          {row.status === 'error' && (
+            <span className="text-caption text-error">{row.error_reason ?? 'Stopped: no reason was recorded'}</span>
+          )}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StubBadge source={row.data_source} />
-        {row.verdict_class && <Pill tone="secondary">{row.verdict_class}</Pill>}
-        <Pill tone={live ? 'error' : 'neutral'}>{place !== undefined ? `queued · place ${place}` : row.status}</Pill>
+        {row.verdict_class && (
+          <Pill tone="secondary" icon={verdictIcon(row.verdict_class)}>
+            {row.verdict_class}
+          </Pill>
+        )}
+        <Pill tone={live || row.status === 'error' ? 'error' : 'neutral'} icon={statusIcon(row.status)}>
+          {place !== undefined ? `queued · place ${place}` : row.status}
+        </Pill>
         <Icon name="chevron_right" size={16} className="hidden text-on-surface-variant sm:inline" />
       </div>
     </Card>

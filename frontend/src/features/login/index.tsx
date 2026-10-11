@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { describeError, login, register, setToken } from '../../api/client';
-import { FOCUS_RING } from '../../ui/classes';
+import { CONTROL_BORDER, FOCUS_RING } from '../../ui/classes';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import { Pill } from '../../ui/Pill';
@@ -48,7 +48,7 @@ function DecorGraph() {
   );
 }
 
-const INPUT_CLASS = `w-full rounded-lg border border-outline-variant/60 bg-surface-container-low px-3 py-2.5 text-body text-on-surface placeholder:text-outline focus:border-primary focus:outline-none ${FOCUS_RING}`;
+const INPUT_CLASS = `w-full rounded-lg ${CONTROL_BORDER} bg-surface-container-low px-3 py-2.5 text-body text-on-surface placeholder:text-outline focus:border-primary focus:outline-none ${FOCUS_RING}`;
 
 /** Sign-in and account creation. Both call the real API and store the returned token. */
 export default function LoginPage({ onSignedIn }: LoginPageProps) {
@@ -119,7 +119,7 @@ export default function LoginPage({ onSignedIn }: LoginPageProps) {
             ))}
           </div>
         </div>
-        <p className="relative z-10 text-caption text-on-surface-variant">Protected system. Authorized personnel only.</p>
+        <p className="relative z-10 text-caption text-on-surface-variant">Protected system. Sign-in required; roles are enforced on the server.</p>
       </aside>
 
       <main className="flex flex-1 items-center justify-center px-4 py-12 lg:px-8">

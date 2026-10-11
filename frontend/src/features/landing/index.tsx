@@ -32,7 +32,7 @@ const PILLARS: ReadonlyArray<{ icon: IconName; phase: string; title: string; bod
     icon: 'lock_reset',
     phase: 'Phase 04',
     title: 'Sandboxed response',
-    body: 'A confident verdict triggers simulated containment (account lock, IP block, audit) inside a sandbox with no real-system reach. Every step is written to a tamper-evident SHA-256 audit chain.',
+    body: 'A confident verdict backed by credible agents triggers simulated containment (account lock, IP block, audit) inside a sandbox with no real-system reach. Every step is written to a tamper-evident SHA-256 audit chain.',
     tone: 'text-primary',
   },
 ];
@@ -157,7 +157,7 @@ export default function LandingPage({ onEnter }: LandingProps) {
               Four stages, every claim checked
             </h2>
             <p className="mt-3 font-body text-body text-on-surface-variant">
-              From raw telemetry to a signed-off verdict — nothing shown is invented, every value is traced to the data.
+              From raw telemetry to an audited verdict — nothing shown is invented, every value is traced to the data.
             </p>
           </div>
 
@@ -199,7 +199,7 @@ export default function LandingPage({ onEnter }: LandingProps) {
             Sign in to continue
           </button>
           <p className="mt-10 font-mono text-evidence uppercase tracking-wider text-outline">
-            Sandboxed forensic console &middot; Authorized personnel only
+            Sandboxed forensic console &middot; Sign-in required
           </p>
         </div>
       </section>

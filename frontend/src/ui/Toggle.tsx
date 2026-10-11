@@ -30,7 +30,7 @@ export function Toggle({ label, description, checked, onChange, disabled = false
         onClick={() => onChange(!checked)}
         className={cn(
           'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-          checked ? 'border-primary bg-primary-container' : 'border-outline-variant/60 bg-surface-container-highest',
+          checked ? 'border-primary bg-primary-container' : 'border-outline bg-surface-container-highest',
           FOCUS_RING,
         )}
       >

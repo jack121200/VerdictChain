@@ -90,14 +90,25 @@ export async function ok<T = any>(
 export async function resetState(rows: 'seed' | 'empty' = 'seed'): Promise<void> {
   seedRows('reset', '--rows', rows)
   await setFabricate([])
+  await setQuotaExhausted(false)
 }
 
-/** The offline LLM stub (backend/scripts/e2e_server.py): which agents cite wrong values from now on. */
+/** The offline LLM stub: while on, the investigators' model calls fail like an account with no quota left. */
+export async function setQuotaExhausted(exhausted: boolean): Promise<void> {
+  await ok(null, 'POST', '/__e2e/quota', { exhausted })
+}
+
+/** Puts the analyst's daily debate counter at its limit (cleared by the next resetState). */
+export function fillDailyCap(username: string): void {
+  seedRows('fill-cap', '--user', username)
+}
+
+/** The offline LLM stub (backend/testing/e2e_server.py): which agents cite wrong values from now on. */
 export async function setFabricate(agents: readonly AgentId[]): Promise<void> {
   await ok(null, 'POST', '/__e2e/fabricate', { agents })
 }
 
-export async function stubCalls(): Promise<{ groq: number; gemini: number }> {
+export async function stubCalls(): Promise<{ openai: number }> {
   return ok(null, 'GET', '/__e2e/stub-calls')
 }
 

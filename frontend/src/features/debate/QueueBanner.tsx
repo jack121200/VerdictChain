@@ -3,6 +3,7 @@ import { getInvestigationProgress } from '../../api/client';
 import { buildRoute } from '../../app/router';
 import { useAsync } from '../../app/use-async';
 import { formatDuration, shortId } from '../../lib/format';
+import { CopyButton } from '../../ui/CopyHash';
 import { Icon } from '../../ui/Icon';
 import { Proof } from '../../ui/Proof';
 
@@ -38,15 +39,16 @@ export function QueueBanner({ investigationId, onLeftQueue }: { investigationId:
             {position !== null && length !== null ? ` · place ${position} of ${length}` : ''}
           </span>
           <span className="text-caption text-on-surface-variant">
-            One debate runs at a time because the agents share their credibility scores and the model quota. This case starts by
-            itself when the ones ahead of it have finished.
+            Several debates run side by side, one per debate slot, and every slot is busy. This case starts by itself as soon as
+            a slot frees up and the ones ahead of it have started.
             {waitingFor !== null && (
               <>
                 {' '}
-                Running now:{' '}
+                Longest-running now:{' '}
                 <a className="font-mono text-primary underline" href={buildRoute({ name: 'debate', id: waitingFor })}>
                   {shortId(waitingFor)}
-                </a>
+                </a>{' '}
+                <CopyButton value={waitingFor} label="investigation id" />
                 .
               </>
             )}
@@ -60,7 +62,7 @@ export function QueueBanner({ investigationId, onLeftQueue }: { investigationId:
           n={length ?? 0}
           asOf={progress.loadedAt}
           label="Queue position"
-          definition="queue_position = investigations with status queued that were accepted before this one, plus 1 (ordered by queued_at). queue_length = investigations with status queued. waiting_for = the investigation that holds the debate slot."
+          definition="queue_position = investigations with status queued that were accepted before this one, plus 1 (ordered by queued_at). queue_length = investigations with status queued. waiting_for = the debate that has held a slot the longest (every slot is busy while this one waits)."
         />
       </div>
     </section>

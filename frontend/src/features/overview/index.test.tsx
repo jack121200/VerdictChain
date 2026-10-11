@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EvaluationResponse, FleetEntry, InvestigationPage, Metric, RawLogRow, ScenarioSummary, Settings, SystemStatus } from '../../api/types';
+import { evidenceOutsideMono } from '../../test/evidence';
 import { fullStats } from '../../test/fixtures';
 
 vi.mock('../../api/client', () => ({
@@ -52,7 +53,7 @@ const FLEET: FleetEntry[] = [
     display_name: 'Network-Traffic',
     domain: 'network traffic',
     signals: ['tls'],
-    provider_chain: ['groq'],
+    provider_chain: ['openai'],
     model: 'm',
     temperature: metric(0.2),
     crs: metric(0.9),
@@ -81,8 +82,7 @@ const SETTINGS: Settings = {
 const STATUS = {
   api_version: 'v2',
   providers: {
-    groq: { configured: true, model: 'groq-model', temperature: metric(0.2), calls_24h: metric(0), latency_ms: metric(null, 'no calls'), quota_errors_24h: metric(0) },
-    gemini: { configured: false, model: null, temperature: metric(0.2), calls_24h: metric(0), latency_ms: metric(null, 'no calls'), quota_errors_24h: metric(0) },
+    openai: { configured: true, model: 'gpt-4.1-mini', temperature: metric(0.2), calls_24h: metric(0), latency_ms: metric(null, 'no calls'), quota_errors_24h: metric(0) },
   },
   sandbox: { is_simulated_violations: metric(0), actions_total: metric(0) },
 } as unknown as SystemStatus;
@@ -149,6 +149,22 @@ describe('OverviewPage', () => {
     expect(await screen.findByText('row-7')).toBeTruthy();
   });
 
+  it('shows every row id and fingerprint in the evidence font', async () => {
+    const rowId = '574a5ec4-b50a-4be0-bb55-d96a032d8f92';
+    vi.mocked(listRecentRawLogs).mockResolvedValue([{ ...RECENT[0], row_id: rowId }]);
+    vi.mocked(getInvestigationCitations).mockResolvedValue({
+      summary: { total: 1, verified: 1, discrepancy: 0, invalid_row: 0, match_rate: metric(1) },
+      citations: [
+        { row_id: rowId, field: 'total_bytes', value: '48200', expected: '48200', status: 'VERIFIED', reason: 'ok', agent_id: 'network_traffic', round: 1, row_fingerprint: 'd'.repeat(64) },
+      ],
+    });
+    const { container } = render(<OverviewPage />);
+    await screen.findByText('FLOW_START');
+    await screen.findByText('Watchdog citation OK');
+
+    expect(evidenceOutsideMono(container)).toEqual([]);
+  });
+
   it('does not crash on a scenario label that no ingested row carries (primary_agent null)', async () => {
     vi.mocked(listScenarios).mockResolvedValue([
       { ...SCENARIO, label: 'FTP-Patator', primary_agent: null, row_count: metric(0) },
@@ -162,6 +178,32 @@ describe('OverviewPage', () => {
     vi.mocked(getEvaluation).mockResolvedValue({ accuracy: metric(null, 'not evaluated yet') } as unknown as EvaluationResponse);
     render(<OverviewPage />);
     expect(await screen.findByText('not evaluated yet')).toBeTruthy();
+  });
+
+  it('names what it shows without claiming live ingestion: the counts are read from raw_logs', async () => {
+    const { container } = render(<OverviewPage />);
+    await screen.findByText('DDoS');
+
+    expect(screen.getByText('COUNTED IN raw_logs')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/live ingestion/i); // ingestion is a one-time load, not a stream
+    expect(screen.getByText('Configured provider')).toBeTruthy(); // one provider, so the singular
+    expect(container.textContent).toContain('a confident verdict backed by credible agents is contained in a sandbox');
+  });
+
+  it('gives the blind-test badge a Proof that points at the test, like every other claim', async () => {
+    render(<OverviewPage />);
+    await screen.findByText('DDoS');
+
+    expect(screen.getByText('Agents never see the label (blind test)')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Proof: Blind-test proof' })).toBeTruthy();
+  });
+
+  it('says in the latency Proof that a queued case includes its wait', async () => {
+    render(<OverviewPage />);
+    await screen.findByText('DDoS');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Proof: Mean adjudication latency' }));
+    expect((await screen.findByText(/includes its wait/)).textContent).toMatch(/waited in the debate queue/);
   });
 
   it('shows a raw-log time as a clock from the row, and the rounds as done out of total', async () => {

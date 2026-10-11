@@ -1,13 +1,10 @@
-import { useState, type ReactNode } from 'react';
-import { describeError, getLiveArrivals, getLiveStatus, getMe, listInvestigations, startLiveFeed, stopLiveFeed } from '../../api/client';
-import type { InvestigationSummary, LiveArrival, LiveStatus, LiveWindow } from '../../api/types';
+import { getLiveArrivals, getLiveStatus, getMe, getSettings, listInvestigations } from '../../api/client';
 import { buildRoute } from '../../app/router';
 import { useAsync } from '../../app/use-async';
-import { cn } from '../../lib/cn';
-import { formatCount, formatNumber, formatPercent, shortId } from '../../lib/format';
-import { Button } from '../../ui/Button';
+import { usePageData } from '../../app/use-page-data';
+import { formatNumber, shortId } from '../../lib/format';
 import { Card } from '../../ui/Card';
-import { CopyHash } from '../../ui/CopyHash';
+import { CopyButton } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
 import { PageHeader, SectionHeader } from '../../ui/Headings';
 import { HintStrip } from '../../ui/HintStrip';
@@ -15,226 +12,52 @@ import { Icon } from '../../ui/Icon';
 import { Metric } from '../../ui/Metric';
 import { Pill } from '../../ui/Pill';
 import { Proof } from '../../ui/Proof';
-import { Select } from '../../ui/Select';
-import { Table, type TableColumn } from '../../ui/Table';
+import { Table } from '../../ui/Table';
 import { Timestamp } from '../../ui/Timestamp';
-import { Toggle } from '../../ui/Toggle';
-import { pushToast } from '../../ui/toast-store';
-import { statusTone, STATUS_LABEL, VERDICT_LABEL } from '../investigations/labels';
-import { FLAG_SUSPICION, RULE_DEFINITION, fillRatio, thresholdLabel, valueLabel, windowState } from './derive';
+import { OperationsBoard } from '../investigations/OperationsBoard';
+import { Controls } from './Controls';
+import { LlmCard } from './LlmCard';
+import { Tile, WindowCard } from './WindowCard';
+import { ARRIVAL_COLUMNS, INVESTIGATION_COLUMNS } from './columns';
 
 const HINT = [
   'There is no real network here: the feed replays rows of the CICIDS2017 and CERT r4.2 datasets through RabbitMQ on its own, and says so on this page.',
   'A monitor keeps a window of the newest rows per source and scores it with a fixed rule that never reads a label; when a window looks unusual it starts an investigation without a click.',
-  'Automatic investigations wait in the same queue as injected ones, one debate at a time, and are limited by a gap, a waiting limit and a daily cap so the feed cannot use up the model quota.',
+  'Several automatic investigations run side by side, one per free debate slot; when every slot is busy they wait in the same queue as injected ones. A gap per source window, a waiting limit and a daily cap stop the feed from using up the model quota.',
+  'OpenAI is used by all debates (manual and live). The live feed has its own budget-tracked OpenAI client with a daily token limit; until the chosen row count streams, the monitor scores windows locally and no model is called.',
 ] as const;
-
-const RATE_OPTIONS = [
-  { value: '1', label: '1 row / s' },
-  { value: '2', label: '2 rows / s' },
-  { value: '4', label: '4 rows / s' },
-  { value: '10', label: '10 rows / s' },
-  { value: '25', label: '25 rows / s' },
-] as const;
-type RateValue = (typeof RATE_OPTIONS)[number]['value'];
-
-function Tile({ label, children, sub }: { label: string; children: ReactNode; sub?: ReactNode }) {
-  return (
-    <div className="rounded-xl border border-outline-variant/40 bg-surface-container-low/80 p-4 backdrop-blur-md">
-      <div className="font-mono text-[10px] uppercase text-on-surface-variant">{label}</div>
-      <div className="mt-1 flex flex-wrap items-baseline gap-2">{children}</div>
-      {sub && <div className="mt-1 font-mono text-[10px] text-on-surface-variant">{sub}</div>}
-    </div>
-  );
-}
-
-/** One source group: how full its window is, the number the rule looks at, and whether it flagged. */
-function WindowCard({ window: win, loadedAt }: { window: LiveWindow; loadedAt: string | null }) {
-  const state = windowState(win);
-  const tone = state === 'flagged' ? 'error' : state === 'normal' ? 'secondary' : 'neutral';
-  return (
-    <Card hoverTone={state === 'flagged' ? 'error' : undefined} className="flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex flex-col">
-          <span className="font-headline text-body font-semibold text-on-surface">{win.source}</span>
-          <span className="font-mono text-[10px] text-on-surface-variant">{win.feature}</span>
-        </div>
-        <Pill tone={tone} icon={state === 'flagged' ? 'warning' : state === 'normal' ? 'check' : 'sync'}>
-          {state === 'flagged' ? 'Flagged' : state === 'normal' ? 'Normal' : 'Filling'}
-        </Pill>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <div
-          role="meter"
-          aria-label={`Suspicion, ${win.source}`}
-          aria-valuemin={0}
-          aria-valuemax={1}
-          aria-valuenow={Number(win.suspicion.toFixed(2))}
-          className="relative h-2 w-full overflow-hidden rounded-full bg-surface-container-highest"
-        >
-          <div
-            className={cn('h-full rounded-full', state === 'flagged' ? 'bg-error' : 'bg-linear-to-r from-primary-container to-secondary')}
-            style={{ width: `${win.suspicion * 100}%` }}
-          />
-          <div aria-hidden="true" className="absolute inset-y-0 w-px bg-on-surface-variant" style={{ left: `${FLAG_SUSPICION * 100}%` }} />
-        </div>
-        <span className="font-mono text-evidence tabular-nums text-on-surface">{formatNumber(win.suspicion, 2)}</span>
-        <Proof
-          source="GET /live/status (windows)"
-          n={win.scored_rows}
-          asOf={loadedAt}
-          label={`Suspicion, ${win.source}`}
-          definition={RULE_DEFINITION[win.group]}
-          inputs={[
-            { label: 'window rows', value: `${win.rows} of ${win.size}` },
-            { label: valueLabel(win.group), value: win.value === null ? '—' : formatNumber(win.value, 3) },
-            { label: thresholdLabel(win.group), value: win.threshold === null ? '—' : formatNumber(win.threshold, 3) },
-            { label: 'z', value: win.z === null ? '—' : formatNumber(win.z, 1) },
-          ]}
-        />
-      </div>
-
-      <dl className="grid grid-cols-3 gap-2 font-mono text-[10px] text-on-surface-variant">
-        <div>
-          <dt className="uppercase">window</dt>
-          <dd className="text-evidence text-on-surface tabular-nums">
-            {formatCount(win.rows)} / {formatCount(win.size)}
-          </dd>
-        </div>
-        <div>
-          <dt className="uppercase">{valueLabel(win.group)}</dt>
-          <dd className="text-evidence text-on-surface tabular-nums">{win.value === null ? '—' : formatNumber(win.value, 2)}</dd>
-        </div>
-        <div>
-          <dt className="uppercase">{thresholdLabel(win.group)}</dt>
-          <dd className="text-evidence text-on-surface tabular-nums">{win.threshold === null ? '—' : formatNumber(win.threshold, 2)}</dd>
-        </div>
-      </dl>
-      <p className="text-caption text-on-surface-variant">{win.rule}</p>
-      <div className="h-0.5 w-full overflow-hidden rounded-full bg-surface-container-highest" aria-hidden="true">
-        <div className="h-full bg-outline" style={{ width: `${fillRatio(win) * 100}%` }} />
-      </div>
-    </Card>
-  );
-}
-
-function Controls({ status, onChanged }: { status: LiveStatus; onChanged: () => void }) {
-  const [rate, setRate] = useState<RateValue>('4');
-  const [auto, setAuto] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const running = status.state === 'running';
-
-  async function run(action: () => Promise<LiveStatus>, done: string) {
-    setBusy(true);
-    try {
-      await action();
-      pushToast(done, { tone: 'secondary' });
-      onChanged();
-    } catch (error) {
-      pushToast(describeError(error), { tone: 'tertiary', durationMs: 6000 });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (running) {
-    return (
-      <Button variant="secondary" icon="pause" busy={busy} onClick={() => void run(stopLiveFeed, 'Live feed stopped (audited).')}>
-        Stop live feed
-      </Button>
-    );
-  }
-  return (
-    <div className="flex flex-wrap items-end gap-4">
-      <Select<RateValue> label="Replay speed" value={rate} options={RATE_OPTIONS} onChange={setRate} disabled={busy} />
-      <div className="min-w-56">
-        <Toggle
-          label="Start investigations automatically"
-          description="Off: the monitor still scores windows, nothing starts."
-          checked={auto}
-          onChange={setAuto}
-          disabled={busy}
-        />
-      </div>
-      <Button
-        variant="primary"
-        icon="play_arrow"
-        busy={busy}
-        onClick={() =>
-          void run(() => startLiveFeed({ events_per_second: Number(rate), auto_investigate: auto }), 'Live feed started (audited).')
-        }
-      >
-        Start live feed
-      </Button>
-    </div>
-  );
-}
-
-const ARRIVAL_COLUMNS: TableColumn<LiveArrival>[] = [
-  { key: 'arrived', header: 'Arrived', cell: (row) => <Timestamp iso={row.arrived_at} mode="clock" /> },
-  { key: 'source', header: 'Source', cell: (row) => row.source, mono: true },
-  { key: 'event', header: 'Event', cell: (row) => row.event_type, mono: true },
-  { key: 'user', header: 'User', cell: (row) => row.user_id ?? '—', mono: true },
-  { key: 'host', header: 'Host', cell: (row) => row.host_id ?? '—', mono: true },
-  { key: 'row', header: 'Row', cell: (row) => <CopyHash value={row.row_id} display={shortId(row.row_id)} label="row id" />, mono: true },
-];
-
-const INVESTIGATION_COLUMNS: TableColumn<InvestigationSummary>[] = [
-  {
-    key: 'case',
-    header: 'Case',
-    cell: (row) => (
-      <a href={buildRoute({ name: 'debate', id: row.id })} className="font-mono text-primary underline">
-        {shortId(row.id)}
-      </a>
-    ),
-  },
-  { key: 'started', header: 'Started', cell: (row) => <Timestamp iso={row.created_at} /> },
-  {
-    key: 'status',
-    header: 'Status',
-    cell: (row) => <Pill tone={statusTone(row.status)}>{STATUS_LABEL[row.status]}</Pill>,
-  },
-  { key: 'verdict', header: 'Verdict', cell: (row) => (row.verdict_class ? VERDICT_LABEL[row.verdict_class] : '—') },
-  {
-    key: 'confidence',
-    header: 'Agent-reported confidence',
-    align: 'right',
-    mono: true,
-    cell: (row) => (row.verdict_confidence === null ? '—' : formatPercent(row.verdict_confidence, 0)),
-  },
-];
 
 export default function LivePage() {
-  const status = useAsync(getLiveStatus, 3000, ['live']);
-  const arrivals = useAsync(() => getLiveArrivals(15), 3000, ['live']);
-  const automatic = useAsync(() => listInvestigations({ trigger_type: 'continuous', limit: 8 }), 5000, ['investigations']);
+  const feed = usePageData(getLiveStatus, 2000, ['live']);
+  const arrivals = useAsync(() => getLiveArrivals(15), 2000, ['live']);
+  const automatic = useAsync(() => listInvestigations({ trigger_type: 'continuous', limit: 8 }), 3000, ['investigations']);
   const me = useAsync(getMe);
+  // The debate length, so a lane can show "round 2 of 3".
+  const settings = useAsync(getSettings, undefined, ['settings']);
   const canControl = me.data?.capabilities.includes('control_live_feed') ?? false;
-  const live = status.data;
+  const live = feed.data;
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-6">
       <PageHeader
         title="Live feed"
-        subtitle="Logs arrive on their own, a monitor watches them in windows, and an unusual window starts an investigation without a click."
+        subtitle="Dataset rows are replayed on their own, a monitor watches them in windows, and an unusual window starts an investigation without a click."
         actions={
           live && (
             <>
               <Pill tone={live.state === 'running' ? 'secondary' : 'neutral'} icon={live.state === 'running' ? 'sensors' : 'pause'}>
                 {live.state === 'running' ? 'Running' : 'Stopped'}
               </Pill>
-              {canControl && <Controls status={live} onChanged={status.reload} />}
+              {canControl && <Controls status={live} onChanged={feed.reload} />}
             </>
           )
         }
       />
       <HintStrip pageId="live" sentences={HINT} className="mt-4" />
 
-      {status.error !== null && live === undefined && (
+      {feed.status === 'failed' && (
         <Card className="mt-6">
-          <span className="text-caption text-error">{status.error}</span>
+          <span className="text-caption text-error">{feed.error}</span>
         </Card>
       )}
 
@@ -251,6 +74,8 @@ export default function LivePage() {
               <p className="text-body text-on-surface">The feed stopped by itself: {live.error}</p>
             </div>
           )}
+
+          <LlmCard live={live} loadedAt={feed.loadedAt} />
 
           <section aria-label="Feed numbers" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Tile label="Published" sub="rows the sensor put on the queue">
@@ -287,19 +112,25 @@ export default function LivePage() {
             <SectionHeader title="What the monitor sees" eyebrow="Windows" />
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
               {live.windows.map((window) => (
-                <WindowCard key={window.group} window={window} loadedAt={status.loadedAt} />
+                <WindowCard key={window.group} window={window} loadedAt={feed.loadedAt} />
               ))}
             </div>
           </section>
+
+          {/* The cases the monitor has put into debate slots, running side by side */}
+          <OperationsBoard rounds={settings.data?.debate_rounds ?? null} showScoreboard={false} />
 
           <section aria-label="Last automatic investigation" className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <Card className="flex flex-col gap-2">
               <span className="text-label uppercase text-on-surface-variant">Last automatic investigation</span>
               {live.last_trigger ? (
                 <>
-                  <a href={buildRoute({ name: 'debate', id: live.last_trigger.investigation_id })} className="font-mono text-primary underline">
-                    {shortId(live.last_trigger.investigation_id)}
-                  </a>
+                  <span className="inline-flex items-center gap-1.5">
+                    <a href={buildRoute({ name: 'debate', id: live.last_trigger.investigation_id })} className="font-mono text-primary underline">
+                      {shortId(live.last_trigger.investigation_id)}
+                    </a>
+                    <CopyButton value={live.last_trigger.investigation_id} label="investigation id" />
+                  </span>
                   <p className="text-body text-on-surface">{live.last_trigger.reason}</p>
                   <Timestamp iso={live.last_trigger.at} className="text-caption text-on-surface-variant" />
                 </>

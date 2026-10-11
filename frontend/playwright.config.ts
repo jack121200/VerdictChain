@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 import { API_URL, FRONTEND_DIR, WEB_PORT, WEB_URL } from './e2e/support/stack.mjs'
 
 // E2E runs against its OWN stack, never the dev one (dev API 8000, dev Vite 5180, database verdictchain, Redis db 0):
-//   API   http://127.0.0.1:8100  backend.scripts.e2e_server (real API + offline LLM stub), database
+//   API   http://127.0.0.1:8100  backend.testing.e2e_server (real API + offline LLM stub), database
 //                                verdictchain_test_pw, Redis db 7, provider keys blanked
 //   Web   http://127.0.0.1:5190  Vite dev server with VITE_API_BASE pointing at that API
 // Both start from the webServer entries below (and are reused when already running). Run: pnpm e2e

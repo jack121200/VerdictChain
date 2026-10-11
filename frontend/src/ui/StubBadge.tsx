@@ -6,7 +6,7 @@ const TEXT: Record<Exclude<DataSource, 'model'>, { label: string; definition: st
   stub: {
     label: 'Offline stub',
     definition:
-      'Every answer in this investigation came from the offline stub (provider label stub-groq or stub-gemini), not from a real model provider. Its verdict and its accuracy say nothing about how the system performs with real models.',
+      'Every answer in this investigation came from the offline stub (provider label stub-openai), not from a real model provider. Its verdict and its accuracy say nothing about how the system performs with real models.',
   },
   mixed: {
     label: 'Stub + model',

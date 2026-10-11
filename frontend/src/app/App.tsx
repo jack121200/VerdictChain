@@ -43,6 +43,8 @@ function navKeyFor(route: Route): NavKey | null {
     case 'debate':
       return 'debate';
     case 'investigation':
+    case 'report':
+    case 'custody':
       return 'investigations';
     default:
       return route.name;
@@ -70,7 +72,9 @@ function renderPage(route: Route): ReactNode {
         </div>
       );
     case 'debate':
-    case 'investigation': {
+    case 'investigation':
+    case 'report':
+    case 'custody': {
       const Page = PAGES[route.name];
       return <Page id={route.id} />;
     }
@@ -138,6 +142,19 @@ export default function App() {
     return (
       <>
         {onLogin}
+        <Toaster />
+      </>
+    );
+  }
+
+  // The printable documents are a page of their own: no sidebar, top bar or footer, so what is on screen is what prints.
+  if (route.name === 'report' || route.name === 'custody') {
+    const Document = PAGES[route.name];
+    return (
+      <>
+        <Suspense fallback={<PageSkeleton />}>
+          <Document id={route.id} />
+        </Suspense>
         <Toaster />
       </>
     );

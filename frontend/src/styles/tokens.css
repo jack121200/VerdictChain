@@ -55,6 +55,18 @@
   --color-outline: #869397;
   --color-outline-variant: #3d494c;
 
+  /* Paper: the printed documents (case report, chain of custody). A light page with dark ink, and a deeper shade
+     of each accent so it reads on white (the neon accents above are for the dark console only). */
+  --color-paper: #ffffff;
+  --color-paper-tint: #f3f6f9;
+  --color-paper-rule: #d3dbe3;
+  --color-ink: #0b1220;
+  --color-ink-muted: #4a5568;
+  --color-paper-primary: #0e7490;
+  --color-paper-secondary: #047857;
+  --color-paper-tertiary: #b45309;
+  --color-paper-error: #b91c1c;
+
   /* Font families: one job each (SKILL section 6) */
   --font-headline: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -174,6 +186,37 @@
 
   .slide-in-from-top-4 {
     --vc-enter-y: -4px;
+  }
+}
+
+/*
+ * Printed documents. A4 with 12 mm margins, light page, and backgrounds kept in the PDF (without the
+ * print-color-adjust the browser drops them unless the person ticks "Background graphics").
+ */
+@page report {
+  size: A4;
+  margin: 12mm;
+}
+
+.vc-sheet {
+  page: report;
+}
+
+@media print {
+  /* The console is dark (color-scheme: dark), which would also paint the page margins black in the PDF. */
+  html {
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: var(--color-paper) !important;
+  }
+
+  .vc-sheet,
+  .vc-sheet * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }
 

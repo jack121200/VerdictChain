@@ -3,16 +3,7 @@
  * function of API fields; each is shown with a Proof popover. Nothing is invented or randomised.
  */
 import type { CredibilityRow, FleetEntry, InvestigatorId } from '../../api/types';
-
-/** The three investigator agents, in the display order used across the console. */
-export const INVESTIGATOR_IDS: readonly InvestigatorId[] = ['network_traffic', 'access_log', 'endpoint_behavior'];
-
-/** Visual tone per agent (SKILL section 5): network cyan, access emerald, endpoint amber. */
-export const AGENT_TONE: Record<InvestigatorId, 'primary' | 'secondary' | 'tertiary'> = {
-  network_traffic: 'primary',
-  access_log: 'secondary',
-  endpoint_behavior: 'tertiary',
-};
+import { INVESTIGATOR_IDS } from '../../lib/agents';
 
 export type HistoryMap = Record<InvestigatorId, CredibilityRow[]>;
 
@@ -46,7 +37,7 @@ export function overallDelta(histories: HistoryMap): OverallDelta {
 
 /**
  * Agents with at least one discrepancy (verification_match_rate < 1) in their last `window`
- * scored rounds. A discrepancy is a cited row the Watchdog could not verify exactly (plan 2.7).
+ * scored rounds. A discrepancy is a citation whose field or value the Watchdog could not match to the row (plan 2.7).
  */
 export function flaggedAgents(histories: HistoryMap, window = 10): InvestigatorId[] {
   return INVESTIGATOR_IDS.filter((agentId) => {

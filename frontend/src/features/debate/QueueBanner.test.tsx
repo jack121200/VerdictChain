@@ -26,6 +26,7 @@ function progress(over: Partial<InvestigationProgress> = {}): InvestigationProgr
     queue_position: 2,
     queue_length: 3,
     waiting_for: RUNNING,
+    error_reason: null,
     ...over,
   };
 }

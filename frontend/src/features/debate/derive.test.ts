@@ -1,19 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import type { DebateRound, InvestigationDetail, LiveFrame, RoundAgentTurn } from '../../api/types';
-import { applyFrame, emptyDebate, fromDetail, laneAbsence, laneFor, mostCitedValue, roundSteps, stanceLabel, stanceTone } from './derive';
+import { quorumFromVotes } from '../../lib/derive/verdict';
+import { applyFrame, emptyDebate, fromDetail, laneAbsence, laneFor, mostCitedValue, quorumPill, roundSteps, stanceLabel, stanceTone } from './derive';
 
 const turn = (agentId: RoundAgentTurn['agent_id'], over: Partial<RoundAgentTurn> = {}): RoundAgentTurn => ({
   agent_id: agentId,
   theory: 'theory',
   confidence: 0.5,
   stance: null,
-  provider: 'groq',
+  provider: 'openai',
   cited_evidence: [],
   credibility: 0.5,
   ...over,
 });
 
 const round = (n: number, agents: RoundAgentTurn[]): DebateRound => ({ round: n, agents });
+
+describe('a debate that ends in error', () => {
+  it('an error frame marks the case as stopped and keeps the reason the engine gave', () => {
+    const running = { ...emptyDebate(), status: 'investigating' as const };
+    const next = applyFrame(running, { type: 'error', investigation_id: 'i', detail: 'The openai account has no credit left.' } as LiveFrame);
+
+    expect(next.status).toBe('error');
+    expect(next.errorReason).toBe('The openai account has no credit left.');
+  });
+
+  it('the stored reason comes from the investigation detail, and is null for a case that did not fail', () => {
+    const base = { rounds: [], citations: { total: 0, verified: 0, discrepancy: 0, invalid_row: 0, match_rate: {} }, credibility: [], actions: [], votes: [] };
+    const failed = fromDetail({ ...base, id: 'i', status: 'error', error_reason: 'cut off' } as unknown as InvestigationDetail);
+    const fine = fromDetail({ ...base, id: 'i', status: 'contained', error_reason: null } as unknown as InvestigationDetail);
+
+    expect(failed.errorReason).toBe('cut off');
+    expect(fine.errorReason).toBeNull();
+    expect(emptyDebate().errorReason).toBeNull();
+  });
+});
 
 describe('applyFrame', () => {
   it('upserts a round from a round_completed frame', () => {
@@ -42,7 +63,7 @@ describe('applyFrame', () => {
     theory: 'SUPPORT: the same flood',
     confidence: 0.8,
     stance: 'SUPPORT',
-    provider: 'stub-groq',
+    provider: 'stub-openai',
     cited_evidence: [],
     credibility: { agent_id: agentId, crs_before: crsBefore, crs_after: crsAfter, verification_match_rate: 1, isolated: false },
   });
@@ -73,8 +94,8 @@ describe('applyFrame', () => {
       {
         round: 1,
         agents: [
-          { agent_id: 'network_traffic', theory: 'flood', confidence: 0.8, provider: 'stub-groq', cited_evidence: [] },
-          { agent_id: 'access_log', theory: 'exfil', confidence: 0.7, provider: 'stub-gemini', cited_evidence: [] },
+          { agent_id: 'network_traffic', theory: 'flood', confidence: 0.8, provider: 'stub-openai', cited_evidence: [] },
+          { agent_id: 'access_log', theory: 'exfil', confidence: 0.7, provider: 'stub-openai', cited_evidence: [] },
         ],
       },
     ],
@@ -171,6 +192,56 @@ describe('roundSteps', () => {
     expect(steps[0].state).toBe('complete');
     expect(steps[1].state).toBe('active');
     expect(steps[2].state).toBe('pending');
+  });
+
+  describe('when the debate ended in error', () => {
+    const all = [turn('network_traffic'), turn('access_log'), turn('endpoint_behavior')];
+
+    it('marks the round that was cut off as stopped and says how many agents had answered', () => {
+      const rounds = [round(1, all), round(2, all), round(3, [turn('network_traffic'), turn('access_log')])];
+      const steps = roundSteps(rounds, 3, 'error', 3);
+
+      expect(steps.map((s) => s.state)).toEqual(['complete', 'complete', 'stopped']);
+      expect(steps[2]).toMatchObject({ answered: 2, expected: 3 });
+    });
+
+    it('marks the round that never started as stopped when the error came between two rounds', () => {
+      const steps = roundSteps([round(1, all)], 3, 'error', 3);
+
+      expect(steps.map((s) => s.state)).toEqual(['complete', 'stopped', 'pending']);
+      expect(steps[1]).toMatchObject({ answered: 0, expected: 3 });
+    });
+
+    it('marks round 1 as stopped when the very first call failed, and never activates a later round', () => {
+      const steps = roundSteps([], 3, 'error', 3);
+
+      expect(steps.map((s) => s.state)).toEqual(['stopped', 'pending', 'pending']);
+    });
+
+    it('leaves every round complete when all of them finished, because nothing was cut off', () => {
+      const steps = roundSteps([round(1, all), round(2, all), round(3, all)], 3, 'error', 3);
+
+      expect(steps.map((s) => s.state)).toEqual(['complete', 'complete', 'complete']);
+    });
+  });
+});
+
+describe('quorumPill', () => {
+  const vote = (agent_id: string, verdict_class: string | null) => ({ agent_id, verdict_class, confidence: 0.6 });
+  const split = quorumFromVotes([vote('network_traffic', 'ddos'), vote('access_log', 'brute_force')], 'network_traffic');
+  const agreed = quorumFromVotes([vote('network_traffic', 'ddos'), vote('access_log', 'ddos'), vote('endpoint_behavior', null)]);
+
+  it('shows the quorum the votes make, with a tone that matches it', () => {
+    expect(quorumPill('verdict_reached', agreed)).toEqual({ label: '2/3 agree', tone: 'secondary' });
+    expect(quorumPill('verdict_reached', split)).toEqual({ label: 'no majority: primary agent decided', tone: 'secondary' });
+    expect(quorumPill('investigating', quorumFromVotes([]))).toEqual({ label: 'no votes yet', tone: 'neutral' });
+    expect(quorumPill('ambiguous', quorumFromVotes([vote('network_traffic', 'ddos'), vote('access_log', 'brute_force')]))).toMatchObject({ tone: 'tertiary' });
+  });
+
+  it('never claims a quorum for a debate that stopped, even though the API lists classified answers for it', () => {
+    for (const quorum of [agreed, split, quorumFromVotes([])]) {
+      expect(quorumPill('error', quorum)).toEqual({ label: 'no quorum: the debate stopped', tone: 'error' });
+    }
   });
 });
 

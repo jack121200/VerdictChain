@@ -24,6 +24,7 @@ function summary(over: Partial<InvestigationSummary> = {}): InvestigationSummary
     rounds_complete: 3,
     containment_count: 2,
     data_source: 'model',
+    error_reason: null,
     trigger_type: 'manual',
     created_at: '2026-10-09T05:14:48Z',
     ...over,

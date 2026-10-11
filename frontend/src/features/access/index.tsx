@@ -1,285 +1,23 @@
-import { useState, type ReactNode } from 'react';
-import {
-  describeError,
-  emergencyContainment,
-  getMe,
-  getRawLogCounts,
-  getRbacMatrix,
-  getSettings,
-  getSystemStatus,
-  listUsers,
-  releaseContainment,
-  updateSettings,
-  updateUserRole,
-} from '../../api/client';
-import type { Capability, Role, ServiceHealth, Settings } from '../../api/types';
+import { useState } from 'react';
+import { describeError, getMe, getRawLogCounts, getSettings, getSystemStatus, updateSettings } from '../../api/client';
 import { useAsync } from '../../app/use-async';
 import { buildRoute, type SimpleRouteName } from '../../app/router';
 import { cn } from '../../lib/cn';
 import { ROLE_LABEL } from '../../lib/labels';
-import { formatCountNoun, formatDuration, formatNumber, shortId } from '../../lib/format';
-import { Button } from '../../ui/Button';
+import { formatDuration, shortId } from '../../lib/format';
 import { CopyHash } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
 import { Icon } from '../../ui/Icon';
 import type { IconName } from '../../ui/icon-names';
+import { AllowanceRows } from '../../ui/AllowanceRows';
 import { Metric } from '../../ui/Metric';
 import { Proof } from '../../ui/Proof';
-import { Select } from '../../ui/Select';
-import { Table, type TableColumn } from '../../ui/Table';
 import { Timestamp } from '../../ui/Timestamp';
-import { Toggle } from '../../ui/Toggle';
 import { pushToast } from '../../ui/toast-store';
-
-const ROLES: readonly Role[] = ['secops_lead', 'watchdog_supervisor', 'forensic_analyst', 'red_team_auditor'];
-
-function CardTitle({ icon, iconClass = 'text-primary', children }: { icon: IconName; iconClass?: string; children: ReactNode }) {
-  return (
-    <h2 className="flex items-center gap-2 font-headline text-lg font-bold text-on-surface">
-      <Icon name={icon} size={20} className={iconClass} />
-      <span>{children}</span>
-    </h2>
-  );
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3 font-mono text-xs">
-      <span className="text-on-surface-variant">{label}</span>
-      <span className="text-right">{children}</span>
-    </div>
-  );
-}
-
-function ServiceRow({ label, health }: { label: string; health: ServiceHealth | undefined }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded border border-outline-variant/30 bg-background p-2 font-mono text-xs">
-      <span className="inline-flex items-center gap-2 text-on-surface-variant">
-        <span
-          className={cn('h-2 w-2 rounded-full', health === undefined ? 'bg-outline' : health.ok ? 'bg-secondary animate-pulse' : 'bg-error')}
-          aria-hidden="true"
-        />
-        {label}
-      </span>
-      <Metric metric={health?.latency_ms} size="body" format={formatDuration} label={`${label} latency`} />
-    </div>
-  );
-}
-
-function initialsOf(username: string | undefined): string {
-  if (!username) return '··';
-  const parts = username.split(/[\s._-]+/).filter(Boolean);
-  const letters = parts.length >= 2 ? parts[0][0] + parts[1][0] : username.slice(0, 2);
-  return letters.toUpperCase();
-}
-
-function IntakeControl({
-  settings,
-  canEdit,
-  busy,
-  onToggle,
-}: {
-  settings: Settings | undefined;
-  canEdit: boolean;
-  busy: boolean;
-  onToggle: (next: boolean) => void;
-}) {
-  return (
-    <div className="space-y-4 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5">
-      <CardTitle icon="admin_panel_settings">Autonomous intake control</CardTitle>
-      <Toggle
-        label="Pause new investigations"
-        description="While on, POST /investigations/simulate is rejected with 423. Audited as settings_changed."
-        checked={settings?.intake_paused ?? false}
-        disabled={!canEdit || busy || !settings}
-        onChange={onToggle}
-      />
-      {!canEdit ? <p className="font-body text-xs text-on-surface-variant">Changing this requires the edit_settings capability.</p> : null}
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-outline-variant/40 bg-background p-3">
-        <span className="inline-flex items-center gap-2 font-body text-xs text-on-surface-variant">
-          Verdict-confidence threshold (read-only here)
-          <Proof
-            source="GET /settings.verdict_confidence_threshold"
-            n={1}
-            asOf={null}
-            definition="Minimum mean supporter confidence for a verdict. Edited on the Trust & credibility screen, not here."
-            label="Verdict threshold"
-          />
-        </span>
-        <span className="font-mono text-sm text-primary">{settings ? formatNumber(settings.verdict_confidence_threshold, 2) : '—'}</span>
-      </div>
-    </div>
-  );
-}
-
-function CapabilityMatrix() {
-  const rbac = useAsync(getRbacMatrix);
-  const matrix = rbac.data;
-  const caps = matrix ? (Object.keys(matrix.capabilities) as Capability[]) : [];
-  const roles = matrix ? matrix.roles : ROLES;
-
-  return (
-    <div className="space-y-4 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5">
-      <div className="flex items-center justify-between">
-        <CardTitle icon="admin_panel_settings" iconClass="text-secondary">
-          Capability privilege matrix
-        </CardTitle>
-        <Proof source="GET /rbac/matrix" n={caps.length} asOf={rbac.loadedAt} definition="Read-only map of each capability to the roles that hold it (backend/api/rbac.py)." label="Capability matrix" />
-      </div>
-      {rbac.error && !matrix ? (
-        <EmptyState title="Could not load the capability matrix" description={rbac.error} icon="warning" />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left font-mono text-xs">
-            <thead>
-              <tr className="border-b border-outline-variant/40 text-outline">
-                <th className="pb-2">Capability</th>
-                {roles.map((role) => (
-                  <th key={role} className="pb-2 text-center">
-                    {ROLE_LABEL[role]}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant/20 text-on-surface">
-              {caps.map((cap) => (
-                <tr key={cap}>
-                  <td className="py-2.5">{cap}</td>
-                  {roles.map((role) => (
-                    <td key={role} className="text-center">
-                      {matrix && matrix.capabilities[cap].includes(role) ? (
-                        <Icon name="verified_user" size={12} className="text-secondary" label={`${role} has ${cap}`} />
-                      ) : (
-                        <span className="text-outline">—</span>
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function UserManagement() {
-  const users = useAsync(listUsers, undefined, ['users']);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const rows = users.data ?? [];
-
-  async function changeRole(userId: string, role: Role): Promise<void> {
-    setBusyId(userId);
-    try {
-      await updateUserRole(userId, role);
-      pushToast('Role updated.', { tone: 'secondary' });
-      users.reload();
-    } catch (cause) {
-      pushToast(describeError(cause), { tone: 'error' });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  const columns: readonly TableColumn<(typeof rows)[number]>[] = [
-    { key: 'username', header: 'Analyst', cell: (row) => row.username },
-    { key: 'id', header: 'ID', cell: (row) => <CopyHash value={row.analyst_id} display={shortId(row.analyst_id)} label={`analyst id of ${row.username}`} size="inherit" />, mono: true },
-    {
-      key: 'role',
-      header: 'Role',
-      cell: (row) => (
-        <Select
-          label={`Role for ${row.username}`}
-          value={row.role}
-          disabled={busyId === row.analyst_id}
-          onChange={(role) => changeRole(row.analyst_id, role)}
-          options={ROLES.map((role) => ({ value: role, label: ROLE_LABEL[role] }))}
-        />
-      ),
-    },
-  ];
-
-  return (
-    <div className="space-y-4 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5">
-      <div className="flex items-center justify-between">
-        <CardTitle icon="admin_panel_settings">User management</CardTitle>
-        <Proof source="GET /users · PUT /users/{id}/role" n={rows.length} asOf={users.loadedAt} definition="Analysts and their roles. Role changes are audited; the last secops_lead cannot be demoted (409)." label="User management" />
-      </div>
-      {users.error && !users.data ? (
-        <EmptyState title="Could not load users" description={users.error} icon="warning" />
-      ) : (
-        <Table caption="Users and roles" columns={columns} rows={rows} rowKey={(row) => row.analyst_id} empty={<EmptyState title="No analysts found" icon="info" />} />
-      )}
-    </div>
-  );
-}
-
-function EmergencyContainment() {
-  const [id, setId] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-
-  async function act(kind: 'run' | 'release'): Promise<void> {
-    const target = id.trim();
-    if (target === '') {
-      pushToast('Enter an investigation id first.', { tone: 'tertiary' });
-      return;
-    }
-    setBusy(true);
-    setNote(null);
-    try {
-      if (kind === 'run') {
-        const result = await emergencyContainment(target);
-        setNote(`Containment ran: ${formatCountNoun(result.actions.length, 'sandboxed action')}. Status ${result.status}.`);
-        pushToast('Sandboxed containment recorded.', { tone: 'secondary' });
-      } else {
-        const result = await releaseContainment(target);
-        setNote(`Released: ${formatCountNoun(result.released.length, 'action')} reverted. Status ${result.status}.`);
-        pushToast('Containment released.', { tone: 'secondary' });
-      }
-    } catch (cause) {
-      pushToast(describeError(cause), { tone: 'error' });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="space-y-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5">
-      <div className="flex items-center justify-between">
-        <CardTitle icon="warning" iconClass="text-error">
-          Emergency containment
-        </CardTitle>
-        <Proof
-          source="POST /investigations/{id}/emergency-containment · /release-containment"
-          n={1}
-          asOf={null}
-          definition="Re-derives the containment plan from the round-3 transcripts (no LLM) and runs it in the sandbox (is_simulated stays true). Release reverts it. Both are audited."
-          label="Emergency containment"
-        />
-      </div>
-      <p className="font-body text-xs text-on-surface-variant">Per-investigation, sandbox-only. Enter an investigation id to run or release containment.</p>
-      <input
-        type="text"
-        value={id}
-        onChange={(event) => setId(event.target.value)}
-        placeholder="Investigation id"
-        aria-label="Investigation id"
-        className="w-full rounded-lg border border-outline-variant/60 bg-surface-container-low px-3 py-2 font-mono text-xs text-on-surface placeholder:text-on-surface-variant focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      />
-      <div className="flex flex-wrap gap-2">
-        <Button variant="danger" icon="warning" busy={busy} onClick={() => act('run')}>
-          Run sandboxed containment
-        </Button>
-        <Button variant="secondary" icon="sync_alt" busy={busy} onClick={() => act('release')}>
-          Release
-        </Button>
-      </div>
-      {note ? <p className="rounded-lg border border-outline-variant/40 bg-background p-2.5 font-mono text-xs text-on-surface">{note}</p> : null}
-    </div>
-  );
-}
+import { CardTitle, Field, ServiceRow, initialsOf } from './shared';
+import { IntakeControl } from './IntakeControl';
+import { CapabilityMatrix, UserManagement } from './Roles';
+import { EmergencyContainment } from './EmergencyContainment';
 
 const QUICK_LINKS: ReadonlyArray<{ name: Exclude<SimpleRouteName, 'login'>; label: string; icon: IconName; tone: string }> = [
   { name: 'dashboard', label: 'Forensics HUD', icon: 'dashboard', tone: 'text-primary' },
@@ -429,33 +167,28 @@ export default function AccessPage() {
                 <ServiceRow label="PostgreSQL" health={status.data?.postgres} />
                 <ServiceRow label="Redis" health={status.data?.redis} />
                 <ServiceRow label="RabbitMQ" health={status.data?.rabbitmq} />
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded border border-outline-variant/40 bg-background p-2.5">
-                    <span className="font-mono text-[10px] uppercase text-outline">Groq</span>
-                    <p className="font-mono text-xs text-on-surface">{providers?.groq.configured ? (providers.groq.model ?? 'configured') : 'not configured'}</p>
-                    <Field label="Temp">
-                      <Metric metric={providers?.groq.temperature} size="body" label="Groq temperature" />
-                    </Field>
-                    <Field label="Call time">
-                      <Metric metric={providers?.groq.latency_ms} size="body" label="Groq call time" format={formatDuration} />
-                    </Field>
-                    <Field label="Quota errors 24 h">
-                      <Metric metric={providers?.groq.quota_errors_24h} size="body" label="Groq quota errors in 24 hours" />
-                    </Field>
+                <div className="rounded border border-outline-variant/40 bg-background p-2.5">
+                  <span className="font-mono text-[10px] uppercase text-outline">OpenAI · the only provider</span>
+                  <p className="font-mono text-xs text-on-surface">{providers?.openai.configured ? (providers.openai.model ?? 'configured') : 'not configured'}</p>
+                  <Field label="Temp">
+                    <Metric metric={providers?.openai.temperature} size="body" label="OpenAI temperature" />
+                  </Field>
+                  <Field label="Call time">
+                    <Metric metric={providers?.openai.latency_ms} size="body" label="OpenAI call time" format={formatDuration} />
+                  </Field>
+                  <Field label="Calls 24 h">
+                    <Metric metric={providers?.openai.calls_24h} size="body" label="OpenAI calls in 24 hours" />
+                  </Field>
+                  <Field label="Quota errors 24 h">
+                    <Metric metric={providers?.openai.quota_errors_24h} size="body" label="OpenAI quota errors in 24 hours" />
+                  </Field>
+                  <div className="mt-2 border-t border-outline-variant/40 pt-2">
+                    <span className="font-mono text-[10px] uppercase text-outline">What OpenAI allows this key</span>
+                    <AllowanceRows allowance={providers?.openai.allowance} />
                   </div>
-                  <div className="rounded border border-outline-variant/40 bg-background p-2.5">
-                    <span className="font-mono text-[10px] uppercase text-outline">Gemini</span>
-                    <p className="font-mono text-xs text-on-surface">{providers?.gemini.configured ? (providers.gemini.model ?? 'configured') : 'not configured'}</p>
-                    <Field label="Temp">
-                      <Metric metric={providers?.gemini.temperature} size="body" label="Gemini temperature" />
-                    </Field>
-                    <Field label="Call time">
-                      <Metric metric={providers?.gemini.latency_ms} size="body" label="Gemini call time" format={formatDuration} />
-                    </Field>
-                    <Field label="Quota errors 24 h">
-                      <Metric metric={providers?.gemini.quota_errors_24h} size="body" label="Gemini quota errors in 24 hours" />
-                    </Field>
-                  </div>
+                  <p className="mt-1 text-caption text-on-surface-variant">
+                    Every debate and every action reason is answered by this model. Token use against the daily budget is on the Live feed page.
+                  </p>
                 </div>
                 <Field label="Sandbox violations">
                   <Metric metric={status.data?.sandbox.is_simulated_violations} size="body" label="Sandbox violations" />

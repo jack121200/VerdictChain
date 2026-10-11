@@ -96,7 +96,7 @@ describe('toVotes', () => {
 
   it('turns "unclassified" into null so the UI never shows a made-up class', () => {
     const votes = toVotes(
-      [{ agent_id: 'access_log', round: 3, vote_class: 'unclassified', matched_keywords: [], counted: true }],
+      [{ agent_id: 'access_log', round: 3, vote_class: 'unclassified', class_source: 'keywords', matched_keywords: [], counted: true }],
       detailWire.debate,
     );
     expect(votes[0].verdict_class).toBeNull();
@@ -113,12 +113,13 @@ describe('toVotes', () => {
   it('keeps the server counted flag, so an isolated agent is shown but not counted', () => {
     const votes = toVotes(
       [
-        { agent_id: 'access_log', round: 3, vote_class: 'ddos', matched_keywords: ['flood'], counted: false },
-        { agent_id: 'network_traffic', round: 3, vote_class: 'ddos', matched_keywords: ['flood'], counted: true },
+        { agent_id: 'access_log', round: 3, vote_class: 'ddos', class_source: 'keywords', matched_keywords: ['flood'], counted: false },
+        { agent_id: 'network_traffic', round: 3, vote_class: 'ddos', class_source: 'stated', matched_keywords: [], counted: true },
       ],
       detailWire.debate,
     );
     expect(votes.map((vote) => vote.counted)).toEqual([false, true]);
+    expect(votes.map((vote) => vote.class_source)).toEqual(['keywords', 'stated']); // where the class came from is kept
   });
 });
 

@@ -35,7 +35,7 @@ const AGENT: FleetEntry = {
   display_name: 'Network-Traffic',
   domain: 'network traffic flows',
   signals: ['tls flow entropy', 'port scan bursts'],
-  provider_chain: ['groq', 'gemini'],
+  provider_chain: ['openai'],
   model: 'test-model-x',
   temperature: metric(0.2),
   crs: metric(0.9),

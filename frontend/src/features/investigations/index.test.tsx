@@ -1,13 +1,20 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FleetEntry, InvestigationSummary, Metric } from '../../api/types';
+import { toInvestigationDetail } from '../../api/adapters';
+import type { FleetEntry, InvestigationDetailWire, InvestigationSummary, Metric } from '../../api/types';
+import realDetail from '../../test/real/investigation-detail.json';
+import { evidenceOutsideMono } from '../../test/evidence';
+import { glyphBeside } from '../../test/status';
 
 const client = vi.hoisted(() => ({
   getAgentFleet: vi.fn(),
   getEvidenceBundle: vi.fn(),
+  getCaseAuditChain: vi.fn(),
   getInvestigation: vi.fn(),
   getInvestigationCitations: vi.fn(),
+  getRawLog: vi.fn(),
   getRbacMatrix: vi.fn(),
+  getSettings: vi.fn(),
   listAuditTrail: vi.fn(),
   listInvestigations: vi.fn(),
   releaseContainment: vi.fn(),
@@ -16,6 +23,9 @@ const client = vi.hoisted(() => ({
 }));
 
 vi.mock('../../api/client', () => client);
+// The operations board reads the list endpoint too (running and waiting cases); it has its own test file, so
+// the page tests below stay about the list and the dossier.
+vi.mock('./OperationsBoard', () => ({ OperationsBoard: () => null }));
 
 import { ScenarioModalContext } from '../../shell/scenario-modal';
 import InvestigationsPage from './index';
@@ -36,6 +46,7 @@ function summary(overrides: Partial<InvestigationSummary> = {}): InvestigationSu
     rounds_complete: 3,
     containment_count: 1,
     data_source: 'model',
+    error_reason: null,
     trigger_type: 'traffic_spike',
     created_at: '2026-10-05T12:00:00Z',
     ...overrides,
@@ -52,7 +63,7 @@ function fleetEntry(agentId: FleetEntry['agent_id'], name: string, domain: strin
     display_name: name,
     domain,
     signals: [],
-    provider_chain: ['groq'],
+    provider_chain: ['openai'],
     model: 'm',
     temperature: metric(0.2),
     crs: metric(0.9),
@@ -75,6 +86,35 @@ const openFilters = () => fireEvent.click(screen.getByRole('button', { name: /^F
 beforeEach(() => {
   vi.clearAllMocks();
   client.getAgentFleet.mockResolvedValue([]);
+  client.getSettings.mockResolvedValue({
+    eta: 0.15,
+    isolation_threshold: 0.3,
+    verdict_confidence_threshold: 0.8,
+    intake_paused: false,
+    debate_rounds: 3,
+    starting_crs: 0.5,
+  });
+  // The storyline re-reads each cited row; one plain logon row serves every id.
+  client.getRawLog.mockResolvedValue({
+    row_id: '574a5ec4-b50a-4be0-bb55-d96a032d8f92',
+    timestamp: '2026-10-05T11:58:00Z',
+    source: 'cert_r4.2_logon',
+    source_file: 'logon.csv',
+    event_type: 'logon',
+    user_id: 'U001',
+    host_id: 'PC-1',
+    severity: null,
+    raw_fields: {},
+  });
+  // The dossier's case audit chain panel reads its own endpoint: a case with no entries is enough here.
+  client.getCaseAuditChain.mockResolvedValue({
+    investigation_id: 'inv12345-aaaa-bbbb',
+    entries: [],
+    count: metric(0),
+    case_digest: null,
+    digest_rule: 'rule',
+    chain: { valid: true, head_seq: null, total: 0 },
+  });
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -96,6 +136,62 @@ describe('InvestigationsPage', () => {
     expect(await screen.findByText('inv12345')).toBeTruthy();
     const conf = screen.getByText(/conf\./);
     expect(conf.textContent).toContain('—');
+  });
+
+  it('shows every id and hash in the evidence font, in the list and in the open dossier', async () => {
+    const detail = toInvestigationDetail(realDetail as unknown as InvestigationDetailWire);
+    client.listInvestigations.mockResolvedValue(page([summary({ id: detail.id })]));
+    client.getInvestigation.mockResolvedValue(detail);
+    client.getInvestigationCitations.mockResolvedValue({
+      summary: detail.citations,
+      citations: [
+        { row_id: '574a5ec4-b50a-4be0-bb55-d96a032d8f92', field: 'Destination Port', value: '443', expected: '443', status: 'VERIFIED', reason: 'ok', agent_id: 'network_traffic', round: 1, row_fingerprint: 'd'.repeat(64) },
+      ],
+    });
+    client.getEvidenceBundle.mockResolvedValue({ bundle: {}, bundle_sha256: 'c'.repeat(64), signatures: [] });
+    client.listAuditTrail.mockResolvedValue({ entries: [], chain: { valid: true, head_seq: null, total: 0 } });
+    const { container } = render(<InvestigationsPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: `Open dossier ${detail.id.slice(0, 8)}` }));
+    await screen.findByText('SHA-256 digest');
+    await waitFor(() => expect(client.getEvidenceBundle).toHaveBeenCalled());
+    await screen.findByRole('button', { name: 'Copy Evidence bundle SHA-256' });
+
+    expect(evidenceOutsideMono(container)).toEqual([]);
+  });
+
+  it('puts a glyph beside the status word of a case that has no verdict, and a different one for each status', async () => {
+    client.listInvestigations.mockResolvedValue(
+      page([
+        summary({ id: 'a1111111-aaaa-bbbb', status: 'investigating', verdict_class: null, verdict_confidence: null }),
+        summary({ id: 'b2222222-aaaa-bbbb', status: 'error', verdict_class: null, verdict_confidence: null }),
+        summary({ id: 'c3333333-aaaa-bbbb', status: 'queued', verdict_class: null, verdict_confidence: null }),
+      ]),
+    );
+    render(<InvestigationsPage />);
+    await screen.findByText('a1111111');
+
+    const glyphs = [
+      glyphBeside(screen.getAllByText('Investigating')[0]),
+      glyphBeside(screen.getAllByText('Failed')[0]),
+      glyphBeside(screen.getAllByText('Queued')[0]),
+    ];
+    expect(glyphs).toEqual(['sync', 'cancel', 'schedule']);
+  });
+
+  it('says on the card why a failed case stopped, and does not guess a cause when none was stored', async () => {
+    client.listInvestigations.mockResolvedValue(
+      page([
+        summary({ id: 'inv-failed-aaaa-bbbb', status: 'error', verdict_class: null, verdict_confidence: null, error_reason: 'An investigator failed validation twice.' }),
+        summary({ id: 'inv-old-aaaa-bbbb', status: 'error', verdict_class: null, verdict_confidence: null, error_reason: null }),
+        summary({ id: 'inv-fine-aaaa-bbbb' }),
+      ]),
+    );
+    render(<InvestigationsPage />);
+
+    expect(await screen.findByText('Stopped: An investigator failed validation twice.')).toBeTruthy();
+    expect(screen.getByText(/Stopped: no reason was recorded/)).toBeTruthy();
+    expect(screen.getAllByText(/^Stopped:/)).toHaveLength(2); // the healthy case has no such line
   });
 
   it('shows the case id with a copy button for the full id, the noise as a percentage and a relative time', async () => {

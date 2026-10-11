@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Citation,
@@ -14,6 +14,7 @@ import type {
   Vote,
 } from '../../api/types';
 import type { InvestigationSocketHandlers } from '../../api/socket';
+import { evidenceOutsideMono } from '../../test/evidence';
 
 const h = vi.hoisted(() => ({
   getInvestigation: vi.fn(),
@@ -26,6 +27,7 @@ const h = vi.hoisted(() => ({
   getWsTicket: vi.fn(),
   signInvestigation: vi.fn(),
   connectInvestigationSocket: vi.fn(),
+  usePollWhile: vi.fn(),
 }));
 
 vi.mock('../../api/client', () => ({
@@ -42,6 +44,10 @@ vi.mock('../../api/client', () => ({
 }));
 
 vi.mock('../../api/socket', () => ({ connectInvestigationSocket: h.connectInvestigationSocket }));
+// The polling fallback is a hook of its own (use-poll-while.test.ts); here only what the room passes to it is checked.
+vi.mock('../../app/use-poll-while', () => ({ usePollWhile: h.usePollWhile }));
+
+const lastPoll = () => h.usePollWhile.mock.calls.at(-1) as [boolean, number, () => void];
 
 import DebatePage from './index';
 
@@ -59,7 +65,7 @@ const fleetEntry = (agentId: InvestigatorId, name: string): FleetEntry => ({
   display_name: name,
   domain: `${agentId} domain`,
   signals: [],
-  provider_chain: ['groq'],
+  provider_chain: ['openai'],
   model: 'provider-model',
   temperature: metric(0.2),
   crs: metric(0.9),
@@ -95,11 +101,10 @@ const SYSTEM_STATUS = {
   redis: { ok: true, latency_ms: metric(1) },
   rabbitmq: { ok: true, latency_ms: metric(1) },
   providers: {
-    groq: { configured: true, model: 'provider-model', temperature: metric(0.2), calls_24h: metric(3), latency_ms: metric(null), quota_errors_24h: metric(0) },
-    gemini: { configured: false, model: null, temperature: metric(null), calls_24h: metric(0), latency_ms: metric(null), quota_errors_24h: metric(0) },
+    openai: { configured: true, model: 'gpt-4.1-mini', temperature: metric(0.2), calls_24h: metric(3), latency_ms: metric(null), quota_errors_24h: metric(0) },
   },
   sandbox: { is_simulated_violations: metric(0), actions_total: metric(0) },
-  debate_slot: { state: 'idle', investigation_id: null },
+  debate_slot: { status: 'idle', investigation_id: null, running: metric(0), capacity: metric(4), investigation_ids: [] },
   intake_paused: false,
   continuous_mode: false,
 };
@@ -117,7 +122,7 @@ const turn = (agentId: InvestigatorId, over: Partial<RoundAgentTurn> = {}): Roun
   theory: `${agentId} theory`,
   confidence: 0.8,
   stance: null,
-  provider: 'groq',
+  provider: 'openai',
   cited_evidence: [],
   credibility: 0.8,
   ...over,
@@ -151,6 +156,7 @@ function detail(over: Partial<InvestigationDetail> = {}): InvestigationDetail {
     dataset: 'CICIDS2017',
     noise_pct: 0,
     data_source: 'model',
+    error_reason: null,
     effective_noise_pct: 0,
     trigger_type: 'simulate',
     trigger_reason: null,
@@ -231,6 +237,193 @@ describe('DebatePage', () => {
     expect(screen.queryByText('[object Object]')).toBeNull();
   });
 
+  it('says why a debate stopped when it ended in error, instead of showing it as still in progress', async () => {
+    h.getInvestigation.mockResolvedValue(
+      detail({
+        status: 'error',
+        verdict_class: null,
+        verdict_confidence: null,
+        error_reason: 'The openai account has no quota or credit left. Add credit in the OpenAI account, then try again.',
+        rounds: [{ round: 1, agents: [turn('network_traffic', { theory: 'a round that did finish' })] }] satisfies DebateRound[],
+      }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    expect(await screen.findByText('This debate stopped before a verdict')).toBeTruthy();
+    expect(screen.getByTestId('failure-reason').textContent).toMatch(/no quota or credit left/);
+    expect(screen.getAllByText('Debate stopped').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Adjudication in progress')).toBeNull();
+    expect((await screen.findAllByText('a round that did finish')).length).toBeGreaterThan(0); // the finished round stays
+    expect(h.connectInvestigationSocket).not.toHaveBeenCalled();
+  });
+
+  it('shows a stopped debate as stopped everywhere: the cut-off round, the verdict and the containment gate', async () => {
+    h.getInvestigation.mockResolvedValue(
+      detail({
+        status: 'error',
+        verdict_class: null,
+        verdict_confidence: null,
+        error_reason: 'An investigator returned an answer that failed validation.',
+        rounds: [
+          { round: 1, agents: [turn('network_traffic'), turn('access_log'), turn('endpoint_behavior')] },
+          { round: 2, agents: [turn('network_traffic'), turn('access_log'), turn('endpoint_behavior')] },
+          { round: 3, agents: [turn('network_traffic'), turn('access_log')] },
+        ] satisfies DebateRound[],
+        // The API lists each agent's latest answer, classified, even though no vote was ever taken.
+        votes: [
+          { agent_id: 'network_traffic', verdict_class: 'botnet_c2', confidence: 0.56, matched_keywords: ['c2'] },
+          { agent_id: 'access_log', verdict_class: 'insider_file_exfiltration', confidence: 0.55, matched_keywords: ['exfil'] },
+        ] satisfies Vote[],
+      }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    expect(await screen.findByText('Round 3 : stopped · 2 of 3 answered')).toBeTruthy();
+    expect(screen.getByText('Round 1 : complete')).toBeTruthy();
+    expect(screen.getByText('No verdict: the debate stopped')).toBeTruthy();
+    expect(screen.queryByText('No verdict yet')).toBeNull();
+    expect(screen.getByText('no quorum: the debate stopped')).toBeTruthy();
+    expect(screen.queryByText(/primary agent decided/)).toBeNull();
+    expect(screen.getByText('Latest answers, classified (no vote was taken)')).toBeTruthy();
+    expect(screen.queryByText('Final synthesised verdict')).toBeNull();
+    const gate = within(screen.getByRole('region', { name: 'Containment gate' }));
+    expect(gate.getByText('no verdict: the debate stopped')).toBeTruthy();
+    expect(gate.queryByText('waiting for a verdict')).toBeNull();
+  });
+
+  it('explains why a case was not contained, with the confidence and the floor it was judged against', async () => {
+    const votes: Vote[] = [
+      { agent_id: 'network_traffic', verdict_class: 'botnet_c2', confidence: 0.7, matched_keywords: ['c2'] },
+      { agent_id: 'access_log', verdict_class: 'botnet_c2', confidence: 0.7, matched_keywords: ['beacon'] },
+    ];
+    h.getInvestigation.mockResolvedValue(detail({ status: 'verdict_reached', verdict_class: 'botnet_c2', verdict_confidence: 0.7, votes, actions: [] }));
+    render(<DebatePage id="inv-1" />);
+
+    const gate = within(await screen.findByRole('region', { name: 'Containment gate' }));
+    expect(gate.getByText('refused: nothing was contained')).toBeTruthy();
+    expect(gate.getAllByText('Confidence 70.0% is below the floor 80.0%.').length).toBeGreaterThan(0);
+    expect(gate.getByText('Botnet C2 plans sandbox actions.')).toBeTruthy();
+  });
+
+  it('shows the gate as passed for a contained case', async () => {
+    const votes: Vote[] = [
+      { agent_id: 'network_traffic', verdict_class: 'botnet_c2', confidence: 0.9, matched_keywords: ['c2'] },
+      { agent_id: 'access_log', verdict_class: 'botnet_c2', confidence: 0.9, matched_keywords: ['beacon'] },
+    ];
+    const credibility = (agent: 'network_traffic' | 'access_log') => ({
+      investigation_id: 'inv-1',
+      round: 3,
+      agent_id: agent,
+      crs_before: 0.5,
+      crs_after: 0.62,
+      verification_match_rate: 1,
+      isolated: false,
+      created_at: '2026-10-05T00:00:00Z',
+    });
+    h.getInvestigation.mockResolvedValue(
+      detail({
+        status: 'contained',
+        verdict_class: 'botnet_c2',
+        verdict_confidence: 0.9,
+        votes,
+        credibility: [credibility('network_traffic'), credibility('access_log')],
+        actions: [{ id: 'a1', investigation_id: 'inv-1', action_type: 'block_ip_range', target: '10.0.0.5', reason: 'r', is_simulated: true, created_at: '2026-10-05T00:00:00Z' }],
+      }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    const gate = within(await screen.findByRole('region', { name: 'Containment gate' }));
+    expect(gate.getByText('passed: the sandbox actions ran')).toBeTruthy();
+    expect(gate.getAllByText(/· Passed/)).toHaveLength(4);
+  });
+
+  it('shows every id and hash in the evidence font', async () => {
+    const id = 'e4c7c25e-02ff-44f4-aac1-530598a934cd';
+    h.getInvestigation.mockResolvedValue(
+      detail({ id, rounds: [{ round: 1, agents: [turn('network_traffic', { theory: 'a theory' })] }] satisfies DebateRound[] }),
+    );
+    h.getInvestigationCitations.mockResolvedValue({
+      summary: { total: 1, verified: 1, discrepancy: 0, invalid_row: 0, match_rate: metric(1) },
+      citations: [
+        { row_id: '574a5ec4-b50a-4be0-bb55-d96a032d8f92', field: 'Destination Port', value: '443', expected: '443', status: 'VERIFIED', reason: 'ok', agent_id: 'network_traffic', round: 1, row_fingerprint: 'd'.repeat(64) },
+      ],
+    });
+    h.getEvidenceBundle.mockResolvedValue({ ...bundle, bundle_sha256: 'c'.repeat(64) });
+    const { container } = render(<DebatePage id={id} />);
+
+    await screen.findByText('#574a5ec4-b50a-4be0-bb55-d96a032d8f92');
+    await screen.findByRole('button', { name: 'Copy Evidence bundle SHA-256' });
+
+    expect(evidenceOutsideMono(container)).toEqual([]);
+  });
+
+  it('does not invent a cause for a case that failed before reasons were stored', async () => {
+    h.getInvestigation.mockResolvedValue(detail({ status: 'error', verdict_class: null, verdict_confidence: null, error_reason: null }));
+    render(<DebatePage id="inv-1" />);
+
+    expect((await screen.findByTestId('failure-reason')).textContent).toMatch(/No reason was recorded/);
+  });
+
+  it('turns a live error frame into the banner and reloads the stored case', async () => {
+    h.getInvestigation.mockResolvedValueOnce(detail({ status: 'investigating', verdict_class: null, verdict_confidence: null }));
+    h.getInvestigation.mockResolvedValue(
+      detail({ status: 'error', verdict_class: null, verdict_confidence: null, error_reason: 'An investigator returned an answer that failed validation.' }),
+    );
+    render(<DebatePage id="inv-1" />);
+
+    await waitFor(() => expect(h.connectInvestigationSocket).toHaveBeenCalledTimes(1));
+    const handlers = h.connectInvestigationSocket.mock.calls[0][2] as InvestigationSocketHandlers;
+    await act(async () => {
+      handlers.onFrame({ type: 'error', investigation_id: 'inv-1', detail: 'An investigator returned an answer that failed validation.' } as LiveFrame);
+    });
+
+    expect((await screen.findByTestId('failure-reason')).textContent).toMatch(/failed validation/);
+    await waitFor(() => expect(h.getInvestigation).toHaveBeenCalledTimes(2)); // the stored case was read again
+  });
+
+  it('reads a running case again every few seconds while the live socket is not open', async () => {
+    h.getInvestigation.mockResolvedValue(detail({ status: 'investigating', verdict_class: null, verdict_confidence: null }));
+    render(<DebatePage id="inv-1" />);
+    await waitFor(() => expect(h.connectInvestigationSocket).toHaveBeenCalledTimes(1)); // asked for, not open yet
+
+    const [active, intervalMs, tick] = lastPoll();
+    expect(active).toBe(true);
+    expect(intervalMs).toBe(4000);
+    const reads = h.getInvestigation.mock.calls.length;
+    await act(async () => tick());
+    await waitFor(() => expect(h.getInvestigation.mock.calls.length).toBeGreaterThan(reads)); // the stored case was read again
+  });
+
+  it('stops polling once the socket is open', async () => {
+    h.getInvestigation.mockResolvedValue(detail({ status: 'investigating', verdict_class: null, verdict_confidence: null }));
+    render(<DebatePage id="inv-1" />);
+    await waitFor(() => expect(h.connectInvestigationSocket).toHaveBeenCalledTimes(1));
+    const handlers = h.connectInvestigationSocket.mock.calls[0][2] as InvestigationSocketHandlers;
+
+    await act(async () => handlers.onStatus?.({ state: 'open', attempt: 0 }));
+
+    expect(lastPoll()[0]).toBe(false);
+  });
+
+  it('keeps polling when the socket ticket is refused, so a running debate never freezes on screen', async () => {
+    h.getWsTicket.mockRejectedValue(new Error('no ticket'));
+    h.getInvestigation.mockResolvedValue(detail({ status: 'investigating', verdict_class: null, verdict_confidence: null }));
+    render(<DebatePage id="inv-1" />);
+
+    await waitFor(() => expect(h.getWsTicket).toHaveBeenCalled());
+    expect(h.connectInvestigationSocket).not.toHaveBeenCalled(); // there is no socket at all
+    expect(lastPoll()[0]).toBe(true);
+    expect(screen.queryByText('This debate stopped before a verdict')).toBeNull(); // and it is not shown as stopped
+  });
+
+  it('does not poll a finished case', async () => {
+    h.getInvestigation.mockResolvedValue(detail());
+    render(<DebatePage id="inv-1" />);
+    await screen.findAllByText('Botnet C2');
+
+    expect(lastPoll()[0]).toBe(false);
+  });
+
   it('does not open a socket in replay (a finished case)', async () => {
     h.getInvestigation.mockResolvedValue(
       detail({ rounds: [{ round: 1, agents: [turn('network_traffic', { theory: 'finished theory' })] }] satisfies DebateRound[] }),
@@ -296,6 +489,18 @@ describe('DebatePage', () => {
     expect(await screen.findByText(/recompute matches server/i)).toBeTruthy();
   });
 
+  it('says whether each vote class was stated by the agent or read from its text', async () => {
+    const votes: Vote[] = [
+      { agent_id: 'network_traffic', verdict_class: 'botnet_c2', confidence: 0.8, class_source: 'stated', matched_keywords: [] },
+      { agent_id: 'access_log', verdict_class: 'botnet_c2', confidence: 0.8, class_source: 'keywords', matched_keywords: ['beacon'] },
+    ];
+    h.getInvestigation.mockResolvedValue(detail({ verdict_confidence: 0.8, votes }));
+    render(<DebatePage id="inv-1" />);
+
+    expect(await screen.findByText('stated')).toBeTruthy();
+    expect(screen.getByText('read from text')).toBeTruthy();
+  });
+
   it('says a quarantined agent did not take part, with no confidence or credibility-arrow noise', async () => {
     h.getAgentFleet.mockResolvedValue([
       FLEET[0],
@@ -311,7 +516,7 @@ describe('DebatePage', () => {
     expect(screen.queryByText('No theory recorded for this agent yet.')).toBeNull();
     // Only the two agents that spoke keep their confidence row and CrS arrow.
     expect(screen.getAllByText('Confidence trajectory')).toHaveLength(2);
-    expect(screen.getAllByText(/CrS .* →/)).toHaveLength(2);
+    expect(screen.getAllByText(/Credibility \(CrS\) .* →/)).toHaveLength(2);
   });
 
   it('shows how the data slice of each agent was chosen, in plain words', async () => {

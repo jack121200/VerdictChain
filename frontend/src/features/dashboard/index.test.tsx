@@ -30,6 +30,8 @@ vi.mock('../../api/client', () => ({
 }));
 
 import { ScenarioModalContext } from '../../shell/scenario-modal';
+import { evidenceOutsideMono } from '../../test/evidence';
+import { glyphBeside } from '../../test/status';
 import DashboardPage from './index';
 
 const metric = (value: number | null) => ({
@@ -46,7 +48,7 @@ const fleetEntry = (agentId: InvestigatorId, name: string): FleetEntry => ({
   display_name: name,
   domain: `${agentId} domain`,
   signals: [],
-  provider_chain: ['groq'],
+  provider_chain: ['openai'],
   model: 'provider-model',
   temperature: metric(0.2),
   crs: metric(0.9),
@@ -112,7 +114,7 @@ beforeEach(() => {
     ...INVESTIGATION,
     effective_noise_pct: 0,
     trigger_reason: null,
-    rounds: [{ round: 1, agents: [{ agent_id: 'network_traffic', theory: 'C2 beacon on 8443', confidence: 0.8, stance: 'SUPPORT', provider: 'groq', cited_evidence: [], credibility: 0.9 }] }],
+    rounds: [{ round: 1, agents: [{ agent_id: 'network_traffic', theory: 'C2 beacon on 8443', confidence: 0.8, stance: 'SUPPORT', provider: 'openai', cited_evidence: [], credibility: 0.9 }] }],
     citations: { total: 0, verified: 0, discrepancy: 0, invalid_row: 0, match_rate: metric(null) },
     credibility: [],
     actions: [],
@@ -126,9 +128,49 @@ afterEach(() => {
 });
 
 describe('DashboardPage', () => {
+  it('calls the banner what it is: the latest threat verdict, not an "active" incident', async () => {
+    // INVESTIGATION is contained: nothing about it is still happening, so "active" would be a claim without a mechanism.
+    const { container } = render(<DashboardPage />);
+    expect(await screen.findByText('Latest threat verdict')).toBeTruthy();
+
+    expect(container.textContent).not.toMatch(/active incident/i);
+    expect(screen.getByText('Debates running now')).toBeTruthy(); // the slot count, not "live debate slots"
+  });
+
   it('has a page heading for assistive technology', async () => {
     render(<DashboardPage />);
     expect(await screen.findByRole('heading', { level: 1, name: 'Forensics dashboard' })).toBeTruthy();
+  });
+
+  it('puts a glyph beside the verdict or status word of every ledger row', async () => {
+    const running = { ...INVESTIGATION, id: 'a1111111-0000-0000-0000-000000000001', status: 'investigating', verdict_class: null, verdict_confidence: null };
+    const failed = { ...INVESTIGATION, id: 'b2222222-0000-0000-0000-000000000002', status: 'error', verdict_class: null, verdict_confidence: null };
+    h.listInvestigations.mockResolvedValue({ items: [INVESTIGATION, running, failed], total: metric(3), limit: 8, offset: 0 });
+    render(<DashboardPage />);
+
+    await screen.findByText('investigating');
+    // The incident banner and the ledger row both name the class: each has its glyph.
+    // (the class is also named as plain text elsewhere, for example in an agent's last vote: those are not status pills)
+    expect(screen.getAllByText('botnet_c2').map((word) => glyphBeside(word)).filter((glyph) => glyph !== null)).toEqual(['warning', 'warning']);
+    expect(glyphBeside(screen.getByText('investigating'))).toBe('sync');
+    expect(glyphBeside(screen.getByText('error'))).toBe('cancel');
+  });
+
+  it('shows every id and hash in the evidence font', async () => {
+    const caseId = 'e4c7c25e-02ff-44f4-aac1-530598a934cd';
+    h.listInvestigations.mockResolvedValue({ items: [{ ...INVESTIGATION, id: caseId }], total: metric(1), limit: 8, offset: 0 });
+    h.getInvestigation.mockResolvedValue({ ...INVESTIGATION, id: caseId, effective_noise_pct: 0, trigger_reason: null, rounds: [], citations: { total: 0, verified: 0, discrepancy: 0, invalid_row: 0, match_rate: metric(null) }, credibility: [], actions: [], votes: [] });
+    h.listAuditTrail.mockResolvedValue({
+      entries: [
+        { seq: 5, prev_hash: 'a'.repeat(64), entry_hash: 'b'.repeat(64), hash_input: 'x', actor: 'system', action: 'verdict_reached', detail: null, investigation_id: caseId, created_at: '2026-10-05T00:00:05Z' },
+      ],
+      chain: { valid: true, head_seq: 5, total: 5 },
+    });
+    const { container } = render(<DashboardPage />);
+    expect((await screen.findAllByText('e4c7c25e')).length).toBeGreaterThan(0);
+    await screen.findByRole('button', { name: /Copy verdict audit hash/ });
+
+    expect(evidenceOutsideMono(container)).toEqual([]);
   });
 
   it('renders real KPIs, pods, scenarios and the verdict ledger', async () => {
@@ -212,7 +254,7 @@ describe('DashboardPage', () => {
 
   it('takes the sample size and the round count from the API, not from typed numbers', async () => {
     render(<DashboardPage />);
-    expect(await screen.findByText('Mean CrS · n = 1')).toBeTruthy();
+    expect(await screen.findByText('Mean credibility score (CrS) · n = 1')).toBeTruthy();
     expect(await screen.findByText('3 rounds of cross-examination')).toBeTruthy();
   });
 

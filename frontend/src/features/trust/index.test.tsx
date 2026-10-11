@@ -12,6 +12,7 @@ import type {
 
 const client = vi.hoisted(() => ({
   getAdaptiveThreshold: vi.fn(),
+  getEvaluation: vi.fn(),
   getAgentFleet: vi.fn(),
   getCredibilityHistory: vi.fn(),
   getMe: vi.fn(),
@@ -25,6 +26,8 @@ const client = vi.hoisted(() => ({
 
 vi.mock('../../api/client', () => client);
 
+import { evidenceOutsideMono } from '../../test/evidence';
+import { evaluationFixture } from '../../test/fixtures';
 import TrustPage from './index';
 
 function metric(value: number | null, reason: string | null = null): Metric<number> {
@@ -37,7 +40,7 @@ function fleetEntry(agentId: InvestigatorId, crs: number | null): FleetEntry {
     display_name: agentId,
     domain: 'traffic',
     signals: [],
-    provider_chain: ['groq'],
+    provider_chain: ['openai'],
     model: 'test-model',
     temperature: metric(0.2),
     crs: metric(crs),
@@ -86,6 +89,7 @@ function setup(options: { meanCrs?: number | null; capabilities?: Capability[]; 
     rule: { window_size: 20, min_feedback: 10, adapt_every: 5, tighten_at: 0.3, relax_at: 0.05, step_up: 0.02, step_down: 0.01, floor: 0.7, ceiling: 0.95 },
     last_change: null,
   });
+  client.getEvaluation.mockResolvedValue(evaluationFixture('model', 0));
   client.getAgentFleet.mockResolvedValue([
     fleetEntry('network_traffic', 0.9),
     fleetEntry('access_log', 0.85),
@@ -111,6 +115,28 @@ describe('TrustPage', () => {
     setup({ meanCrs: 0.903 });
     render(<TrustPage />);
     expect(await screen.findByText('90.3%')).toBeTruthy();
+  });
+
+  it('shows every id and fingerprint of the citation ledger in the evidence font', async () => {
+    setup();
+    client.listCitations.mockResolvedValue({
+      items: [
+        {
+          ...citation,
+          investigation_id: 'e4c7c25e-02ff-44f4-aac1-530598a934cd',
+          row_id: '574a5ec4-b50a-4be0-bb55-d96a032d8f92',
+          row_fingerprint: 'd'.repeat(64),
+        },
+      ],
+      total: metric(1),
+      limit: 20,
+      offset: 0,
+    });
+    const { container } = render(<TrustPage />);
+    await screen.findByText('574a5ec4');
+    await screen.findByText('e4c7c25e');
+
+    expect(evidenceOutsideMono(container)).toEqual([]);
   });
 
   it('shows an em dash and the reason when mean CrS is null (never 0)', async () => {

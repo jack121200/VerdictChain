@@ -7,11 +7,13 @@ import type {
   AuditListParams,
   AuditTrailResponse,
   AuditVerifyResult,
+  CaseAuditChain,
   CitationListParams,
   CitationPage,
   CredibilityHistoryParams,
   CredibilityRow,
   EvaluationResponse,
+  EvaluationSource,
   EvidenceBundleResponse,
   FaultInjectionRequest,
   FaultInjectionResponse,
@@ -307,6 +309,11 @@ export function getEvidenceBundle(id: string): Promise<EvidenceBundleResponse> {
   return request<EvidenceBundleResponse>(`/investigations/${encodeURIComponent(id)}/evidence-bundle`);
 }
 
+/** One case's audit entries in chain order, with a digest the browser recomputes. Not a second chain. */
+export function getCaseAuditChain(id: string): Promise<CaseAuditChain> {
+  return request<CaseAuditChain>(`/investigations/${encodeURIComponent(id)}/audit-chain`);
+}
+
 /** Audited acknowledgement (capability sign_evidence_bundle). Not a cryptographic signature. */
 export function signInvestigation(id: string): Promise<SignResponse> {
   return request<SignResponse>(`/investigations/${encodeURIComponent(id)}/sign`, { method: 'POST' });
@@ -403,9 +410,15 @@ export function listAuditTrail(params: AuditListParams = {}): Promise<AuditTrail
   return request<AuditTrailResponse>(withQuery('/audit-trail', params));
 }
 
-/** Server-side chain verification. Not itself audited. */
-export function verifyAuditTrail(): Promise<AuditVerifyResult> {
-  return request<AuditVerifyResult>('/audit-trail/verify', { method: 'POST' });
+/**
+ * Server-side chain verification. Not itself audited. The server's default pass is incremental (it re-checks the
+ * last verified checkpoint and the entries after it), so a console button that claims to check the chain passes
+ * `full: true` to re-walk every entry.
+ */
+export function verifyAuditTrail(options: { full?: boolean } = {}): Promise<AuditVerifyResult> {
+  return request<AuditVerifyResult>(withQuery('/audit-trail/verify', options.full ? { full: true } : {}), {
+    method: 'POST',
+  });
 }
 
 export function listResponseActions(params: { limit?: number } = {}): Promise<ResponseAction[]> {
@@ -422,8 +435,9 @@ export function listScenarios(): Promise<ScenarioSummary[]> {
   return request<ScenarioSummary[]>('/scenarios');
 }
 
-export function getEvaluation(): Promise<EvaluationResponse> {
-  return request<EvaluationResponse>('/evaluation');
+/** The headline numbers count `source` runs: the real model by default, so the stub's accuracy never reads as the system's. */
+export function getEvaluation(source: EvaluationSource = 'model'): Promise<EvaluationResponse> {
+  return request<EvaluationResponse>(withQuery('/evaluation', { source }));
 }
 
 export function getAgentFleet(): Promise<FleetEntry[]> {

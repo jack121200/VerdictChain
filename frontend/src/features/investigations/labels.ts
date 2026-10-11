@@ -52,6 +52,24 @@ export function verdictIcon(verdict: VerdictClass | null): IconName {
   return 'error';
 }
 
+/** Glyph for an investigation status: a status colour always has a shape beside it (SKILL section 4). */
+export function statusIcon(status: InvestigationStatus): IconName {
+  switch (status) {
+    case 'queued':
+      return 'schedule';
+    case 'investigating':
+      return 'sync';
+    case 'verdict_reached':
+      return 'check_circle';
+    case 'ambiguous':
+      return 'info';
+    case 'contained':
+      return 'shield';
+    case 'error':
+      return 'cancel';
+  }
+}
+
 /** Colour role for an investigation status. */
 export function statusTone(status: InvestigationStatus): PillTone {
   switch (status) {

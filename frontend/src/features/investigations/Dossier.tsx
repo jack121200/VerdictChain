@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import {
   describeError,
   releaseContainment,
@@ -11,13 +11,15 @@ import type {
   InvestigationCitations,
   InvestigationDetail,
   InvestigationSummary,
+  InvestigatorId,
   Metric as MetricEnvelope,
+  Settings,
 } from '../../api/types';
 import { buildRoute } from '../../app/router';
 import { cn } from '../../lib/cn';
 import { isVerifiedClaim } from '../../lib/derive/citations';
 import { meanSupporterConfidence, verifyVerdictConfidence } from '../../lib/derive/verdict';
-import { formatDuration, formatPercent, shortId } from '../../lib/format';
+import { formatPercent, shortId } from '../../lib/format';
 import { Button } from '../../ui/Button';
 import { CopyHash } from '../../ui/CopyHash';
 import { EmptyState } from '../../ui/EmptyState';
@@ -27,8 +29,14 @@ import { Proof } from '../../ui/Proof';
 import { Skeleton } from '../../ui/Skeleton';
 import { StubBadge } from '../../ui/StubBadge';
 import { pushToast } from '../../ui/toast-store';
+import { AutomationTimeline } from './AutomationTimeline';
+import { CaseAuditChainPanel } from './CaseAuditChain';
 import { attributionFromCitations, containmentLatency } from './derive';
-import { STATUS_LABEL, VERDICT_LABEL, verdictIcon, verdictTone } from './labels';
+import { EvidenceStoryline } from './EvidenceStoryline';
+import { STATUS_LABEL, VERDICT_LABEL, statusIcon, verdictIcon, verdictTone } from './labels';
+import { Panel, Row } from './Panel';
+import { SelfHealingPanel } from './SelfHealingPanel';
+import { caseTimeline } from './timeline';
 
 /** The last successful value for one request, or a plain-words error. */
 export interface Loaded<T> {
@@ -49,6 +57,9 @@ export interface DossierData {
 export interface DossierProps {
   dossier: DossierData | null;
   onChanged: () => void;
+  /** GET /settings: the containment floors the Self-Healing gate checks against. */
+  settings: Settings | undefined;
+  agentName: (agentId: InvestigatorId) => string;
 }
 
 const BADGE: Record<'error' | 'tertiary' | 'secondary' | 'primary' | 'neutral', string> = {
@@ -64,30 +75,8 @@ function evidenceImage(dataset: string | null | undefined): string {
   return dataset && dataset.includes('CERT') ? '/assets/usb-chip-macro.jpg' : '/assets/topology-grid.jpg';
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-[11px]">
-      <span className="shrink-0 text-on-surface-variant">{label}</span>
-      <span className="min-w-0 text-right">{children}</span>
-    </div>
-  );
-}
-
-/** Inner evidence panel (the reference's darkest inner cards, mapped to the background token). */
-function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="space-y-2 rounded-lg border border-outline-variant/40 bg-background p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] font-semibold uppercase text-outline">{title}</span>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 /** Right-hand inspector for one investigation. Every value is an API field or a Proof-documented derivation. */
-export function Dossier({ dossier, onChanged }: DossierProps) {
+export function Dossier({ dossier, onChanged, settings, agentName }: DossierProps) {
   const [feedbackBusy, setFeedbackBusy] = useState<null | 'confirm' | 'false_positive'>(null);
   const [releaseBusy, setReleaseBusy] = useState(false);
 
@@ -111,7 +100,8 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
   const confidence = detail.data?.verdict_confidence ?? summary?.verdict_confidence ?? null;
 
   const attribution = citations.data ? attributionFromCitations(citations.data.citations) : null;
-  const latency = audit.data ? containmentLatency(audit.data.entries) : null;
+  const verdictAt = audit.data ? containmentLatency(audit.data.entries).verdictAt : null;
+  const timeline = audit.data ? caseTimeline(audit.data.entries, detail.data?.trigger_type ?? summary?.trigger_type ?? null) : null;
   const chainValid = audit.data?.chain.valid ?? null;
   // The image caption quotes a row the Watchdog verified, never a value an agent merely claimed.
   const topCitation: Citation | null = citations.data?.citations.find(isVerifiedClaim) ?? null;
@@ -168,9 +158,11 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
       : 'not_checkable';
 
   const canFeedback = verdictClass !== null && status !== 'investigating' && status !== 'error';
+  // Complete: the debate has ended, with a verdict or in error. A queued or running case has nothing final to print.
+  const closed = status !== null && status !== 'queued' && status !== 'investigating';
 
   return (
-    <div className="sticky top-24 space-y-5 rounded-2xl border border-outline-variant/50 bg-surface-container-low p-5 shadow-2xl backdrop-blur-xl">
+    <div className="space-y-5 rounded-2xl border border-outline-variant/50 bg-surface-container-low p-5 shadow-2xl backdrop-blur-xl lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
       {/* Header info */}
       <div className="flex items-start justify-between gap-3 border-b border-outline-variant/40 pb-4">
         <div className="min-w-0 space-y-1">
@@ -241,6 +233,28 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
         </div>
       </div>
 
+      {/* The automation, measured: queue, rounds, verdict and containment from the case's audit entries */}
+      <AutomationTimeline timeline={timeline} error={audit.error} triggerType={detail.data?.trigger_type ?? summary?.trigger_type ?? null} loadedAt={loadedAt} />
+
+      {/* The Self-Healing agent: the gate it checked, the playbook it ran, the sandbox boundary */}
+      <SelfHealingPanel
+        detail={detail.data}
+        detailError={detail.error}
+        status={status}
+        verdictClass={verdictClass}
+        confidence={confidence}
+        settings={settings}
+        agentName={agentName}
+        verdictAt={verdictAt}
+        loadedAt={loadedAt}
+        caseId={id}
+        releaseBusy={releaseBusy}
+        onRelease={release}
+      />
+
+      {/* The cited rows, in the order they happened */}
+      <EvidenceStoryline citations={citations.data} />
+
       {/* Technical forensics data */}
       <div className="space-y-3 font-mono text-xs">
         <Panel title="Cryptographic fingerprint & provenance">
@@ -272,15 +286,25 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
             </span>
           </Row>
           <Row label="Debate status">
-            <span className="text-secondary">{status === null ? '—' : STATUS_LABEL[status]}</span>
+            <span className={cn('inline-flex items-center gap-1', status === 'error' ? 'text-error' : 'text-secondary')}>
+              {status !== null && <Icon name={statusIcon(status)} size={12} />}
+              {status === null ? '—' : STATUS_LABEL[status]}
+            </span>
           </Row>
+          {status === 'error' && (
+            <Row label="Why it stopped">
+              <span className="break-words text-error">
+                {detail.data?.error_reason ?? summary?.error_reason ?? 'no reason was recorded (it failed before reasons were stored)'}
+              </span>
+            </Row>
+          )}
           {citations.data && (
             <div className="flex justify-end pt-1">
               <Proof
                 source={`GET /investigations/${shortId(id)}/citations · /evidence-bundle`}
                 n={attribution?.citationCount ?? 0}
                 asOf={loadedAt}
-                definition="SHA-256 is the canonical evidence-bundle digest. Attributed subject = most-cited user_id across the case's VERIFIED citations; a tie is broken by the lexicographically smallest value. Trigger, dataset and status are stored investigation fields."
+                definition="SHA-256 is the canonical evidence-bundle digest. Attributed subject = most-cited user_id across the case's VERIFIED citations; a tie is broken by the lexicographically smallest value. Trigger, dataset, status and the stop reason (error_reason, also kept in the audit trail as investigation_failed) are stored investigation fields."
                 inputs={[
                   { label: 'subject count', value: attribution?.subject ? String(attribution.subject.count) : '0' },
                   { label: 'host count', value: attribution?.host ? String(attribution.host.count) : '0' },
@@ -289,67 +313,6 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
                 label="Fingerprint and provenance"
               />
             </div>
-          )}
-        </Panel>
-
-        {/* Sandboxed containment status */}
-        <Panel
-          title="Automated containment action"
-          action={
-            detail.data && detail.data.actions.length > 0 ? (
-              <span className="rounded bg-secondary-container/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-secondary">
-                Sandboxed
-              </span>
-            ) : null
-          }
-        >
-          {detail.data ? (
-            detail.data.actions.length > 0 ? (
-              <div className="space-y-2">
-                <ul className="space-y-1.5">
-                  {detail.data.actions.map((action) => (
-                    <li key={action.id} className="flex items-center justify-between gap-2 text-[11px]">
-                      <span className="min-w-0 font-body text-on-surface">
-                        <span className="font-mono">{action.action_type}</span>
-                        <span className="text-on-surface-variant"> → </span>
-                        <span className="font-mono text-on-surface-variant">{action.target}</span>
-                      </span>
-                      <span
-                        className={cn(
-                          'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase',
-                          action.is_simulated
-                            ? 'bg-secondary-container/20 text-secondary'
-                            : 'bg-error-container/40 text-error',
-                        )}
-                      >
-                        <Icon name={action.is_simulated ? 'check' : 'warning'} size={12} />
-                        {action.is_simulated ? 'Simulated' : 'Not simulated'}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex items-center gap-2 border-t border-outline-variant/40 pt-2 text-[11px] text-on-surface-variant">
-                  <span>Sandbox applied within</span>
-                  <Metric
-                    size="body"
-                    label="Verdict to first action latency"
-                    metric={latencyEnvelope(latency, loadedAt)}
-                    format={(ms) => formatDuration(ms)}
-                    proofInputs={[
-                      { label: 'verdict at', value: latency?.verdictAt ?? 'not recorded' },
-                      { label: 'first action at', value: latency?.firstActionAt ?? 'not recorded' },
-                      { label: 'first action', value: latency?.firstAction ?? 'none' },
-                    ]}
-                  />
-                </div>
-              </div>
-            ) : (
-              <p className="text-[11px] text-on-surface-variant">No containment actions for this case.</p>
-            )
-          ) : detail.error ? (
-            <p className="text-[11px] text-on-surface-variant">— {detail.error}</p>
-          ) : (
-            <Skeleton className="h-4 w-44" />
           )}
         </Panel>
 
@@ -371,6 +334,9 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
           </Panel>
         )}
 
+        {/* This case's entries of the audit chain, recomputed in the browser */}
+        <CaseAuditChainPanel investigationId={id} />
+
         {/* Raw evidence asset — the caption is a real cited row, or removed when none exists */}
         <Panel title="Raw evidence asset link">
           <div className="relative h-28 overflow-hidden rounded-lg border border-outline-variant/50 bg-surface-card">
@@ -381,7 +347,8 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
             />
             {topCitation && (
               <div className="absolute bottom-2 left-2 rounded bg-surface-container-lowest/80 px-2 py-0.5 font-mono text-[10px] text-primary backdrop-blur">
-                {shortId(topCitation.row_id)} · {topCitation.field}={topCitation.value ?? '∅'}
+                <CopyHash value={topCitation.row_id} display={shortId(topCitation.row_id)} label="cited row id" size="inherit" textClassName="text-primary" />{' '}
+                · {topCitation.field}={topCitation.value ?? '∅'}
               </div>
             )}
           </div>
@@ -392,18 +359,66 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
         </Panel>
       </div>
 
+      {/* Printable documents: open once the case is complete (a verdict, or a debate that ended in error) */}
+      <div className="grid grid-cols-2 gap-2">
+        <span className="flex items-center gap-1">
+          <Button
+            variant="primary"
+            size="sm"
+            icon="download"
+            disabled={!closed}
+            title={closed ? undefined : 'Opens when the investigation is complete'}
+            onClick={() => {
+              window.location.hash = buildRoute({ name: 'report', id });
+            }}
+            className="flex-1 uppercase"
+          >
+            Report PDF
+          </Button>
+          <Proof
+            source={`#/report/${shortId(id)} · the dossier's endpoints`}
+            n={1}
+            asOf={null}
+            definition="Opens the designed A4 case report: summary, automation timeline, investigators, votes, evidence, storyline, Self-Healing and integrity checks, all from this case's own fields. Download PDF there opens the browser's print dialog; choose Save as PDF. It is available once the case is complete."
+            label="Case report PDF"
+          />
+        </span>
+        <span className="flex items-center gap-1">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon="receipt_long"
+            disabled={!closed}
+            title={closed ? undefined : 'Opens when the investigation is complete'}
+            onClick={() => {
+              window.location.hash = buildRoute({ name: 'custody', id });
+            }}
+            className="flex-1 uppercase"
+          >
+            Custody PDF
+          </Button>
+          <Proof
+            source={`#/custody/${shortId(id)} · GET /investigations/{id}/audit-chain`}
+            n={1}
+            asOf={null}
+            definition="Opens the chain-of-custody record: every audit entry of the case with its full SHA-256 and the entry it follows, the evidence bundle digest and the case digest recomputed in the browser, and a blank hand-over block to sign on paper. Download PDF there opens the print dialog; choose Save as PDF."
+            label="Chain of custody PDF"
+          />
+        </span>
+      </div>
+
       {/* Action buttons */}
       <div className="grid grid-cols-2 gap-2">
         <span className="flex items-center gap-1">
-          <Button variant="secondary" size="sm" icon="receipt_long" onClick={download} disabled={!bundle.data} className="flex-1 uppercase">
-            Chain-of-custody
+          <Button variant="secondary" size="sm" icon="file_download" onClick={download} disabled={!bundle.data} className="flex-1 uppercase">
+            Custody JSON
           </Button>
           <Proof
             source="browser: evidence-bundle JSON + audit entries"
             n={1}
             asOf={loadedAt}
             definition="Downloads the evidence bundle, its SHA-256 and the case's audit entries as one JSON file. Nothing is sent to the server."
-            label="Chain-of-custody download"
+            label="Chain-of-custody JSON download"
           />
         </span>
         <span className="flex items-center gap-1">
@@ -460,20 +475,6 @@ export function Dossier({ dossier, onChanged }: DossierProps) {
             label="Analyst feedback"
           />
         </div>
-        {status === 'contained' && (
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" icon="sync_alt" busy={releaseBusy} disabled={releaseBusy} onClick={release}>
-              Release containment
-            </Button>
-            <Proof
-              source={`POST /investigations/${shortId(id)}/release-containment`}
-              n={1}
-              asOf={null}
-              definition="Runs the inverse sandbox actions (audited). The actions are simulated; no real system is reachable."
-              label="Release containment"
-            />
-          </div>
-        )}
       </div>
 
       {!canFeedback && status !== 'contained' && (
@@ -497,20 +498,5 @@ function confidenceEnvelope(value: number | null, n: number, asOf: string | null
     definition:
       'Server-aggregated mean of the supporting agents’ self-reported confidence. This is agent-reported confidence, not accuracy; accuracy comes only from /evaluation.',
     reason: value === null ? 'no verdict confidence recorded' : null,
-  };
-}
-
-/** Builds a Metric envelope for the measured verdict-to-first-action latency (n = 1). */
-function latencyEnvelope(
-  latency: { value: number | null; reason: string | null } | null,
-  asOf: string | null,
-): MetricEnvelope<number> {
-  return {
-    value: latency?.value ?? null,
-    n: latency?.value === null || latency === null ? 0 : 1,
-    as_of: asOf ?? new Date().toISOString(),
-    source: 'browser: GET /audit-trail (verdict_reached → first self-healing action)',
-    definition: 'Milliseconds between the verdict_reached audit entry and the first sandbox action entry for this case.',
-    reason: latency?.reason ?? null,
   };
 }

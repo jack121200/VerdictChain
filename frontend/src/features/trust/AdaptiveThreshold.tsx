@@ -1,12 +1,22 @@
 import { getAdaptiveThreshold } from '../../api/client';
 import type { AdaptiveThreshold as AdaptiveThresholdData } from '../../api/types';
-import { useAsync } from '../../app/use-async';
+import { PageState } from '../../app/PageState';
+import { usePageData } from '../../app/use-page-data';
 import { formatNumber, formatPercent } from '../../lib/format';
 import { Icon } from '../../ui/Icon';
+import type { IconName } from '../../ui/icon-names';
 import { Metric } from '../../ui/Metric';
 import { Pill } from '../../ui/Pill';
 import { Proof } from '../../ui/Proof';
 import { Timestamp } from '../../ui/Timestamp';
+
+// A colour is never the only signal: tightening rises, relaxing falls, holding and waiting have their own shapes.
+const STEP_ICON: Record<AdaptiveThresholdData['next_step'], IconName> = {
+  tighten: 'trending_up',
+  relax: 'trending_down',
+  hold: 'pause',
+  wait: 'schedule',
+};
 
 const STEP_LABEL: Record<AdaptiveThresholdData['next_step'], string> = {
   tighten: 'Tighten',
@@ -30,7 +40,7 @@ function ruleText(rule: AdaptiveThresholdData['rule']): string {
  * Shown under the policy configurator so an analyst sees why the floor is where it is.
  */
 export function AdaptiveThreshold() {
-  const adaptive = useAsync(getAdaptiveThreshold, undefined, ['settings', 'stats']);
+  const adaptive = usePageData(getAdaptiveThreshold, undefined, ['settings', 'stats']);
   const data = adaptive.data;
   return (
     <section className="space-y-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-5 shadow-md" aria-label="Adaptive verdict threshold">
@@ -47,7 +57,7 @@ export function AdaptiveThreshold() {
           />
         )}
       </div>
-      {adaptive.error !== null && data === undefined && <p className="text-caption text-error">{adaptive.error}</p>}
+      <PageState page={adaptive} />
       {data && (
         <>
           <p className="font-body text-xs text-on-surface-variant">
@@ -69,7 +79,7 @@ export function AdaptiveThreshold() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-caption text-on-surface-variant">
-            <Pill tone={data.next_step === 'tighten' ? 'error' : data.next_step === 'relax' ? 'secondary' : 'neutral'}>
+            <Pill tone={data.next_step === 'tighten' ? 'error' : data.next_step === 'relax' ? 'secondary' : 'neutral'} icon={STEP_ICON[data.next_step]}>
               {STEP_LABEL[data.next_step]}
             </Pill>
             <span>{data.reason}</span>

@@ -16,6 +16,7 @@ import type {
   ScenarioLabel,
 } from '../../api/types';
 import { useAsync } from '../../app/use-async';
+import { usePageData } from '../../app/use-page-data';
 import { useScenarioModal } from '../../shell/scenario-modal';
 import type { Tone } from '../../ui/classes';
 import { HintStrip } from '../../ui/HintStrip';
@@ -61,7 +62,7 @@ export default function DashboardPage() {
   const me = useAsync(getMe);
   const audit = useAsync(() => listAuditTrail({ limit: AUDIT_LIMIT }), 30_000, ['audit']);
   const verdictEntries = useAsync(() => listAuditTrail({ action: 'verdict_reached', limit: VERDICT_HASH_LIMIT }), 30_000, ['audit']);
-  const ledger = useAsync(() => listInvestigations({ limit: LEDGER_LIMIT }), 30_000, ['investigations']);
+  const ledger = usePageData(() => listInvestigations({ limit: LEDGER_LIMIT }), 30_000, ['investigations']);
 
   const items = ledger.data?.items ?? [];
   const latest: InvestigationSummary | undefined = items[0];
@@ -69,7 +70,7 @@ export default function DashboardPage() {
 
   // Detail + citations of the latest investigation (drives the pod theories and cited evidence).
   const detail = useAsync(() => (latest ? getInvestigation(latest.id) : Promise.resolve(undefined)), undefined, ['investigations', 'credibility'], [latest?.id]);
-  const citations = useAsync(() => (latest ? getInvestigationCitations(latest.id) : Promise.resolve(undefined)), undefined, ['investigations', 'credibility'], [latest?.id]);
+  const citations = usePageData(() => (latest ? getInvestigationCitations(latest.id) : Promise.resolve(undefined)), undefined, ['investigations', 'credibility'], [latest?.id]);
   const { reload: reloadDetail } = detail;
   const { reload: reloadCitations } = citations;
   useEffect(() => {
@@ -142,7 +143,7 @@ export default function DashboardPage() {
 
         <TacticalBanner
           threat={threat}
-          loading={ledger.data === undefined}
+          loading={ledger.status !== 'ready'}
           subject={subject}
           host={host}
           primaryAgentName={primaryAgentName}
@@ -166,7 +167,7 @@ export default function DashboardPage() {
         <section className="grid grid-cols-1 gap-5 lg:grid-cols-12">
           <VerdictLedger
             rows={items}
-            loading={ledger.data === undefined}
+            loading={ledger.status !== 'ready'}
             hashFor={(id) => verdictHashes.get(id) ?? null}
             debateRounds={settings.data?.debate_rounds}
             headSeq={audit.data?.chain.head_seq ?? null}
@@ -175,7 +176,7 @@ export default function DashboardPage() {
           <TerminalStream lines={cleared ? [] : terminalLines} onClear={() => setCleared(true)} loadedAt={audit.loadedAt} />
         </section>
 
-        <EvidenceTraces citations={citations.data?.citations} loading={citations.data === undefined && citations.error === null} />
+        <EvidenceTraces citations={citations.data?.citations} loading={citations.status === 'loading'} />
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Capability, Me, Metric, RbacMatrix, Settings, SystemStatus } from '../../api/types';
 
@@ -17,6 +17,8 @@ vi.mock('../../api/client', () => ({
 }));
 
 import { getMe, getRawLogCounts, getRbacMatrix, getSettings, getSystemStatus, listUsers } from '../../api/client';
+import { evidenceOutsideMono } from '../../test/evidence';
+import { allowance } from '../../test/fixtures';
 import AccessPage from './index';
 
 const metric = <T = number,>(value: T | null): Metric<T> => ({
@@ -47,11 +49,18 @@ const STATUS = {
   redis: health,
   rabbitmq: health,
   providers: {
-    groq: { configured: true, model: 'groq-model', temperature: metric(0.2), calls_24h: metric(0), latency_ms: metric(null), quota_errors_24h: metric(0) },
-    gemini: { configured: false, model: null, temperature: metric(0.2), calls_24h: metric(0), latency_ms: metric(null), quota_errors_24h: metric(0) },
+    openai: {
+      configured: true,
+      model: 'gpt-4.1-mini',
+      temperature: metric(0.2),
+      calls_24h: metric(0),
+      latency_ms: metric(null),
+      quota_errors_24h: metric(0),
+      allowance: allowance({ requests: [34, 50], tokens: [58800, 100000] }),
+    },
   },
   sandbox: { is_simulated_violations: metric(0), actions_total: metric(0) },
-  debate_slot: { state: 'idle', investigation_id: null },
+  debate_slot: { status: 'idle', investigation_id: null, running: metric(0), capacity: metric(4), investigation_ids: [] },
   intake_paused: false,
   continuous_mode: false,
 } as unknown as SystemStatus;
@@ -95,6 +104,29 @@ describe('AccessPage', () => {
     expect(await screen.findByText('sign_evidence_bundle')).toBeTruthy();
     // real migration head from GET /system/status
     expect(await screen.findByText('0006_quarantine')).toBeTruthy();
+  });
+
+  it('shows every analyst id in the evidence font', async () => {
+    const id = 'e4c7c25e-02ff-44f4-aac1-530598a934cd';
+    vi.mocked(getMe).mockResolvedValue({ ...me(['manage_users']), analyst_id: id });
+    vi.mocked(listUsers).mockResolvedValue([
+      { analyst_id: id, username: 'river.analyst', role: 'forensic_analyst', created_at: '2026-10-08T00:00:00Z' },
+    ] as never);
+    const { container } = render(<AccessPage />);
+    await waitFor(() => expect(screen.getAllByText('e4c7c25e').length).toBeGreaterThan(1)); // the banner and the user table
+
+    expect(evidenceOutsideMono(container)).toEqual([]);
+  });
+
+  it('shows what OpenAI itself allows this key beside the provider, from its own answers', async () => {
+    render(<AccessPage />);
+    const group = within(await screen.findByRole('group', { name: 'What OpenAI allows this key' }));
+
+    expect(group.getByText('Requests left')).toBeTruthy();
+    expect(group.getByText('34')).toBeTruthy();
+    expect(group.getByText('50')).toBeTruthy();
+    expect(group.getByText('58,800')).toBeTruthy();
+    expect(group.getByText('100,000')).toBeTruthy();
   });
 
   it('says plainly that continuous ingestion is off (a debate starts only on an injection)', async () => {

@@ -12,6 +12,8 @@ Run from the repo root with the E2E environment (frontend/e2e/support/stack.mjs 
       insert the synthetic raw_logs rows (the table must not hold them already)
   python frontend/e2e/support/seed_rows.py seed-live
       insert the logon rows the live feed spec replays (use after reset --rows empty)
+  python frontend/e2e/support/seed_rows.py fill-cap --user NAME
+      put NAME's daily debate counter at its limit, so the next injection is refused with 429
 
 Every command refuses to touch anything but the database verdictchain_test_pw and Redis db 7, so it can
 never reach the dev database (verdictchain, Redis db 0).
@@ -83,7 +85,7 @@ def seed() -> None:
     backend/tests/api/test_isolation_flow.py::_seed), and one row for every other scenario label so that
     GET /scenarios names a primary agent for all eight scenarios, like the ingested datasets do."""
     from backend.db.session import SessionLocal
-    from backend.scripts import e2e_server as stub
+    from backend.testing import e2e_server as stub
 
     network = stub.sample_rows("network_traffic")
     for row in network:
@@ -117,7 +119,7 @@ def seed_live() -> None:
 
     from backend.db.models import RawLog
     from backend.db.session import SessionLocal
-    from backend.scripts import e2e_server as stub
+    from backend.testing import e2e_server as stub
 
     start = datetime(2010, 3, 1, tzinfo=timezone.utc)
 
@@ -142,6 +144,16 @@ def seed_live() -> None:
         session.add_all(rows)
         session.commit()
     print(f"seed_rows: seeded {len(rows)} rows for the live feed")
+
+
+def fill_cap(username: str) -> None:
+    """Puts the per-analyst daily debate counter at its limit, so the next injection is refused with 429.
+    The stack runs with a limit far above what any spec needs (stack.mjs); `reset` flushes Redis."""
+    from backend.api.rate_limit import DAILY_WINDOW_SECONDS, _cap_key
+
+    limit = int(os.environ["DEBATE_DAILY_LIMIT_USER"])
+    _redis_client().set(_cap_key("debate_user", username), limit, ex=DAILY_WINDOW_SECONDS)
+    print(f"seed_rows: the daily debate cap of {username} is filled ({limit})")
 
 
 def reset(rows: str, drop_users: bool) -> None:
@@ -174,6 +186,8 @@ def main(argv: list[str]) -> int:
     sub.add_parser("ensure-db")
     sub.add_parser("seed")
     sub.add_parser("seed-live")
+    fill_parser = sub.add_parser("fill-cap")
+    fill_parser.add_argument("--user", required=True)
     reset_parser = sub.add_parser("reset")
     reset_parser.add_argument("--rows", choices=("keep", "seed", "empty"), default="keep")
     reset_parser.add_argument("--drop-users", action="store_true")
@@ -186,6 +200,8 @@ def main(argv: list[str]) -> int:
         seed()
     elif args.command == "seed-live":
         seed_live()
+    elif args.command == "fill-cap":
+        fill_cap(args.user)
     else:
         reset(args.rows, args.drop_users)
     return 0

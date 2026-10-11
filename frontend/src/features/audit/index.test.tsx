@@ -12,6 +12,7 @@ vi.mock('../../api/client', () => ({
 
 import { listAuditTrail, listResponseActions, verifyAuditTrail } from '../../api/client';
 import { sha256Hex } from '../../lib/derive/hash';
+import { evidenceOutsideMono } from '../../test/evidence';
 import AuditPage from './index';
 
 beforeAll(() => {
@@ -38,7 +39,15 @@ function makeEntry(entryHash: string): AuditEntry {
 
 beforeEach(() => {
   vi.mocked(listResponseActions).mockResolvedValue([]);
-  vi.mocked(verifyAuditTrail).mockResolvedValue({ chain_valid: true, entries_checked: 1, first_break_seq: null, reason: null, head_hash: null });
+  vi.mocked(verifyAuditTrail).mockResolvedValue({
+    chain_valid: true,
+    entries_checked: 1,
+    first_break_seq: null,
+    reason: null,
+    head_hash: null,
+    mode: 'full',
+    verified_from_seq: 7,
+  });
 });
 
 describe('AuditPage', () => {
@@ -57,6 +66,7 @@ describe('AuditPage', () => {
     vi.mocked(listAuditTrail).mockResolvedValue(trail);
     render(<AuditPage />);
     expect(await screen.findByText(/Matches entry_hash/i)).toBeTruthy();
+    expect(screen.getByText('Hash verified in browser')).toBeTruthy();
   });
 
   it('flags a browser recompute that does not match entry_hash', async () => {
@@ -64,6 +74,27 @@ describe('AuditPage', () => {
     vi.mocked(listAuditTrail).mockResolvedValue(trail);
     render(<AuditPage />);
     expect(await screen.findByText(/Does not match entry_hash/i)).toBeTruthy();
+    // The header badge follows the recompute: a failed check never shows a green "verified" tag.
+    expect(screen.getByText('Hash mismatch')).toBeTruthy();
+    expect(screen.queryByText('Hash verified in browser')).toBeNull();
+    expect(screen.queryByText('Verified proof')).toBeNull();
+  });
+
+  it('runs a full server pass from the verify button and says which pass ran', async () => {
+    vi.mocked(listAuditTrail).mockResolvedValue({ entries: [makeEntry('deadbeef'.repeat(8))], chain: { valid: true, head_seq: 7, total: 42 } });
+    render(<AuditPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /Verify cryptographic proof/i }));
+    expect(await screen.findByText(/1 entries checked by server \(full pass\)/)).toBeTruthy();
+    expect(vi.mocked(verifyAuditTrail)).toHaveBeenCalledWith({ full: true });
+  });
+
+  it('never lets a verify result hide a break the list already reported', async () => {
+    vi.mocked(listAuditTrail).mockResolvedValue({ entries: [makeEntry('deadbeef'.repeat(8))], chain: { valid: false, head_seq: 7, total: 42 } });
+    render(<AuditPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /Verify cryptographic proof/i }));
+    await screen.findByText(/entries checked by server/);
+    expect(screen.getByText('Broken')).toBeTruthy();
+    expect(screen.queryByText('100% intact')).toBeNull();
   });
 
   it('shows the empty state with no entries', async () => {
@@ -84,6 +115,16 @@ describe('AuditPage', () => {
     expect(screen.getByRole('button', { name: 'Copy current entry hash' })).toBeTruthy();
     expect(screen.getByText('abcdef12').getAttribute('title')).toBe('abcdef12-0000-4000-8000-000000000001');
     expect(container.querySelectorAll('button button')).toHaveLength(0);
+  });
+
+  it('shows every id and hash in the evidence font', async () => {
+    const entry = { ...makeEntry('deadbeef'.repeat(8)), investigation_id: 'abcdef12-0000-4000-8000-000000000001' };
+    vi.mocked(listAuditTrail).mockResolvedValue({ entries: [entry], chain: { valid: true, head_seq: 7, total: 1 } });
+    const { container } = render(<AuditPage />);
+    await screen.findByText('#7');
+    await screen.findByText(/Matches entry_hash|Does not match entry_hash/i);
+
+    expect(evidenceOutsideMono(container)).toEqual([]);
   });
 
   it('shows entry times as relative text with the exact time in the tooltip, and the inspector time in full', async () => {

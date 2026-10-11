@@ -10,6 +10,7 @@ vi.mock('../../api/client', () => ({
 }));
 
 import { ScenarioModalContext } from '../../shell/scenario-modal';
+import { glyphBeside } from '../../test/status';
 import { DebateList } from './List';
 
 function row(over: Partial<InvestigationSummary> = {}): InvestigationSummary {
@@ -24,6 +25,7 @@ function row(over: Partial<InvestigationSummary> = {}): InvestigationSummary {
     rounds_complete: 3,
     containment_count: 0,
     data_source: 'model',
+    error_reason: null,
     trigger_type: 'manual',
     created_at: '2026-10-05T12:00:00Z',
     ...over,
@@ -52,6 +54,27 @@ describe('DebateList', () => {
     expect(container.querySelectorAll('a button')).toHaveLength(0);
   });
 
+  it('puts a glyph of its own beside every status and verdict word, so colour is never the only signal', async () => {
+    h.listInvestigations.mockResolvedValue(
+      page([
+        row({ id: 'a1111111-0001', status: 'investigating', verdict_class: null }),
+        row({ id: 'b2222222-0002', status: 'error', verdict_class: null, error_reason: 'The provider has no credit left.' }),
+        row({ id: 'c3333333-0003', status: 'verdict_reached', verdict_class: 'ddos' }),
+        row({ id: 'd4444444-0004', status: 'contained', verdict_class: 'botnet_c2' }),
+        row({ id: 'e5555555-0005', status: 'queued', verdict_class: null, created_at: '2026-10-05T12:05:00Z' }),
+      ]),
+    );
+    render(<DebateList />);
+    await screen.findByText('Debating now (1)');
+
+    for (const word of ['investigating', 'error', 'verdict_reached', 'contained', 'ddos', 'botnet_c2']) {
+      expect(glyphBeside(screen.getByText(word)), `a glyph beside "${word}"`).not.toBeNull();
+    }
+    expect(glyphBeside(screen.getByText('queued · place 1'))).toBe('schedule');
+    expect(glyphBeside(screen.getByText('error'))).toBe('cancel'); // a failure and a success never share a shape
+    expect(glyphBeside(screen.getByText('verdict_reached'))).toBe('check_circle');
+  });
+
   it('lists queued cases in the order the worker takes them, with their place', async () => {
     h.listInvestigations.mockResolvedValue(
       page([
@@ -63,7 +86,7 @@ describe('DebateList', () => {
     render(<DebateList />);
     expect(await screen.findByText('Waiting in the queue (2)')).toBeTruthy();
     expect(screen.getByText('Debating now (1)')).toBeTruthy();
-    const places = screen.getAllByText(/queued · place/).map((node) => node.textContent);
+    const places = screen.getAllByText(/queued · place/).map((node) => /queued · place \d+/.exec(node.textContent ?? '')?.[0]);
     expect(places).toEqual(['queued · place 1', 'queued · place 2']); // oldest first, whatever order the API sent
     expect(screen.queryByText('Recent (2)')).toBeNull(); // queued cases are not "recent"
   });

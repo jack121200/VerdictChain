@@ -21,8 +21,7 @@ test('inject DDoS from the dashboard and follow it to a verdict, simulated conta
 
   // ---- no real provider is configured; the stub's counter is the baseline -------------------------------
   const status = await ok(analyst.token, 'GET', '/system/status')
-  expect(status.providers.groq.configured, 'groq key must be blank in the E2E stack').toBe(false)
-  expect(status.providers.gemini.configured, 'gemini key must be blank in the E2E stack').toBe(false)
+  expect(Object.keys(status.providers), 'OpenAI is the only provider').toEqual(['openai'])
   const callsBefore = await stubCalls()
 
   // ---- dashboard: pick DDoS, open the modal through "Inject simulation stream" -------------------------
@@ -79,18 +78,17 @@ test('inject DDoS from the dashboard and follow it to a verdict, simulated conta
   // ---- the provider labels are stub labels, on the page and in the API -------------------------------
   await expect(main.getByText(/Engine:\s*stub-/)).toBeVisible()
   const debateText = await main.innerText()
-  expect(debateText).not.toMatch(/(?<![\w-])(groq|gemini)(?![\w-])/i)
+  expect(debateText).not.toMatch(/(?<![\w-])(groq|gemini)(?![\w-])/i) // no other provider is named anywhere
   const providers = new Set<string>(detail.debate.map((turn: { provider: string }) => turn.provider))
   expect(providers.size).toBeGreaterThan(0)
   for (const provider of providers) expect(provider, 'provider label of a transcript row').toMatch(/^stub-/)
 
   // ---- the stub served every model call, no real provider was used ------------------------------------
   const callsAfter = await stubCalls()
-  const moved = callsAfter.groq + callsAfter.gemini - (callsBefore.groq + callsBefore.gemini)
+  const moved = callsAfter.openai - callsBefore.openai
   expect(moved, 'stubbed complete() calls made by this debate (3 agents x 3 rounds at least)').toBeGreaterThanOrEqual(9)
   const statusAfter = await ok(analyst.token, 'GET', '/system/status')
-  expect(statusAfter.providers.groq.calls_24h.value, 'real groq calls').toBe(0)
-  expect(statusAfter.providers.gemini.calls_24h.value, 'real gemini calls').toBe(0)
+  expect(statusAfter.providers.openai.calls_24h.value, 'real OpenAI calls').toBe(0)
 
   // ---- the audit trail shows the new entries ----------------------------------------------------------
   const mine = (await auditEntries(analyst.token)).filter((entry) => entry.investigation_id === investigationId)
@@ -111,6 +109,40 @@ test('inject DDoS from the dashboard and follow it to a verdict, simulated conta
   const head = Math.max(...(await auditEntries(analyst.token, 5)).map((entry) => entry.seq))
   await expect(page.getByText('Chain head', { exact: true })).toBeVisible()
   await expect(page.getByText(`#${head}`, { exact: true }).first()).toBeVisible()
+
+  // ---- the evaluation section shows what /evaluation returns, with the stub kept apart ----------------------
+  const modelEvaluation = await ok(analyst.token, 'GET', '/evaluation')
+  expect(modelEvaluation.accuracy.value, 'no real model ran, so the headline accuracy is empty').toBeNull()
+  const stubEvaluation = await ok(analyst.token, 'GET', '/evaluation?source=stub')
+  expect(stubEvaluation.scored.value, 'the DDoS run above is labelled and reached a verdict').toBeGreaterThanOrEqual(1)
+
+  await page.goto(`${WEB_URL}/#/trust`)
+  const evaluation = page.getByRole('region', { name: 'Evaluation against labelled scenarios' })
+  await expect(evaluation.getByText('Nothing scored for this choice yet')).toBeVisible()
+  await expect(
+    evaluation.getByRole('group', { name: 'Accuracy by source of the answers' }).getByText(`${stubEvaluation.scored.value} scored`),
+  ).toBeVisible()
+
+  await evaluation.getByRole('tab', { name: 'Offline stub runs' }).click()
+  await expect(evaluation.getByText(/measure the stub’s canned sentences, not a model/)).toBeVisible()
+  const percent = `${(stubEvaluation.accuracy.value * 100).toFixed(1)}%`
+  await expect(evaluation.getByRole('group', { name: 'Headline rates' }).getByText(percent).first()).toBeVisible()
+  const hit = stubEvaluation.confusion_matrix.cells.find(
+    (cell: { actual: string; predicted: string }) => cell.actual === 'ddos' && cell.predicted === 'ddos',
+  )
+  const matrix = evaluation.getByRole('table', { name: /Expected class by verdict given/ })
+  await expect(matrix.getByRole('row', { name: /^ddos/ }).getByRole('cell').first()).toHaveText(String(hit.count.value))
+
+  // ---- the case's own audit entries: the browser recomputes every hash and the digest the server sent ----------
+  const caseChain = await ok(analyst.token, 'GET', `/investigations/${investigationId}/audit-chain`)
+  expect(caseChain.entries.length, 'audit entries of the case').toBeGreaterThanOrEqual(4)
+  expect(caseChain.case_digest).toMatch(/^[0-9a-f]{64}$/)
+  await page.goto(`${WEB_URL}/#/investigations/${investigationId}`)
+  const chainChecks = page.getByRole('group', { name: 'Case audit chain checks' })
+  const total = caseChain.entries.length
+  await expect(chainChecks.getByText(`${total} of ${total} match`)).toBeVisible()
+  await expect(chainChecks.getByText(/Case digest recomputed here equals the server’s/)).toBeVisible()
+  await expect(chainChecks.getByText(/Global chain valid/)).toBeVisible()
 
   // ---- the whole flow ran without a console error, a page error or an HTTP error ------------------------
   // Soft: every functional assertion above has already been made, so a failure here is reported on its own.

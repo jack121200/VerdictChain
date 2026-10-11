@@ -51,8 +51,9 @@ export function backendEnv() {
     ENVIRONMENT: 'development',
     LOCAL_DATABASE_URL: testDatabaseUrl(),
     REDIS_URL: process.env.E2E_REDIS_URL ?? E2E_REDIS,
-    GROQ_API_KEY: '',
-    GEMINI_API_KEY: '',
+    // No real key in this stack: the offline stub serves every model call (it sets a placeholder key itself).
+    OPENAI_API_KEY: '',
+    OPENAI_MODEL: '',
     // The suite runs more debates than the production daily caps allow; the caps are tested in the backend suite.
     DEBATE_DAILY_LIMIT_USER: '500',
     DEBATE_DAILY_LIMIT_GLOBAL: '1000',
@@ -62,6 +63,8 @@ export function backendEnv() {
     LIVE_FEED_ATTACK_SHARE: '1',
     LIVE_MIN_GAP_SECONDS: '3',
     LIVE_DAILY_CAP: '100',
+    // The live feed waits for this many rows before it may start a debate (the Live page chooses it per run).
+    LIVE_LLM_AFTER_ROWS: '50',
     // Replaced per run by the global setup.
     BOOTSTRAP_LEAD_USERNAME: '',
     BOOTSTRAP_LEAD_PASSWORD: '',
